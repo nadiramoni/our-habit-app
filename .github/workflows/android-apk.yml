@@ -8,6 +8,8 @@ on:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }} # optional — enables publishing the APK to the public Releases repo
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -69,3 +71,25 @@ jobs:
           name: OurHabit-APK
           path: apk-out/*.apk
           if-no-files-found: error
+
+      - name: Attach to GitHub Release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apk-out/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish APK to public Releases repo (APK only — source stays private)
+        if: ${{ env.RELEASE_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          TAG="v$(date +'%Y.%m.%d-%H%M')"
+          cd apk-out
+          cp OurHabit-*.apk OurHabit-latest.apk
+          gh release create "$TAG" --repo nadiramoni/our-habit-apk --latest \
+            --title "Our Habit $TAG" \
+            --notes "📱 Our Habit — latest Android APK. Download → open → allow 'install unknown apps' → install. The app code stays private; this page only serves the APK." \
+            OurHabit-latest.apk
+          echo "✅ Published: https://github.com/nadiramoni/our-habit-apk/releases/latest"
