@@ -1,0 +1,75 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String   @id @default(cuid())
+  username   String   @unique
+  pinHash    String
+  name       String
+  inviteCode String   @unique
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model Friendship {
+  id        String   @id @default(cuid())
+  fromUser  String
+  toUser    String
+  status    String   @default("pending") // pending | accepted
+  createdAt DateTime @default(now())
+  @@unique([fromUser, toUser])
+  @@index([toUser])
+}
+
+model DailySummary {
+  id            String   @id @default(cuid())
+  username      String
+  date          String   // YYYY-MM-DD (device local)
+  points        Int      @default(0)
+  prayersDone   Int      @default(0)
+  waterPct      Int      @default(0)
+  reelsFree     Boolean  @default(false)
+  streak        Int      @default(0)
+  meditationMin Int      @default(0)
+  dhikrTotal    Int      @default(0)
+  details       String?  // JSON: full day details for partner/family full visibility
+  updatedAt     DateTime @updatedAt
+  @@unique([username, date])
+  @@index([username])
+}
+
+model AppConfig {
+  id        String   @id @default(cuid())
+  key       String   @unique // "admin_pin" | "cfg"
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model SharedNote {
+  id        String   @id @default(cuid())
+  pairKey   String // "userA|userB" (sorted)
+  author    String
+  text      String
+  done      Boolean  @default(false)
+  doneBy    String?
+  createdAt DateTime @default(now())
+  @@index([pairKey])
+}
+
+model Challenge {
+  id        String   @id @default(cuid())
+  fromUser  String
+  toUser    String
+  days      Int // 7 or 30
+  startDate String // YYYY-MM-DD
+  status    String   @default("pending") // pending | active
+  createdAt DateTime @default(now())
+  @@index([fromUser])
+  @@index([toUser])
+}
