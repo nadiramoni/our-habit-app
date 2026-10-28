@@ -21,13 +21,22 @@ import java.util.Map;
 /**
  * UsageTracker — REAL screen-time for video/Reels apps via Android
  * Usage Access (UsageStatsManager). The user cannot lie: the minutes come
- * straight from the OS. Shorts vs long: known shorts platforms (Facebook,
- * TikTok, Instagram) count as shorts; the YouTube app counts as long
- * (YouTube Shorts are inside the same package, split precisely is not
- * possible from usage events alone).
+ * straight from the OS.
+ *
+ * v2.3 (owner round-5): Shorts vs long is now detected per ACTIVITY class
+ * name — YouTube Shorts (…shorts…), Instagram/Facebook Reels (…reel…) go to
+ * the "ytshorts" bucket; the remaining YouTube time stays "ytlong".
+ * Facebook minutes are ALSO reported separately (owner asked for a
+ * per-app breakdown incl. minutes watched).
  */
 @CapacitorPlugin(name = "UsageTracker")
 public class UsageTrackerPlugin extends Plugin {
+
+    private static boolean isShortsActivity(String cls) {
+        if (cls == null) return false;
+        String c = cls.toLowerCase();
+        return c.contains("shorts") || c.contains("reel") || c.contains("tiktok") || c.contains("snack");
+    }
 
     private static final Map<String, String> PKG_MAP = new HashMap<>();
     static {
@@ -64,7 +73,7 @@ public class UsageTrackerPlugin extends Plugin {
         JSObject res = new JSObject();
         res.put("granted", granted);
 
-        long fb = 0, ytLong = 0, tiktok = 0, ig = 0, other = 0;
+        long fb = 0, ytShorts = 0, ytLong = 0, tiktok = 0, ig = 0, other = 0;
         if (granted) {
             UsageStatsManager usm =
                 (UsageStatsManager) ctx.getSystemService(Context.USAGE_STATS_SERVICE);
@@ -79,6 +88,8 @@ public class UsageTrackerPlugin extends Plugin {
 
                 UsageEvents events = usm.queryEvents(start, end);
                 UsageEvents.Event ev = new UsageEvents.Event();
+                // open session per package+activity so Shorts/Reels activities
+                // are timed separately from long-video activities
                 Map<String, Long> open = new HashMap<>();
 
                 while (events.hasNextEvent()) {
@@ -87,27 +98,33 @@ public class UsageTrackerPlugin extends Plugin {
                     if (!PKG_MAP.containsKey(pkg)) continue;
                     int type = ev.getEventType();
                     if (type == UsageEvents.Event.ACTIVITY_RESUMED) {
-                        open.put(pkg, ev.getTimeStamp());
+                        String cls = ev.getClassName();
+                        String sessionKey = pkg + "|" + (isShortsActivity(cls) ? "shorts" : "full");
+                        open.put(sessionKey, ev.getTimeStamp());
                     } else if (type == UsageEvents.Event.ACTIVITY_PAUSED) {
-                        Long began = open.remove(pkg);
+                        String cls = ev.getClassName();
+                        String sessionKey = pkg + "|" + (isShortsActivity(cls) ? "shorts" : "full");
+                        Long began = open.remove(sessionKey);
                         if (began != null) {
                             long mins = Math.max(0, (ev.getTimeStamp() - began) / 60000L);
-                            long[] acc = bucket(fb, ytLong, tiktok, ig, other, pkg, mins);
-                            fb = acc[0]; ytLong = acc[1]; tiktok = acc[2]; ig = acc[3]; other = acc[4];
+                            long[] acc = bucket(fb, ytShorts, ytLong, tiktok, ig, other, pkg, mins, isShortsActivity(cls));
+                            fb = acc[0]; ytShorts = acc[1]; ytLong = acc[2]; tiktok = acc[3]; ig = acc[4]; other = acc[5];
                         }
                     }
                 }
                 // apps still open → close at "now"
                 for (Map.Entry<String, Long> e : open.entrySet()) {
                     long mins = Math.max(0, (end - e.getValue()) / 60000L);
-                    long[] acc = bucket(fb, ytLong, tiktok, ig, other, e.getKey(), mins);
-                    fb = acc[0]; ytLong = acc[1]; tiktok = acc[2]; ig = acc[3]; other = acc[4];
+                    boolean shortSession = e.getKey().endsWith("|shorts");
+                    String pkg = e.getKey().substring(0, e.getKey().indexOf('|'));
+                    long[] acc = bucket(fb, ytShorts, ytLong, tiktok, ig, other, pkg, mins, shortSession);
+                    fb = acc[0]; ytShorts = acc[1]; ytLong = acc[2]; tiktok = acc[3]; ig = acc[4]; other = acc[5];
                 }
             }
         }
 
         res.put("facebook", fb);
-        res.put("ytshorts", 0L);
+        res.put("ytshorts", ytShorts);
         res.put("ytlong", ytLong);
         res.put("tiktok", tiktok);
         res.put("instagram", ig);
@@ -115,13 +132,18 @@ public class UsageTrackerPlugin extends Plugin {
         call.resolve(res);
     }
 
-    private long[] bucket(long fb, long yt, long tt, long ig, long other, String pkg, long mins) {
+    /** acc = {facebook, ytShorts, ytLong, tiktok, instagram, other} */
+    private long[] bucket(long fb, long ytShorts, long ytLong, long tt, long ig, long other, String pkg, long mins, boolean shorts) {
         switch (PKG_MAP.get(pkg)) {
-            case "facebook":  return new long[]{fb + mins, yt, tt, ig, other};
-            case "ytlong":    return new long[]{fb, yt + mins, tt, ig, other};
-            case "tiktok":    return new long[]{fb, yt, tt + mins, ig, other};
-            case "instagram": return new long[]{fb, yt, tt, ig + mins, other};
-            default:          return new long[]{fb, yt, tt, ig, other + mins};
+            case "facebook":  return new long[]{fb + mins, ytShorts, ytLong, tt, ig, other};
+            case "ytlong":
+                // v2.3: YouTube Shorts live inside the same package — activities
+                // with "shorts/reel/snack" in the class name go to the shorts bucket
+                if (shorts) return new long[]{fb, ytShorts + mins, ytLong, tt, ig, other};
+                return new long[]{fb, ytShorts, ytLong + mins, tt, ig, other};
+            case "tiktok":    return new long[]{fb, ytShorts, ytLong, tt + mins, ig, other};
+            case "instagram": return new long[]{fb, ytShorts, ytLong, tt, ig + mins, other};
+            default:          return new long[]{fb, ytShorts, ytLong, tt, ig, other + mins};
         }
     }
 

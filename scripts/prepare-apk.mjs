@@ -161,17 +161,25 @@ if (!gradle0.includes("play-services-nearby")) {
 }
 
 // 4.6. notification sounds → res/raw/ (scheduled alarms play these even when
-// the app is closed). alarm.wav is generated (soft two-tone bell); if the
-// owner drops a real adhan recording at public/adhan.mp3 it is bundled too
-// and prayer/adhan reminders will use it automatically.
+// the app is closed). alarm.wav is generated (soft two-tone bell);
+// owner-provided recordings are bundled from public/ when present:
+//   adhan.mp3 → prayer/adhan alarms · meal-alarm.mp3 → meal alarms
+//   water-alarm.mp3 → water reminders (all round-4/5 owner files)
 const rawDir = path.join(ROOT, "android", "app", "src", "main", "res", "raw");
 fs.mkdirSync(rawDir, { recursive: true });
-const adhanSrc = path.join(ROOT, "public", "adhan.mp3");
-if (fs.existsSync(adhanSrc)) {
-  fs.copyFileSync(adhanSrc, path.join(rawDir, "adhan.mp3"));
-  log("res/raw/adhan.mp3 ← public/adhan.mp3 (REAL adhan for prayer reminders)");
-} else {
-  log("no public/adhan.mp3 — prayer reminders use the alarm chime (owner can add a real recording later)");
+const RAW_MAP = [
+  ["public/adhan.mp3", "adhan.mp3", "REAL adhan for prayer reminders"],
+  ["public/meal-alarm.mp3", "mealalarm.mp3", "owner's alarm-clock sound for meal alarms"],
+  ["public/water-alarm.mp3", "wateralarm.mp3", "owner's music loop for water reminders"],
+];
+for (const [srcRel, rawName, why] of RAW_MAP) {
+  const src = path.join(ROOT, srcRel);
+  if (fs.existsSync(src)) {
+    fs.copyFileSync(src, path.join(rawDir, rawName));
+    log(`res/raw/${rawName} ← ${srcRel} (${why})`);
+  } else {
+    log(`no ${srcRel} — ${rawName} not bundled`);
+  }
 }
 if (!fs.existsSync(path.join(rawDir, "alarm.wav"))) {
   const sr = 44100;
