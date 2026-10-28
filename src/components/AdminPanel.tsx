@@ -6,7 +6,40 @@ import { useServerCfg } from "@/lib/cfg";
 import { Card, SectionTitle, ToggleRow } from "@/components/ui-bits";
 import { AtCfg, AtZone, ServerAdsCfg, ServerCfg } from "@/lib/types";
 import { extractAdsterra, extractScriptUrl } from "@/components/AdsBanner";
-import { mirrorMeta } from "@/lib/cloud";
+import { mirrorMeta, readRawMeta, writeRawMeta } from "@/lib/cloud";
+import { isNative } from "@/lib/native";
+
+/**
+ * APK mode: there is NO server (static export) — /api/config is dead.
+ * So the panel authenticates + saves DIRECTLY to the owner's Firebase:
+ *   • PIN hash lives in Firestore app/meta.adminPin (sha256, same salt as
+ *     the server route → the same PIN works in both worlds)
+ *   • Save → setDoc app/meta.cfg (same shape fetchRemoteMeta reads) → every
+ *     installed app picks it up within 5 min. No server needed, ever.
+ */
+const PIN_SALT = "ourhabit::admin";
+
+async function sha256Hex(text: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** Read the stored admin PIN hash from Firestore app/meta (null = none yet). */
+async function remotePinHash(): Promise<string | null> {
+  const raw = await readRawMeta();
+  return (raw?.adminPin as string) || null;
+}
+
+/** Write adminPin and/or cfg in one Firestore hit. */
+async function remoteWriteMeta(cfg: ServerCfg | null, pinHash?: string): Promise<boolean> {
+  const fields: Record<string, unknown> = {};
+  if (cfg) fields.cfg = JSON.parse(JSON.stringify(cfg));
+  if (pinHash) fields.adminPin = pinHash;
+  if (!Object.keys(fields).length) return false;
+  return writeRawMeta(fields);
+}
 
 type Mode = "loading" | "setup" | "unlock" | "open";
 
@@ -32,7 +65,7 @@ function writeLock(l: { count: number; until: number }) {
   }
 }
 
-function PinGate({ onUnlock }: { onUnlock: (pin: string) => void }) {
+function PinGate({ onUnlock, onClose }: { onUnlock: (pin: string) => void; onClose: () => void }) {
   const { t } = useStore();
   const [mode, setMode] = useState<Mode>("loading");
   const [pin, setPin] = useState("");
@@ -46,6 +79,12 @@ function PinGate({ onUnlock }: { onUnlock: (pin: string) => void }) {
 
   useEffect(() => {
     (async () => {
+      if (isNative()) {
+        // APK: PIN hash lives in Firestore app/meta
+        const hash = await remotePinHash();
+        setMode(hash ? "unlock" : "setup");
+        return;
+      }
       try {
         const r = await fetch("/api/config", {
           method: "POST",
@@ -72,6 +111,14 @@ function PinGate({ onUnlock }: { onUnlock: (pin: string) => void }) {
           setBusy(false);
           return;
         }
+        if (isNative()) {
+          const hash = await sha256Hex(`${pin}::${PIN_SALT}`);
+          const ok = await remoteWriteMeta(null, hash);
+          if (ok) onUnlock(pin);
+          else setErr(t("error"));
+          setBusy(false);
+          return;
+        }
         const r = await fetch("/api/config", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -81,6 +128,21 @@ function PinGate({ onUnlock }: { onUnlock: (pin: string) => void }) {
         if (j.ok) onUnlock(pin);
         else setErr(t("error"));
       } else {
+        if (isNative()) {
+          const hash = await remotePinHash();
+          const mine = await sha256Hex(`${pin}::${PIN_SALT}`);
+          if (hash && mine === hash) {
+            writeLock({ count: 0, until: 0 });
+            onUnlock(pin);
+          } else {
+            const next = { count: lock.count + 1, until: lock.count + 1 >= MAX_FAILS ? Date.now() + LOCK_MS : 0 };
+            writeLock(next);
+            setLock(next);
+            setErr(next.until ? t("pinLockout") : t("adminWrongPin"));
+          }
+          setBusy(false);
+          return;
+        }
         const r = await fetch("/api/config", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -144,6 +206,9 @@ function PinGate({ onUnlock }: { onUnlock: (pin: string) => void }) {
           className="flex-1 rounded-xl bg-primary text-primary-foreground text-sm font-semibold py-3 min-h-[48px] disabled:opacity-50"
         >
           {busy ? "..." : mode === "setup" ? t("adminPinSet") : t("adminUnlock")}
+        </button>
+        <button type="button" onClick={onClose} className="rounded-xl bg-secondary px-4 text-sm min-h-[48px]" aria-label="close">
+          ✕
         </button>
       </div>
     </div>
@@ -246,6 +311,18 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
     setErr("");
     setBusy(true);
     try {
+      if (isNative()) {
+        // APK: save DIRECTLY to the owner's Firestore (same doc fetchRemoteMeta
+        // reads) — no server needed; every install picks it up within 5 min.
+        const ok = await mirrorMeta(draft);
+        if (ok) {
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2500);
+          await refresh();
+        } else setErr(t("error"));
+        setBusy(false);
+        return;
+      }
       const r = await fetch("/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -268,6 +345,13 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
   const changePin = async () => {
     if (newPin.length < 4) return;
     try {
+      if (isNative()) {
+        const hash = await sha256Hex(`${newPin}::${PIN_SALT}`);
+        const ok = await remoteWriteMeta(null, hash);
+        alert(ok ? t("adminSaved") : t("error"));
+        setNewPin("");
+        return;
+      }
       const r = await fetch("/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -280,6 +364,16 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
       alert(t("error"));
     }
   };
+
+  // Android back button closes the panel (round-5: never exits the app)
+  useEffect(() => {
+    const onBack = () => {
+      (window as unknown as { __ohBackHandled?: boolean }).__ohBackHandled = true;
+      onClose();
+    };
+    window.addEventListener("oh:back", onBack);
+    return () => window.removeEventListener("oh:back", onBack);
+  }, [onClose]);
 
   return (
     <div className="fixed inset-0 z-[90] bg-background overflow-y-auto">
@@ -451,6 +545,6 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
 export default function AdminPanel({ onClose }: { onClose: () => void }) {
   const [pin, setPin] = useState("");
   const [unlocked, setUnlocked] = useState(false);
-  if (!unlocked) return <PinGate onUnlock={(p) => { setPin(p); setUnlocked(true); }} />;
+  if (!unlocked) return <PinGate onUnlock={(p) => { setPin(p); setUnlocked(true); }} onClose={onClose} />;
   return <Panel onClose={onClose} pin={pin} />;
 }

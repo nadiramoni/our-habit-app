@@ -223,10 +223,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const firedRef = useRef<Record<string, boolean>>({});
 
-  const fireNotif = useCallback((title: string, body: string) => {
+  const fireNotif = useCallback((title: string, body: string, sound?: string) => {
     // APK: the web Notification API is dead inside a WebView — route through
     // the native LocalNotifications plugin so EVERY reminder (adhan, water,
     // meals, Reels limit) really appears in the Android notification shade.
+    // sound = raw resource name; the plugin auto-creates a vibrating channel
+    // per sound (round-5: water reminder got its own music loop).
     try {
       if (isNative()) {
         void (async () => {
@@ -235,7 +237,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             const perm = await LocalNotifications.checkPermissions();
             if (perm.display !== "granted") return;
             await LocalNotifications.schedule({
-              notifications: [{ id: Math.floor(Math.random() * 2000000000), title, body, sound: "alarm.wav" }],
+              notifications: [{ id: Math.floor(Math.random() * 2000000000), title, body, sound: sound || "alarm.wav" }],
             });
           } catch {
             /* ignore */
@@ -300,7 +302,7 @@ export interface AlarmEvent {
 export function checkReminders(
   state: AppState,
   today: string,
-  fire: (title: string, body: string) => void,
+  fire: (title: string, body: string, sound?: string) => void,
   t: T,
   onAlarm: (ev: AlarmEvent) => void
 ) {
@@ -352,7 +354,7 @@ export function checkReminders(
   if (s.hourlyWater && d.getMinutes() === 0 && d.getHours() >= 9 && d.getHours() <= 22 && !already(`water_${d.getHours()}`)) {
     const l = state.logs[today];
     if (!l || l.waterMl < s.waterGoalMl) {
-      fire(t("appName"), t("waterMsg"));
+      fire(t("appName"), t("waterMsg"), "wateralarm.mp3"); // owner's music loop (round-5)
     }
     mark(`water_${d.getHours()}`);
   }

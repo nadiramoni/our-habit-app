@@ -15,6 +15,10 @@ export interface ActiveAlarm {
 export default function AlarmOverlay({ alarm, onDismiss }: { alarm: ActiveAlarm | null; onDismiss: (snooze: boolean) => void }) {
   const { t } = useStore();
   const stopRef = useRef<(() => void) | null>(null);
+  const dismissRef = useRef(onDismiss);
+  useEffect(() => {
+    dismissRef.current = onDismiss;
+  }, [onDismiss]);
 
   useEffect(() => {
     if (alarm?.sound) {
@@ -36,6 +40,18 @@ export default function AlarmOverlay({ alarm, onDismiss }: { alarm: ActiveAlarm 
       if (stopRef.current) stopRef.current();
       stopRef.current = null;
     };
+  }, [alarm]);
+
+  // Android back button dismisses the alarm overlay (round-5)
+  useEffect(() => {
+    const onBack = () => {
+      if (alarm) {
+        (window as unknown as { __ohBackHandled?: boolean }).__ohBackHandled = true;
+        dismissRef.current(false);
+      }
+    };
+    window.addEventListener("oh:back", onBack);
+    return () => window.removeEventListener("oh:back", onBack);
   }, [alarm]);
 
   if (!alarm) return null;

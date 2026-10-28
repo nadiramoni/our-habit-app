@@ -196,6 +196,40 @@ export async function fetchRemoteMeta(serverCfg?: Partial<ServerCfg> | null): Pr
   }
 }
 
+/**
+ * RAW meta read — returns the whole app/meta doc (including fields OUTSIDE
+ * cfg, e.g. adminPin). Used by the in-app Admin Panel (APK has no server).
+ */
+export async function readRawMeta(): Promise<Record<string, unknown> | null> {
+  const st = await ensureFirebase();
+  if (!st.configured) return null;
+  try {
+    const { doc, getDoc } = await import("firebase/firestore");
+    const snap = await getDoc(doc(fsDb!, "app", "meta"));
+    if (!snap.exists()) return null;
+    return snap.data() as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * RAW meta write — merges arbitrary top-level fields (cfg and/or adminPin)
+ * into app/meta. Same write path the admin panel's mirror uses, so app
+ * installs pick the values up on their next 5-minute config refresh.
+ */
+export async function writeRawMeta(fields: Record<string, unknown>): Promise<boolean> {
+  const st = await ensureFirebase();
+  if (!st.configured) return false;
+  try {
+    const { doc, setDoc, serverTimestamp } = await import("firebase/firestore");
+    await setDoc(doc(fsDb!, "app", "meta"), { ...fields, updatedAt: serverTimestamp() }, { merge: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---------- Real-time shared notes (works even without our server) ----------
 
 export function pairKeyOf(a: string, b: string): string {

@@ -18,7 +18,7 @@ import { getLog } from "@/lib/types";
 import { pushDay, ensureProfile, DaySummary } from "@/lib/cloud";
 import { APP_VERSION } from "@/lib/version";
 import { warmAudio, playChime } from "@/lib/audio";
-import { isNative, nativeOpenUrl, nativeScheduleAlarms, NativeAlarm } from "@/lib/native";
+import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, NativeAlarm } from "@/lib/native";
 
 type Tab = "home" | "notes" | "stats" | "friends" | "settings";
 
@@ -224,6 +224,43 @@ function Shell() {
     }
   }, []);
 
+  // Android BACK button (owner round-5): never exit straight away.
+  // 1) overlays listen for "oh:back" and close themselves (detail pages,
+  //    admin panel, alarm overlay — they set __ohBackHandled)
+  // 2) otherwise go to the Home tab
+  // 3) only on Home with nothing left to close → exit the app
+  const tabRef = useRef<Tab>(tab);
+  tabRef.current = tab;
+  const adminRef = useRef(adminOpen);
+  adminRef.current = adminOpen;
+  useEffect(() => {
+    void nativeHandleBackButton({
+      onBack: () => {
+        if (adminRef.current) {
+          setAdminOpen(false);
+          (window as unknown as { __ohBackHandled?: boolean }).__ohBackHandled = true;
+          return true;
+        }
+        if (tabRef.current !== "home") {
+          setTab("home");
+          (window as unknown as { __ohBackHandled?: boolean }).__ohBackHandled = true;
+          return true;
+        }
+        return false;
+      },
+      onExit: () => {
+        void (async () => {
+          try {
+            const { App: CapApp } = await import("@capacitor/app");
+            await CapApp.exitApp();
+          } catch {
+            /* ignore */
+          }
+        })();
+      },
+    });
+  }, []);
+
   const onAlarm = useCallback((ev: AlarmEvent) => {
     setAlarm((cur) => (cur ? cur : { ...ev }));
     if (!ev.sound) playChime();
@@ -252,6 +289,7 @@ function Shell() {
         state.settings.mealAlarms,
         state.settings.checkinTime,
         state.settings.ayatNotif,
+        state.settings.sleepAlarm,
       ])
     : "";
   useEffect(() => {
@@ -266,11 +304,12 @@ function Shell() {
     });
     (["breakfast", "lunch", "dinner"] as const).forEach((mk) => {
       const c = s.settings.mealAlarms?.[mk];
-      if (c?.on) list.push({ id: `meal_${mk}`, time: c.time, title: `🍽 ${t(`meal_${mk}`)}`, body: t("mealAlarmMsg") });
+      if (c?.on) list.push({ id: `meal_${mk}`, time: c.time, title: `🍽 ${t(`meal_${mk}`)}`, body: t("mealAlarmMsg"), sound: "mealalarm.mp3" });
     });
     if (s.settings.ayatNotif?.on)
       list.push({ id: "ayat", time: s.settings.ayatNotif.time, title: t("ayatNotifTitle"), body: t("dailyReminder") });
     if (s.settings.checkinTime) list.push({ id: "checkin", time: s.settings.checkinTime, title: `🌙 ${t("appName")}`, body: t("checkinMsg") });
+    if (s.settings.sleepAlarm?.on) list.push({ id: "sleep", time: s.settings.sleepAlarm.time, title: `😴 ${t("sleep")}`, body: t("sleepAlarmMsg") });
     if (list.length) void nativeScheduleAlarms(list);
   }, [ready, alarmSig, t]);
 

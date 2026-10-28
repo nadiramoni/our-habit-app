@@ -195,3 +195,16 @@ export function playFanfare() {
     /* ignore */
   }
 }
+
+/** timer START — clear two-note "we've begun" signal (meditation / focus) */
+export function playStart() {
+  const ac = ensureCtx();
+  if (!ac) return;
+  try {
+    const t0 = ac.currentTime + 0.01;
+    blip(ac, t0, 440, 440, 0.16, 0.2, "sine");
+    blip(ac, t0 + 0.14, 660, 660, 0.22, 0.2, "sine");
+  } catch {
+    /* ignore */
+  }
+}

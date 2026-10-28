@@ -15,6 +15,7 @@ import { AppState, Lang } from "@/lib/types";
 import { APP_VERSION } from "@/lib/version";
 import { SmartlinkButton } from "@/components/AdsBanner";
 import { backupState, ensureFirebase, fbSignOut, restoreState } from "@/lib/cloud";
+import { totalPoints, levelInfo } from "@/lib/logic";
 import {
   isNative,
   nativeOpenUsageAccess,
@@ -103,8 +104,20 @@ export default function SettingsTab() {
                 {(acc.name || "?").slice(0, 1).toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-bold truncate">{acc.name || acc.email}</div>
-                <div className="text-xs text-muted-foreground truncate">{acc.email}</div>
+                {/* round-5: FULL name here (no truncation) */}
+                <div className="text-sm font-bold break-words">{acc.name || acc.email}</div>
+                <div className="text-xs text-muted-foreground break-all">{acc.email}</div>
+              </div>
+            </div>
+            {/* round-5: points LIVE here now (moved off the home header) */}
+            <div className="mt-3 rounded-xl bg-background/60 border border-border px-3 py-2.5 flex items-center justify-between gap-2">
+              <div>
+                <div className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">{t("pointsTotal")}</div>
+                <div className="text-lg font-extrabold text-primary leading-tight">⚡ {totalPoints(state)}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">{t("levelLabel")}</div>
+                <div className="text-lg font-extrabold leading-tight">{levelInfo(totalPoints(state)).level}</div>
               </div>
             </div>
             <div className="text-[10px] text-primary font-semibold mt-2">

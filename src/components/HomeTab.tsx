@@ -20,7 +20,8 @@ import {
 import { dayPoints, fetchPrayerTimes, reminderOfTheDay, dhikrTotal, computeStreaks } from "@/lib/logic";
 import AdsBanner, { AtNativeInline } from "@/components/AdsBanner";
 import { isNative, nativeGetVideoUsage, nativeOpenUsageAccess, UsageResult } from "@/lib/native";
-import { playAdd, playFanfare, playMinus, playTick } from "@/lib/audio";
+import { playAdd, playFanfare, playMinus, playStart, playTick } from "@/lib/audio";
+import { nativeVibrate } from "@/lib/native";
 
 // ---------- Header ----------
 function Header({ onSecret }: { onSecret?: () => void }) {
@@ -101,15 +102,6 @@ function Header({ onSecret }: { onSecret?: () => void }) {
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">{dateLabel}</p>
         </div>
-      </div>
-      <div className="text-right shrink-0">
-        <div className="points-pill inline-flex items-center gap-1.5 rounded-full px-3 py-1.5">
-          <span className="text-lg">⚡</span>
-          <span className="text-sm font-bold text-primary">
-            {dayPoints(log)} <span className="text-[10px] font-normal text-muted-foreground">/ 41</span>
-          </span>
-        </div>
-        <div className="text-[10px] text-muted-foreground mt-1">{t("todayPoints")}</div>
       </div>
     </div>
   );
@@ -492,6 +484,7 @@ function ReelsCard() {
         ...emptyReels(),
         ...(l.reels || {}),
         facebook: res.facebook,
+        ytshorts: res.ytshorts,
         tiktok: res.tiktok,
         instagram: res.instagram,
         ytlong: res.ytlong,
@@ -686,10 +679,9 @@ function DhikrCard() {
     updateLog(today, (l) => ({ dhikr: { ...l.dhikr, [sel]: (l.dhikr[sel] || 0) + 1 } }));
     setPulse(true);
     setTimeout(() => setPulse(false), 380);
-    playTick(nextVal); // tasbih bead sound — climbs with the count
-    if (navigator.vibrate) navigator.vibrate(15);
+    // round-5: dhikr counter = VIBRATION only (no sound — quiet dhikr)
+    void nativeVibrate(nextVal === target ? 120 : 20);
     if (nextVal === target) {
-      playFanfare();
       setDoneMsg(true);
       setTimeout(() => setDoneMsg(false), 2600);
     }
@@ -769,6 +761,8 @@ function TimerCard({
   const { state, updateLog, today, t } = useStore();
   const log = getLog(state, today);
   const [preset, setPreset] = useState(presets[0]);
+  const [customOn, setCustomOn] = useState(false);
+  const [customVal, setCustomVal] = useState("");
   const [left, setLeft] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -777,6 +771,9 @@ function TimerCard({
   useEffect(() => {
     doneRef.current = doneMsg;
   }, [doneMsg]);
+
+  // effective duration: custom minutes (1…360) when the ✏️ chip is selected
+  const effPreset = customOn && customVal ? Math.max(1, Math.min(360, parseInt(customVal, 10) || 0)) : preset;
 
   useEffect(() => {
     if (running && left !== null && left > 0) {
@@ -811,9 +808,9 @@ function TimerCard({
     setElapsed(0);
   };
 
-  const mm = left === null ? preset * 60 : left;
+  const mm = left === null ? effPreset * 60 : left;
   const display = `${String(Math.floor(mm / 60)).padStart(2, "0")}:${String(mm % 60).padStart(2, "0")}`;
-  const pct = left === null ? 0 : 1 - left / (preset * 60);
+  const pct = left === null ? 0 : 1 - left / (effPreset * 60);
 
   return (
     <Card className="mb-4">
@@ -841,15 +838,36 @@ function TimerCard({
                 {p} {t("min")}
               </Chip>
             ))}
+            {/* round-5: CUSTOM minutes — 1 min up to 6 hours, owner's request */}
+            <Chip active={customOn && left === null} onClick={() => { if (!running) { setCustomOn(true); setLeft(null); } }}>
+              ✏️ {t("timerCustom")}
+            </Chip>
           </div>
+          {customOn && !running ? (
+            <div className="flex gap-2 items-center">
+              <input
+                inputMode="numeric"
+                value={customVal}
+                onChange={(e) => setCustomVal(e.target.value.replace(/\D/g, "").slice(0, 3))}
+                placeholder={t("timerCustomHint")}
+                aria-label={t("timerCustom")}
+                className="flex-1 bg-muted rounded-xl px-3 py-2 text-sm border border-border outline-none focus:ring-1 focus:ring-ring min-h-[44px]"
+              />
+              <span className="text-xs text-muted-foreground shrink-0">{t("min")} · 1–360</span>
+            </div>
+          ) : null}
           <div className="flex gap-2">
             {!running ? (
               <button
                 type="button"
                 onClick={() => {
+                  const mins = customOn ? Math.max(1, Math.min(360, parseInt(customVal, 10) || 0)) : preset;
+                  if (customOn) setPreset(mins);
                   setElapsed(0);
                   setRunning(true);
-                  setLeft((v) => (v === null || v <= 0 ? preset * 60 : v));
+                  setLeft(mins * 60);
+                  playStart(); // round-5: clear “we've begun” sound
+                  void nativeVibrate(40);
                 }}
                 className="flex-1 rounded-xl bg-primary text-primary-foreground text-sm font-semibold py-2.5 min-h-[44px]"
               >
@@ -915,17 +933,30 @@ function MoodCard() {
 
 // ---------- Sleep ----------
 function SleepCard() {
-  const { state, updateLog, today, t } = useStore();
+  const { state, updateLog, updateSettings, today, t } = useStore();
   const log = getLog(state, today);
   const [bed, setBed] = useState(log.sleepBed || "");
   const [wake, setWake] = useState(log.sleepWake || "");
   const [saved, setSaved] = useState(false);
+  const s = state.settings;
 
   const save = () => {
     updateLog(today, { sleepBed: bed || null, sleepWake: wake || null });
     setSaved(true);
+    playAdd();
+    void nativeVibrate(30);
     setTimeout(() => setSaved(false), 1600);
   };
+
+  // sleep duration (wake before bed → slept past midnight → +24h)
+  const dur = (() => {
+    if (!bed || !wake) return null;
+    const [bh, bm] = bed.split(":").map(Number);
+    const [wh, wm] = wake.split(":").map(Number);
+    let mins = wh * 60 + wm - (bh * 60 + bm);
+    if (mins <= 0) mins += 24 * 60;
+    return mins;
+  })();
 
   return (
     <Card className="mb-4">
@@ -956,6 +987,38 @@ function SleepCard() {
         <button type="button" onClick={save} className="rounded-xl bg-primary text-primary-foreground text-sm font-semibold px-4 py-2.5 min-h-[44px]">
           ✓
         </button>
+      </div>
+      {dur !== null ? (
+        <div className="mt-3 rounded-xl bg-primary/10 border border-primary/25 px-3 py-2.5 text-sm font-bold text-primary text-center">
+          🛏 {t("sleepDuration")}: {Math.floor(dur / 60)} {t("hour")} {dur % 60} {t("min")}
+        </div>
+      ) : null}
+      {/* daily bedtime reminder — one alert each day (owner round-5) */}
+      <div className="mt-3 pt-3 border-t border-border flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">⏰ {t("sleepAlarm")}</div>
+          <div className="text-xs text-muted-foreground">{t("sleepAlarmSub")}</div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <input
+            type="time"
+            value={s.sleepAlarm?.time || "22:30"}
+            onChange={(e) => updateSettings({ sleepAlarm: { on: true, time: e.target.value } })}
+            className="bg-muted rounded-lg px-2 py-1.5 text-sm border border-border outline-none focus:ring-1 focus:ring-ring"
+          />
+          <button
+            type="button"
+            role="switch"
+            aria-checked={Boolean(s.sleepAlarm?.on)}
+            onClick={() => {
+              void nativeVibrate(25);
+              updateSettings({ sleepAlarm: { on: !s.sleepAlarm?.on, time: s.sleepAlarm?.time || "22:30" } });
+            }}
+            className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${s.sleepAlarm?.on ? "bg-primary" : "bg-muted border border-border"}`}
+          >
+            <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${s.sleepAlarm?.on ? "left-[22px]" : "left-0.5"}`} />
+          </button>
+        </div>
       </div>
     </Card>
   );
@@ -1366,6 +1429,59 @@ function HabitGrid({ onOpen }: { onOpen: (k: DetailKey) => void }) {
   );
 }
 
+// ---------- Prayer water strip (round-5: 1 glass after EACH prayer, on HOME) ----------
+function PrayerWaterStrip() {
+  const { state, updateLog, today, t } = useStore();
+  const log = getLog(state, today);
+  const done = log.prayerWater.filter(Boolean).length;
+
+  const toggle = (i: number) => {
+    const wasOn = log.prayerWater[i];
+    void nativeVibrate(20);
+    updateLog(today, (l) => {
+      const pw = [...l.prayerWater];
+      pw[i] = !pw[i];
+      const waterMl = Math.max(0, l.waterMl + (pw[i] ? 250 : -250));
+      return { prayerWater: pw, waterMl };
+    });
+    if (wasOn) playMinus();
+    else playAdd();
+  };
+
+  return (
+    <Card className="mb-4 border-primary/25 bg-gradient-to-br from-primary/5 to-transparent">
+      <SectionTitle
+        title={`🥛 ${t("prayerWater")}`}
+        sub={t("prayerWaterSub")}
+        right={
+          <span className={`text-[11px] font-bold shrink-0 ${done === 5 ? "text-primary" : "text-muted-foreground"}`}>
+            {done}/5
+          </span>
+        }
+      />
+      <div className="grid grid-cols-5 gap-2">
+        {PRAYER_KEYS.map((k, i) => {
+          const on = log.prayerWater[i];
+          return (
+            <button
+              key={k}
+              type="button"
+              onClick={() => toggle(i)}
+              className={`rounded-xl border p-2 flex flex-col items-center gap-1 min-h-[64px] active:scale-95 transition-all ${
+                on ? "bg-primary text-primary-foreground border-primary shadow-md" : "bg-secondary border-transparent"
+              }`}
+            >
+              <span className="text-base leading-none">{on ? "🥤" : "🥛"}</span>
+              <span className="text-[10px] font-medium leading-none">{t(`prayer_${k}`)}</span>
+              <span className="text-[9px] opacity-70 leading-none">{on ? "✓ 250ml" : "250ml"}</span>
+            </button>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 // ---------- Next-alarm strip (meals + reminders on the home, as own layers) ----------
 function AlarmsLayer({ onOpen }: { onOpen: (k: DetailKey) => void }) {
   const { state, t } = useStore();
@@ -1476,6 +1592,21 @@ export default function HomeTab({ onSecret }: { onSecret?: () => void }) {
   const { t } = useStore();
   const [detail, setDetail] = useState<DetailKey | null>(null);
 
+  // Android back button — close the open detail page first (round-5)
+  useEffect(() => {
+    const onBack = () => {
+      setDetail((cur) => {
+        if (cur !== null) {
+          (window as unknown as { __ohBackHandled?: boolean }).__ohBackHandled = true;
+          return null;
+        }
+        return cur;
+      });
+    };
+    window.addEventListener("oh:back", onBack);
+    return () => window.removeEventListener("oh:back", onBack);
+  }, []);
+
   return (
     <div>
       <Header onSecret={onSecret} />
@@ -1486,6 +1617,7 @@ export default function HomeTab({ onSecret }: { onSecret?: () => void }) {
         <h2 className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">{t("todayCard")}</h2>
       </div>
       <HabitGrid onOpen={setDetail} />
+      <PrayerWaterStrip />
       <AdsBanner compact variant="b" />
       <AlarmsLayer onOpen={setDetail} />
       <AtNativeInline />

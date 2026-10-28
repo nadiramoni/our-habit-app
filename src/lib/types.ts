@@ -46,6 +46,7 @@ export interface AppSettings {
   theme: "dark" | "light";
   waterGoalMl: number;
   checkinTime: string;
+  sleepAlarm?: AlarmCfg; // optional daily bedtime reminder (round-5)
   fajrAlarm: AlarmCfg;
   adhanAlerts: Record<PrayerKey, AlarmCfg>;
   mealAlarms: Record<MealKey, AlarmCfg>;
@@ -289,6 +290,7 @@ export function defaultSettings(): AppSettings {
     theme: "dark",
     waterGoalMl: 3000,
     checkinTime: "21:00",
+    sleepAlarm: { on: false, time: "22:30" },
     fajrAlarm: { on: true, time: "04:45" },
     adhanAlerts: {
       fajr: { on: false, time: "05:00" },

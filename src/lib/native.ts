@@ -271,12 +271,48 @@ export interface NativeAlarm {
 }
 
 /** Schedule exact alarm notifications (meal / Fajr / adhan) — APK only. */
+const ALARM_CHANNELS: { id: string; name: string; sound: string }[] = [
+  { id: "sound_adhan", name: "Adhan / prayer alarms", sound: "adhan.mp3" },
+  { id: "sound_alarm", name: "Reminders", sound: "alarm.wav" },
+  { id: "sound_mealalarm", name: "Meal alarms", sound: "mealalarm.mp3" },
+  { id: "sound_wateralarm", name: "Water reminders", sound: "wateralarm.mp3" },
+];
+
+/**
+ * Pre-create the alarm channels WITH vibration (owner round-5: alarms must
+ * vibrate even when the sound is missed). The Capacitor plugin only
+ * auto-creates a channel when it does not exist yet — so our vibrating
+ * versions (IMPORTANCE_HIGH) win and are reused verbatim.
+ */
+async function ensureAlarmChannels(): Promise<void> {
+  try {
+    const { LocalNotifications } = await import("@capacitor/local-notifications");
+    for (const ch of ALARM_CHANNELS) {
+      try {
+        await LocalNotifications.createChannel({
+          id: ch.id,
+          name: ch.name,
+          importance: 4, // IMPORTANCE_HIGH → heads-up + sound + vibration
+          sound: ch.sound,
+          vibration: true,
+          visibility: 1, // PUBLIC → visible on the lock screen
+        });
+      } catch {
+        /* channel may exist already — fine, soundChannelId() reuses it */
+      }
+    }
+  } catch {
+    /* plugin missing — non-fatal */
+  }
+}
+
 export async function nativeScheduleAlarms(alarms: NativeAlarm[]): Promise<boolean> {
   if (!isNative()) return false;
   try {
     const { LocalNotifications } = await import("@capacitor/local-notifications");
     const perm = await LocalNotifications.requestPermissions();
     if (perm.display !== "granted") return false;
+    await ensureAlarmChannels();
     await LocalNotifications.cancelAll();
     const now = new Date();
     const list = alarms
@@ -310,4 +346,59 @@ function hashCode(s: string): number {
     h |= 0;
   }
   return h;
+}
+
+/** Haptic feedback — real device vibration (round-5: tasbih = vibration, no sound). */
+export async function nativeVibrate(ms = 20): Promise<void> {
+  try {
+    if (isNative()) {
+      const { Haptics, ImpactStyle } = await import("@capacitor/haptics");
+      if (ms <= 30) await Haptics.impact({ style: ImpactStyle.Light });
+      else if (ms <= 90) await Haptics.impact({ style: ImpactStyle.Medium });
+      else await Haptics.impact({ style: ImpactStyle.Heavy });
+      return;
+    }
+  } catch {
+    /* fall through to web API */
+  }
+  try {
+    if (typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate(ms);
+  } catch {
+    /* ignore */
+  }
+}
+
+export interface BackHandlers {
+  /** return true if the press was consumed (overlay closed etc.) */
+  onBack: () => boolean;
+  /** nothing left in-app → exit the app */
+  onExit: () => void;
+}
+
+/**
+ * Android hardware back button — round-5 (owner): back must NEVER instantly
+ * kill the app. Order: close the top layer (detail pages / admin panel /
+ * alarm overlay — via the "oh:back" DOM event) → go Home → only then exit.
+ */
+export async function nativeHandleBackButton(handlers: BackHandlers): Promise<void> {
+  if (!isNative()) return;
+  try {
+    const { App: CapApp } = await import("@capacitor/app");
+    await CapApp.addListener("backButton", () => {
+      try {
+        (window as AnyRec).__ohBackHandled = false;
+        window.dispatchEvent(new CustomEvent("oh:back"));
+        // listeners run synchronously → by now the flag is set if consumed
+        setTimeout(() => {
+          if ((window as AnyRec).__ohBackHandled) return;
+          handlers.onBack(); // app-level: switch to Home tab (returns true = consumed)
+          if (!(window as AnyRec).__ohBackHandled) handlers.onExit();
+        }, 60);
+      } catch {
+        /* ignore */
+      }
+    });
+  } catch {
+    /* plugin missing — stock WebView behaviour */
+  }
 }
