@@ -18,7 +18,7 @@ import { getLog } from "@/lib/types";
 import { pushDay, ensureProfile, DaySummary } from "@/lib/cloud";
 import { APP_VERSION } from "@/lib/version";
 import { warmAudio, playChime } from "@/lib/audio";
-import { isNative, nativeOpenUrl } from "@/lib/native";
+import { isNative, nativeOpenUrl, nativeScheduleAlarms, NativeAlarm } from "@/lib/native";
 
 type Tab = "home" | "notes" | "stats" | "friends" | "settings";
 
@@ -240,6 +240,39 @@ function Shell() {
     const iv = setInterval(tick, 20000);
     return () => clearInterval(iv);
   }, [ready, today, fireNotif, onAlarm]);
+
+  // NATIVE device alarms (APK): schedule today's remaining alarms with the OS
+  // so they ring with a real sound even when the app is CLOSED — the 20s
+  // engine above only works while the app is open. Re-synced on app open and
+  // whenever any alarm setting changes.
+  const alarmSig = ready
+    ? JSON.stringify([
+        state.settings.fajrAlarm,
+        state.settings.adhanAlerts,
+        state.settings.mealAlarms,
+        state.settings.checkinTime,
+        state.settings.ayatNotif,
+      ])
+    : "";
+  useEffect(() => {
+    if (!ready || !alarmSig || !isNative()) return;
+    const s = stateRef.current;
+    const list: NativeAlarm[] = [];
+    if (s.settings.fajrAlarm?.on)
+      list.push({ id: "fajr", time: s.settings.fajrAlarm.time, title: `🕌 ${t("fajrAlarm")}`, body: t("fajrAlarmMsg") });
+    (["fajr", "dhuhr", "asr", "maghrib", "isha"] as const).forEach((pk) => {
+      const c = s.settings.adhanAlerts?.[pk];
+      if (c?.on) list.push({ id: `adhan_${pk}`, time: c.time, title: `🕌 ${t("adhanAlerts")} — ${t(`prayer_${pk}`)}`, body: t("adhanMsg") });
+    });
+    (["breakfast", "lunch", "dinner"] as const).forEach((mk) => {
+      const c = s.settings.mealAlarms?.[mk];
+      if (c?.on) list.push({ id: `meal_${mk}`, time: c.time, title: `🍽 ${t(`meal_${mk}`)}`, body: t("mealAlarmMsg") });
+    });
+    if (s.settings.ayatNotif?.on)
+      list.push({ id: "ayat", time: s.settings.ayatNotif.time, title: t("ayatNotifTitle"), body: t("dailyReminder") });
+    if (s.settings.checkinTime) list.push({ id: "checkin", time: s.settings.checkinTime, title: `🌙 ${t("appName")}`, body: t("checkinMsg") });
+    if (list.length) void nativeScheduleAlarms(list);
+  }, [ready, alarmSig, t]);
 
   // snooze handling
   const dismissAlarm = useCallback(

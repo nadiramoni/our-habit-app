@@ -106,3 +106,92 @@ export function playChime() {
 export function warmAudio() {
   ensureCtx();
 }
+
+// ==================== UI interaction sounds (owner round-4) ====================
+// Every tap in the app gets its own tiny synthesized voice: prayer ticks climb
+// a musical scale, water +/− bubble up/down, the tasbih bead clicks — all
+// Web Audio (no files), so it works offline inside the WebView.
+
+function blip(
+  ac: AudioContext,
+  at: number,
+  f0: number,
+  f1: number,
+  dur: number,
+  vol = 0.16,
+  type: OscillatorType = "sine"
+) {
+  const osc = ac.createOscillator();
+  const g = ac.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(f0, at);
+  if (f1 !== f0) osc.frequency.exponentialRampToValueAtTime(f1, at + dur);
+  g.gain.setValueAtTime(0, at);
+  g.gain.linearRampToValueAtTime(vol, at + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.001, at + dur);
+  osc.connect(g);
+  g.connect(ac.destination);
+  osc.start(at);
+  osc.stop(at + dur + 0.03);
+}
+
+/** soft generic tap click */
+export function playTap() {
+  const ac = ensureCtx();
+  if (!ac) return;
+  try {
+    blip(ac, ac.currentTime + 0.01, 720, 640, 0.07, 0.1, "triangle");
+  } catch {
+    /* ignore */
+  }
+}
+
+// pentatonic ladder — consecutive ticks climb the scale like little music notes
+const SCALE = [523.25, 587.33, 659.25, 783.99, 880.0, 1046.5, 1174.66, 1318.5];
+
+/** tick tick tick — each completed item plays the next note of the scale */
+export function playTick(count = 1) {
+  const ac = ensureCtx();
+  if (!ac) return;
+  try {
+    const f = SCALE[Math.max(0, Math.abs(count)) % SCALE.length];
+    blip(ac, ac.currentTime + 0.01, f, f, 0.18, 0.18, "sine");
+    blip(ac, ac.currentTime + 0.01, f * 2, f * 2, 0.1, 0.06, "sine");
+  } catch {
+    /* ignore */
+  }
+}
+
+/** water + glass — bubbly upward chirp */
+export function playAdd() {
+  const ac = ensureCtx();
+  if (!ac) return;
+  try {
+    blip(ac, ac.currentTime + 0.01, 500, 940, 0.14, 0.16, "sine");
+  } catch {
+    /* ignore */
+  }
+}
+
+/** water − glass — downward blip */
+export function playMinus() {
+  const ac = ensureCtx();
+  if (!ac) return;
+  try {
+    blip(ac, ac.currentTime + 0.01, 620, 300, 0.16, 0.14, "sine");
+  } catch {
+    /* ignore */
+  }
+}
+
+/** all prayers / goal complete — tiny celebration fanfare */
+export function playFanfare() {
+  const ac = ensureCtx();
+  if (!ac) return;
+  try {
+    const t0 = ac.currentTime + 0.01;
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => blip(ac, t0 + i * 0.12, f, f, 0.24, 0.18, "sine"));
+  } catch {
+    /* ignore */
+  }
+}

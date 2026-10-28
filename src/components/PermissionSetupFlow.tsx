@@ -57,6 +57,7 @@ export default function PermissionSetupFlow({ onFinished }: { onFinished: () => 
   const [status, setStatus] = useState<PermStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [hint, setHint] = useState(false);
+  const [deniedHint, setDeniedHint] = useState(false);
 
   const refresh = useCallback(async () => {
     const s = await nativePermissionStatus();
@@ -90,18 +91,32 @@ export default function PermissionSetupFlow({ onFinished }: { onFinished: () => 
 
   const askNotif = async () => {
     setBusy(true);
+    setDeniedHint(false);
     await nativeRequestNotifications();
     const s = await refresh();
     setBusy(false);
-    if (s?.notifications === "granted") setStep("battery");
+    if (s?.notifications === "granted") {
+      setStep("battery");
+    } else {
+      // the system dialog may be permanently dismissed ("don't ask again") —
+      // take the user straight to the notification settings instead of stuck
+      setDeniedHint(true);
+      await nativeOpenNotificationSettings();
+    }
   };
 
   const askBattery = async () => {
     setBusy(true);
+    setDeniedHint(false);
     await nativeRequestBatteryExemption();
     const s = await refresh();
     setBusy(false);
-    if (s?.battery === "granted") setStep("usage");
+    if (s?.battery === "granted") {
+      setStep("usage");
+    } else {
+      setDeniedHint(true);
+      await nativeOpenBatteryList();
+    }
   };
 
   const openUsage = async () => {
@@ -189,6 +204,7 @@ export default function PermissionSetupFlow({ onFinished }: { onFinished: () => 
                 {busy ? "..." : t("pfAllowBtn")}
               </button>
               <p className="text-[10px] text-muted-foreground text-center mt-2">{t("pfSystemDialogNote")}</p>
+              {deniedHint ? <p className="text-[11px] text-amber-500 text-center mt-1.5 font-medium">⚙️ {t("pfDeniedHint")}</p> : null}
               <button type="button" onClick={() => setStep("battery")} className="w-full text-xs text-muted-foreground py-2.5 mt-1 underline underline-offset-2">
                 {t("pfSkipThis")}
               </button>
@@ -213,6 +229,7 @@ export default function PermissionSetupFlow({ onFinished }: { onFinished: () => 
                 {busy ? "..." : t("pfAllowBtn")}
               </button>
               <p className="text-[10px] text-muted-foreground text-center mt-2">{t("pfSystemDialogNote")}</p>
+              {deniedHint ? <p className="text-[11px] text-amber-500 text-center mt-1.5 font-medium">⚙️ {t("pfDeniedHint")}</p> : null}
               <button type="button" onClick={() => setStep("usage")} className="w-full text-xs text-muted-foreground py-2.5 mt-1 underline underline-offset-2">
                 {t("pfSkipThis")}
               </button>

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useStore } from "@/lib/store";
 import { Card, Chip, SectionTitle, Ring, Bar } from "@/components/ui-bits";
 import {
@@ -19,6 +20,7 @@ import {
 import { dayPoints, fetchPrayerTimes, reminderOfTheDay, dhikrTotal, computeStreaks } from "@/lib/logic";
 import AdsBanner, { AtNativeInline } from "@/components/AdsBanner";
 import { isNative, nativeGetVideoUsage, nativeOpenUsageAccess, UsageResult } from "@/lib/native";
+import { playAdd, playFanfare, playMinus, playTick } from "@/lib/audio";
 
 // ---------- Header ----------
 function Header({ onSecret }: { onSecret?: () => void }) {
@@ -173,6 +175,24 @@ export function PrayerCard() {
   const log = getLog(state, today);
   const [locState, setLocState] = useState<"idle" | "loading" | "ok" | "fail">("idle");
   const times = state.settings.prayerTimes;
+  // live compass (device magnetometer). null = no sensor → static dial mode
+  const [heading, setHeading] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const onOri = (e: DeviceOrientationEvent) => {
+      if (!alive) return;
+      const wk = (e as DeviceOrientationEvent & { webkitCompassHeading?: number }).webkitCompassHeading;
+      const h = typeof wk === "number" ? wk : e.alpha != null ? (360 - e.alpha) % 360 : null;
+      if (h != null && !Number.isNaN(h)) setHeading(h);
+    };
+    window.addEventListener("deviceorientationabsolute", onOri as EventListener);
+    window.addEventListener("deviceorientation", onOri as EventListener);
+    return () => {
+      alive = false;
+      window.removeEventListener("deviceorientationabsolute", onOri as EventListener);
+      window.removeEventListener("deviceorientation", onOri as EventListener);
+    };
+  }, []);
 
   const autoSet = async (askGeo: boolean) => {
     setLocState("loading");
@@ -204,13 +224,30 @@ export function PrayerCard() {
   }, [today]);
 
   const toggle = (k: PrayerKey) => {
+    const wasOn = log.prayers[k];
     updateLog(today, (l) => ({ prayers: { ...l.prayers, [k]: !l.prayers[k] } }));
+    try {
+      navigator.vibrate?.(18);
+    } catch {
+      /* ignore */
+    }
+    if (!wasOn) {
+      const done = PRAYER_KEYS.filter((x) => log.prayers[x]).length + 1;
+      if (done >= 5) playFanfare();
+      else playTick(done); // each tick climbs the musical scale
+    } else {
+      playMinus();
+    }
   };
 
   const doneCount = PRAYER_KEYS.filter((k) => log.prayers[k]).length;
   const streak = computeStreaks(state, today).current;
   const loc = state.settings.location;
   const bearing = loc ? qiblaBearing(loc.lat, loc.lng) : null;
+  // compass needle: qibla angle relative to where the phone top points
+  const needle = bearing != null ? (heading != null ? bearing - heading : bearing) : 0;
+  const diff = ((needle + 180) % 360 + 360) % 360 - 180;
+  const aligned = bearing != null && heading != null && Math.abs(diff) <= 6;
 
   return (
     <Card className="mb-4">
@@ -251,27 +288,9 @@ export function PrayerCard() {
         })}
       </div>
 
-      <div className="mt-4 pt-3 border-t border-border flex items-center justify-between gap-2">
-        <div className="min-w-0">
+      <div className="mt-4 pt-3 border-t border-border">
+        <div className="flex items-center justify-between gap-2 mb-2">
           <div className="text-sm font-semibold">🧭 {t("qibla")}</div>
-          {bearing !== null ? (
-            <div className="text-xs text-muted-foreground">
-              {t("qiblaDeg")}: <b className="text-foreground">{Math.round(bearing)}°</b>
-            </div>
-          ) : (
-            <div className="text-xs text-muted-foreground">{t("qiblaNote")}</div>
-          )}
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {bearing !== null ? (
-            <span
-              className="inline-block text-2xl text-primary"
-              style={{ transform: `rotate(${bearing}deg)` }}
-              aria-label="Qibla direction"
-            >
-              ⬆️
-            </span>
-          ) : null}
           <button
             type="button"
             onClick={() => void autoSet(true)}
@@ -280,6 +299,62 @@ export function PrayerCard() {
             {locState === "loading" ? "..." : t("qiblaUseLoc")}
           </button>
         </div>
+        {bearing !== null ? (
+          <div className="flex items-center gap-4">
+            {/* live compass dial */}
+            <div
+              className={`relative w-36 h-36 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors ${
+                aligned ? "border-primary" : "border-border"
+              }`}
+              style={aligned ? { boxShadow: "0 0 26px -6px color-mix(in srgb, var(--primary) 60%, transparent)" } : undefined}
+              role="img"
+              aria-label="Qibla compass"
+            >
+              {/* rotating rose — when the sensor is live, N always points to real north */}
+              <div
+                className="absolute inset-0 transition-transform duration-100"
+                style={{ transform: `rotate(${heading != null ? -heading : 0}deg)` }}
+              >
+                <span className="absolute top-1 left-1/2 -translate-x-1/2 text-[10px] font-extrabold text-destructive">N</span>
+                <span className="absolute bottom-1 left-1/2 -translate-x-1/2 text-[10px] font-bold text-muted-foreground">S</span>
+                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground">E</span>
+                <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground">W</span>
+                <span className="absolute top-6 left-1/2 -translate-x-1/2 w-px h-2 bg-border" />
+                <span className="absolute bottom-6 left-1/2 -translate-x-1/2 w-px h-2 bg-border" />
+                <span className="absolute left-6 top-1/2 -translate-y-1/2 h-px w-2 bg-border" />
+                <span className="absolute right-6 top-1/2 -translate-y-1/2 h-px w-2 bg-border" />
+              </div>
+              {/* qibla needle — kaaba on the ring, line to the center */}
+              <div
+                className="absolute inset-0 transition-transform duration-100"
+                style={{ transform: `rotate(${needle}deg)` }}
+              >
+                <div className="absolute left-1/2 top-2 -translate-x-1/2 flex flex-col items-center">
+                  <span className="text-2xl leading-none">🕋</span>
+                  <span className="w-0.5 h-12 rounded-full mt-0.5" style={{ background: "color-mix(in srgb, var(--primary) 70%, transparent)" }} />
+                </div>
+              </div>
+              <span className="w-2.5 h-2.5 rounded-full relative z-10 shadow" style={{ background: "var(--primary)" }} />
+            </div>
+            <div className="min-w-0 text-xs text-muted-foreground leading-relaxed">
+              <div>
+                {t("qiblaDeg")}: <b className="text-foreground">{Math.round(bearing)}°</b>
+                {heading != null ? <span className="opacity-70"> · N {Math.round(heading)}°</span> : null}
+              </div>
+              <div className="mt-1">
+                {aligned ? (
+                  <b className="text-primary">{t("qiblaAligned")}</b>
+                ) : heading != null ? (
+                  t("qiblaCompassNote")
+                ) : (
+                  t("qiblaNoCompass")
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="text-xs text-muted-foreground">{t("qiblaNote")}</div>
+        )}
       </div>
     </Card>
   );
@@ -296,15 +371,22 @@ function WaterCard() {
     return Math.min(n, 12);
   }, [goal]);
 
-  const add = (ml: number) => updateLog(today, (l) => ({ waterMl: Math.max(0, l.waterMl + ml) }));
+  const add = (ml: number) => {
+    updateLog(today, (l) => ({ waterMl: Math.max(0, l.waterMl + ml) }));
+    if (ml > 0) playAdd();
+    else playMinus();
+  };
 
   const togglePrayerGlass = (i: number) => {
+    const wasOn = log.prayerWater[i];
     updateLog(today, (l) => {
       const pw = [...l.prayerWater];
       pw[i] = !pw[i];
       const waterMl = Math.max(0, l.waterMl + (pw[i] ? 250 : -250));
       return { prayerWater: pw, waterMl };
     });
+    if (wasOn) playMinus();
+    else playAdd();
   };
 
   return (
@@ -604,8 +686,10 @@ function DhikrCard() {
     updateLog(today, (l) => ({ dhikr: { ...l.dhikr, [sel]: (l.dhikr[sel] || 0) + 1 } }));
     setPulse(true);
     setTimeout(() => setPulse(false), 380);
+    playTick(nextVal); // tasbih bead sound — climbs with the count
     if (navigator.vibrate) navigator.vibrate(15);
     if (nextVal === target) {
+      playFanfare();
       setDoneMsg(true);
       setTimeout(() => setDoneMsg(false), 2600);
     }
@@ -1336,6 +1420,11 @@ function AlarmsLayer({ onOpen }: { onOpen: (k: DetailKey) => void }) {
 }
 
 // ---------- Full-screen detail page ----------
+// v2.2 FIX: rendered through a PORTAL to <body>. It used to live inside the
+// tab container whose .page-in animation (fill-mode: both) keeps a transform
+// → a stacking context → the fixed overlay's z-index was trapped BELOW the
+// bottom-nav (z-40 sibling). On phones the page looked like a small popup
+// with the nav floating above — exactly what the owner reported.
 function DetailPage({ k, onClose }: { k: DetailKey; onClose: () => void }) {
   const { t } = useStore();
   useEffect(() => {
@@ -1351,8 +1440,9 @@ function DetailPage({ k, onClose }: { k: DetailKey; onClose: () => void }) {
     };
   }, [onClose]);
 
-  return (
-    <div className="fixed inset-0 z-[70] bg-background overflow-y-auto animate-slide-up">
+  if (typeof document === "undefined") return null; // static-export prerender safety
+  return createPortal(
+    <div className="fixed inset-0 bg-background overflow-y-auto animate-slide-up" style={{ zIndex: 80 }}>
       <div className="max-w-md mx-auto px-4 pb-12">
         <div className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border -mx-4 px-4 py-3 flex items-center gap-3 mb-4">
           <button
@@ -1377,7 +1467,8 @@ function DetailPage({ k, onClose }: { k: DetailKey; onClose: () => void }) {
         {k === "meals" ? <MealsCard /> : null}
         {k === "alarms" ? <AlarmsCard /> : null}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1388,12 +1479,14 @@ export default function HomeTab({ onSecret }: { onSecret?: () => void }) {
   return (
     <div>
       <Header onSecret={onSecret} />
+      <AdsBanner compact />
       <ReminderCard />
       <WeekStrip />
       <div className="px-1 mb-2">
         <h2 className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">{t("todayCard")}</h2>
       </div>
       <HabitGrid onOpen={setDetail} />
+      <AdsBanner compact />
       <AlarmsLayer onOpen={setDetail} />
       <AtNativeInline />
       <div className="mb-2">
