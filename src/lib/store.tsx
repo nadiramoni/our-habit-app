@@ -235,7 +235,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             const perm = await LocalNotifications.checkPermissions();
             if (perm.display !== "granted") return;
             await LocalNotifications.schedule({
-              notifications: [{ id: Math.floor(Math.random() * 2000000000), title, body }],
+              notifications: [{ id: Math.floor(Math.random() * 2000000000), title, body, sound: "alarm.wav" }],
             });
           } catch {
             /* ignore */

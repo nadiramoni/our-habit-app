@@ -259,10 +259,10 @@ function Shell() {
     const s = stateRef.current;
     const list: NativeAlarm[] = [];
     if (s.settings.fajrAlarm?.on)
-      list.push({ id: "fajr", time: s.settings.fajrAlarm.time, title: `🕌 ${t("fajrAlarm")}`, body: t("fajrAlarmMsg") });
+      list.push({ id: "fajr", time: s.settings.fajrAlarm.time, title: `🕌 ${t("fajrAlarm")}`, body: t("fajrAlarmMsg"), sound: "adhan.mp3" });
     (["fajr", "dhuhr", "asr", "maghrib", "isha"] as const).forEach((pk) => {
       const c = s.settings.adhanAlerts?.[pk];
-      if (c?.on) list.push({ id: `adhan_${pk}`, time: c.time, title: `🕌 ${t("adhanAlerts")} — ${t(`prayer_${pk}`)}`, body: t("adhanMsg") });
+      if (c?.on) list.push({ id: `adhan_${pk}`, time: c.time, title: `🕌 ${t("adhanAlerts")} — ${t(`prayer_${pk}`)}`, body: t("adhanMsg"), sound: "adhan.mp3" });
     });
     (["breakfast", "lunch", "dinner"] as const).forEach((mk) => {
       const c = s.settings.mealAlarms?.[mk];

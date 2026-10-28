@@ -1479,18 +1479,18 @@ export default function HomeTab({ onSecret }: { onSecret?: () => void }) {
   return (
     <div>
       <Header onSecret={onSecret} />
-      <AdsBanner compact />
+      <AdsBanner compact variant="a" />
       <ReminderCard />
       <WeekStrip />
       <div className="px-1 mb-2">
         <h2 className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">{t("todayCard")}</h2>
       </div>
       <HabitGrid onOpen={setDetail} />
-      <AdsBanner compact />
+      <AdsBanner compact variant="b" />
       <AlarmsLayer onOpen={setDetail} />
       <AtNativeInline />
       <div className="mb-2">
-        <AdsBanner />
+        <AdsBanner variant="b" />
       </div>
       {detail ? <DetailPage k={detail} onClose={() => setDetail(null)} /> : null}
     </div>

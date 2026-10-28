@@ -263,6 +263,11 @@ export interface NativeAlarm {
   time: string; // "HH:MM"
   title: string;
   body: string;
+  /** raw resource inside the APK (res/raw) — "adhan.mp3" for prayer/adhan
+   *  alarms, "alarm.wav" (soft bell) for everything else. The Capacitor
+   *  LocalNotifications plugin auto-creates a dedicated Android channel per
+   *  sound, so each alarm type rings with its own voice. */
+  sound?: string;
 }
 
 /** Schedule exact alarm notifications (meal / Fajr / adhan) — APK only. */
@@ -283,7 +288,7 @@ export async function nativeScheduleAlarms(alarms: NativeAlarm[]): Promise<boole
           title: a.title,
           body: a.body,
           schedule: { on: { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate(), hour: h, minute: m }, allowWhileIdle: true },
-          sound: "alarm.wav",
+          sound: a.sound || "alarm.wav",
           actionTypeId: "",
         };
       })
