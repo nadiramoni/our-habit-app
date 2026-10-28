@@ -1,0 +1,71 @@
+name: Build Android APK (free, on GitHub's servers)
+
+on:
+  workflow_dispatch: {} # "Run workflow" button
+  push:
+    tags: ["v*"] # push a tag like v1.2.0 → also creates a GitHub Release
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Bake owner's Firebase config (optional secret FIREBASE_CONFIG)
+        env:
+          FB: ${{ secrets.FIREBASE_CONFIG }}
+        run: |
+          if [ -n "$FB" ]; then
+            printf 'export const BAKED_FIREBASE: string | null = `%s`;\n' "$FB" > src/lib/firebase-baked.ts
+            echo "Firebase config baked from secret ✓"
+          else
+            echo "Using the baked-in Firebase config already in the repo (owner's project our-habit-61587) ✓"
+          fi
+
+      - name: Move API routes away (static build has no server)
+        run: mv src/app/api .apk-api-backup
+
+      - name: Bake latest ads/update config into the APK
+        run: node scripts/bake-cfg.mjs
+
+      - name: Static export (out/)
+        run: NEXT_EXPORT=1 npx next build
+
+      - name: Create Capacitor Android project + native plugin
+        run: node scripts/prepare-apk.mjs
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build debug APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK
+        run: |
+          mkdir -p apk-out
+          cp android/app/build/outputs/apk/debug/app-debug.apk apk-out/OurHabit-${GITHUB_REF_NAME:-build}.apk
+
+      - name: Upload APK artifact (download from the run page)
+        uses: actions/upload-artifact@v4
+        with:
+          name: OurHabit-APK
+          path: apk-out/*.apk
+          if-no-files-found: error
