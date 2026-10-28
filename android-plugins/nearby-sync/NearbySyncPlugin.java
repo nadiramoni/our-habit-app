@@ -156,7 +156,7 @@ public class NearbySyncPlugin extends Plugin {
             return;
         }
         try {
-            client().sendPayload(remoteEndpoint, text.getBytes(StandardCharsets.UTF_8));
+            client().sendPayload(remoteEndpoint, Payload.fromBytes(text.getBytes(StandardCharsets.UTF_8)));
             call.resolve();
         } catch (Exception e) {
             call.reject("send_failed", e);
