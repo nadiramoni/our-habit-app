@@ -60,9 +60,23 @@ for (const rel of PLUGINS) {
 }
 
 // 3. register all plugins in MainActivity
+// ⚠️⚠️ CRITICAL (v2.2 root-cause fix): in Capacitor 5+, super.onCreate() ALREADY
+// builds the bridge (BridgeActivity.onCreate → load() → bridgeBuilder.create()).
+// registerPlugin() only queues into the builder — so the calls MUST run BEFORE
+// super.onCreate(). Registering AFTER (the old v2.1 code) silently added the
+// plugins to an already-built bridge → window.Capacitor.Plugins.{UsageTracker,
+// AppPermissions,NearbySync} were MISSING on real phones → every permission
+// dialog, usage-access link and the notification test did NOTHING.
 const mainActivityPath = path.join(appPkgDir, "MainActivity.java");
 let ma = fs.readFileSync(mainActivityPath, "utf8");
-if (!ma.includes("registerPlugin")) {
+const REG_CALLS = [
+  "UsageTrackerPlugin.class",
+  "AppPermissionsPlugin.class",
+  "NearbySyncPlugin.class",
+]
+  .map((c) => `    registerPlugin(${c});`)
+  .join("\n");
+if (!ma.includes("registerPlugin(UsageTrackerPlugin.class)")) {
   ma = ma
     .replace(
       "import com.getcapacitor.BridgeActivity;",
@@ -73,15 +87,21 @@ if (!ma.includes("registerPlugin")) {
       `public class MainActivity extends BridgeActivity {
   @Override
   public void onCreate(Bundle savedInstanceState) {
+${REG_CALLS}
     super.onCreate(savedInstanceState);
-    registerPlugin(UsageTrackerPlugin.class);
-    registerPlugin(AppPermissionsPlugin.class);
-    registerPlugin(NearbySyncPlugin.class);
   }
 `
     );
   fs.writeFileSync(mainActivityPath, ma);
-  log("registered UsageTracker + AppPermissions + NearbySync in MainActivity");
+}
+{
+  const idxReg = ma.indexOf("registerPlugin(UsageTrackerPlugin.class)");
+  const idxSuper = ma.indexOf("super.onCreate(savedInstanceState);");
+  if (idxReg === -1 || idxSuper === -1 || idxReg > idxSuper) {
+    console.error("[prepare-apk] ✗ plugin registerPlugin() calls are missing or AFTER super.onCreate — aborting");
+    process.exit(1);
+  }
+  log("plugins registered BEFORE super.onCreate ✓ (all 3 live in the JS bridge)");
 }
 
 // 4. manifest permissions
@@ -138,6 +158,47 @@ if (!gradle0.includes("play-services-nearby")) {
   );
   fs.writeFileSync(gradlePath0, gradle0);
   log("play-services-nearby:19.3.0 added to app/build.gradle");
+}
+
+// 4.6. notification sounds → res/raw/ (scheduled alarms play these even when
+// the app is closed). alarm.wav is generated (soft two-tone bell); if the
+// owner drops a real adhan recording at public/adhan.mp3 it is bundled too
+// and prayer/adhan reminders will use it automatically.
+const rawDir = path.join(ROOT, "android", "app", "src", "main", "res", "raw");
+fs.mkdirSync(rawDir, { recursive: true });
+const adhanSrc = path.join(ROOT, "public", "adhan.mp3");
+if (fs.existsSync(adhanSrc)) {
+  fs.copyFileSync(adhanSrc, path.join(rawDir, "adhan.mp3"));
+  log("res/raw/adhan.mp3 ← public/adhan.mp3 (REAL adhan for prayer reminders)");
+} else {
+  log("no public/adhan.mp3 — prayer reminders use the alarm chime (owner can add a real recording later)");
+}
+if (!fs.existsSync(path.join(rawDir, "alarm.wav"))) {
+  const sr = 44100;
+  const n = Math.floor(sr * 1.2);
+  const buf = Buffer.alloc(44 + n * 2);
+  buf.write("RIFF", 0);
+  buf.writeUInt32LE(36 + n * 2, 4);
+  buf.write("WAVE", 8);
+  buf.write("fmt ", 12);
+  buf.writeUInt32LE(16, 16);
+  buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22);
+  buf.writeUInt32LE(sr, 24);
+  buf.writeUInt32LE(sr * 2, 28);
+  buf.writeUInt16LE(2, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write("data", 36);
+  buf.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) {
+    const t = i / sr;
+    const env = Math.min(1, t / 0.02) * Math.exp(-t * 3);
+    const f = t < 0.5 ? 880 : 1174.66; // A5 → D6 soft bell
+    const s = Math.round(Math.sin(2 * Math.PI * f * t) * env * 32000 * 0.6);
+    buf.writeInt16LE(s, 44 + i * 2);
+  }
+  fs.writeFileSync(path.join(rawDir, "alarm.wav"), buf);
+  log("res/raw/alarm.wav generated (reminder/adhan notification sound)");
 }
 
 // 5. version stamp
