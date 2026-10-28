@@ -1,0 +1,410 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --radius: 1rem;
+  --background: #f3f7f4;
+  --foreground: #10221a;
+  --card: #ffffff;
+  --card-foreground: #10221a;
+  --popover: #ffffff;
+  --popover-foreground: #10221a;
+  --primary: #16a34a;
+  --primary-foreground: #ffffff;
+  --secondary: #e6f1ea;
+  --secondary-foreground: #123528;
+  --muted: #e8f1eb;
+  --muted-foreground: #5b7a6c;
+  --accent: #dff3e7;
+  --accent-foreground: #0d6b34;
+  --destructive: #ef4444;
+  --border: #dbe7e0;
+  --input: #dbe7e0;
+  --ring: #16a34a;
+  --chart-1: #16a34a;
+  --chart-2: #0d9488;
+  --chart-3: #ca8a04;
+  --chart-4: #dc2626;
+  --chart-5: #7c3aed;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #12241c;
+  --sidebar-primary: #16a34a;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e3efe8;
+  --sidebar-accent-foreground: #14392a;
+  --sidebar-border: #dce8e1;
+  --sidebar-ring: #16a34a;
+}
+
+.dark {
+  --background: #05090c;
+  --foreground: #eaf3ee;
+  --card: #0d1512;
+  --card-foreground: #eaf3ee;
+  --popover: #0d1512;
+  --popover-foreground: #eaf3ee;
+  --primary: #34d399;
+  --primary-foreground: #04130b;
+  --secondary: #16211a;
+  --secondary-foreground: #d3eadd;
+  --muted: #14201a;
+  --muted-foreground: #93b3a4;
+  --accent: #1a2a20;
+  --accent-foreground: #86efc0;
+  --destructive: #f87171;
+  --border: #1f3128;
+  --input: #22332a;
+  --ring: #34d399;
+  --chart-1: #34d399;
+  --chart-2: #2dd4bf;
+  --chart-3: #fbbf24;
+  --chart-4: #f87171;
+  --chart-5: #a78bfa;
+  --sidebar: #0d1512;
+  --sidebar-foreground: #eaf3ee;
+  --sidebar-primary: #34d399;
+  --sidebar-primary-foreground: #04130b;
+  --sidebar-accent: #1a2a20;
+  --sidebar-accent-foreground: #86efc0;
+  --sidebar-border: #1f3128;
+  --sidebar-ring: #34d399;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Hind Siliguri", "Noto Sans Bengali", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  /* soft ambient glow — gives both themes gentle depth instead of flat fill */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      radial-gradient(560px 320px at 85% -8%, rgba(52, 211, 153, 0.07), transparent 70%),
+      radial-gradient(480px 300px at 0% 105%, rgba(45, 212, 191, 0.05), transparent 70%);
+  }
+  .dark body::before {
+    background:
+      radial-gradient(560px 320px at 85% -8%, rgba(52, 211, 153, 0.1), transparent 70%),
+      radial-gradient(480px 300px at 0% 105%, rgba(45, 212, 191, 0.07), transparent 70%);
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(1); opacity: 0.6; }
+  70% { transform: scale(1.25); opacity: 0; }
+  100% { transform: scale(1.25); opacity: 0; }
+}
+.tap-pulse {
+  animation: pulse-ring 0.4s ease-out;
+}
+
+/* ---------- Logo & page animations (v1.3 redesign) ---------- */
+@keyframes logo-pop {
+  0% { transform: scale(0.5) rotate(-8deg); opacity: 0; }
+  60% { transform: scale(1.08) rotate(2deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+.logo-pop {
+  animation: logo-pop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes logo-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
+}
+.logo-float {
+  animation: logo-float 2.6s ease-in-out infinite;
+}
+
+@keyframes logo-fade {
+  0% { transform: translateY(8px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+.logo-fade {
+  animation: logo-fade 0.6s ease-out 0.25s both;
+}
+
+@keyframes slide-up-in {
+  0% { transform: translateY(24px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+.animate-slide-up {
+  animation: slide-up-in 0.28s ease-out;
+}
+
+/* ---------- v1.4 dark-mode & card polish ---------- */
+/* Cards get a subtle inner gradient + softer shadow in dark mode */
+.dark .card-elevated {
+  background-image: linear-gradient(160deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0) 45%);
+  box-shadow: 0 6px 24px -12px rgba(0, 0, 0, 0.7);
+}
+
+/* Bottom nav: active item gets a glowing pill instead of a color swap */
+.nav-item {
+  position: relative;
+  border-radius: 14px;
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.15s ease;
+}
+.nav-item:active {
+  transform: scale(0.94);
+}
+.nav-item.nav-active {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+.nav-item.nav-active .nav-ico {
+  transform: scale(1.12) translateY(-1px);
+}
+
+/* habit tile hover/press affordance */
+.habit-tile {
+  will-change: transform;
+}
+.habit-tile:active {
+  transform: scale(0.97);
+}
+
+/* ---------- v2.0 UI polish ---------- */
+/* Habit tiles: richer surface — soft top-glow + inner border in dark mode */
+.dark .habit-tile {
+  background-color: color-mix(in srgb, var(--card) 80%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 8px 20px -14px rgba(0, 0, 0, 0.9);
+}
+.habit-tile .tile-ico {
+  transition: transform 0.2s ease;
+}
+.habit-tile:hover .tile-ico {
+  transform: scale(1.08) translateY(-1px);
+}
+
+/* Cards: gentle hover lift on desktop, unchanged on touch */
+@media (hover: hover) {
+  .card-elevated {
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+  }
+  .card-elevated:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 30px -18px rgba(0, 0, 0, 0.45);
+  }
+}
+
+/* Bottom nav: floating pill look */
+nav.bottom-nav {
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  backdrop-filter: blur(14px);
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.nav-item.nav-active::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 26px;
+  height: 3px;
+  border-radius: 0 0 4px 4px;
+  background: var(--primary);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--primary) 60%, transparent);
+}
+
+/* staggered entrance for home grid tiles */
+@keyframes tile-in {
+  0% { transform: translateY(14px) scale(0.97); opacity: 0; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+.tile-in {
+  animation: tile-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* soft pulse for the "pending" note status */
+@keyframes soft-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.st-pending {
+  animation: soft-pulse 1.6s ease-in-out infinite;
+}
+
+/* sync bar shimmer while exchanging */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--primary) 12%, transparent), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+/* ---------- v2.1 design system ---------- */
+
+/* Hero button — the ONE main action on a screen gets a gradient + glow */
+.btn-hero {
+  background-image: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 72%, #14b8a6));
+  box-shadow: 0 8px 20px -10px color-mix(in srgb, var(--primary) 55%, transparent);
+}
+.btn-hero:active {
+  transform: scale(0.98);
+}
+
+/* Gradient text for names/headings — a quiet touch of premium */
+.grad-text {
+  background-image: linear-gradient(120deg, var(--foreground) 30%, var(--primary) 75%, color-mix(in srgb, var(--primary) 60%, #14b8a6));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Soft icon container — used by settings rows, nearby panel, perm rows */
+.icon-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 18%, transparent);
+}
+
+/* Tab switch page transition */
+@keyframes page-in {
+  0% { transform: translateY(10px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+.page-in {
+  animation: page-in 0.24s ease-out both;
+}
+
+/* Completed habit tile — quiet celebration */
+.tile-done {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 0 0 1.5px color-mix(in srgb, var(--primary) 45%, transparent),
+    0 10px 26px -14px color-mix(in srgb, var(--primary) 60%, transparent) !important;
+}
+.tile-done .tile-check {
+  opacity: 1;
+  transform: scale(1);
+}
+.tile-check {
+  opacity: 0;
+  transform: scale(0.4);
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Chat bubbles for shared notes (messenger feel) */
+.bubble-mine {
+  background-image: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 78%, #14b8a6));
+  color: var(--primary-foreground);
+  border-radius: 18px 18px 6px 18px;
+  box-shadow: 0 6px 16px -10px color-mix(in srgb, var(--primary) 60%, transparent);
+}
+.bubble-theirs {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 18px 18px 18px 6px;
+  box-shadow: 0 4px 14px -10px rgba(0, 0, 0, 0.35);
+}
+.bubble-done {
+  opacity: 0.68;
+}
+.bubble-mine .bubble-chip {
+  background: rgba(255, 255, 255, 0.18);
+  color: var(--primary-foreground);
+}
+.bubble-theirs .bubble-chip {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+
+/* Points pill — gentle glow like the nav pill */
+.points-pill {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 25%, transparent);
+  box-shadow: 0 0 18px -6px color-mix(in srgb, var(--primary) 35%, transparent);
+}
+
+/* Quote-style daily reminder */
+.quote-card {
+  position: relative;
+  overflow: hidden;
+}
+.quote-card::before {
+  content: "";
+  position: absolute;
+  right: -26px;
+  top: -30px;
+  font-size: 130px;
+  line-height: 1;
+  font-family: Georgia, serif;
+  color: color-mix(in srgb, var(--primary) 10%, transparent);
+  pointer-events: none;
+}
+
+/* Accessible focus ring everywhere */
+:where(button, a, input, textarea, [role="switch"]):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary) 70%, transparent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--primary) 30%, transparent);
+}

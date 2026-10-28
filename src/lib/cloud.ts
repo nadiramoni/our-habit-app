@@ -1,0 +1,579 @@
+"use client";
+
+/**
+ * cloud.ts — the owner's OWN Firebase bridge.
+ *
+ * Where the config comes from (first match wins):
+ *   1. server cfg  → /api/config → cfg.firebase (owner saved it in the secret admin panel)
+ *   2. baked cfg   → firebase-baked.ts (injected at APK build time via GitHub secret)
+ *   3. local test  → localStorage "oh-fb-test" (owner testing before saving)
+ *
+ * Everything degrades gracefully: no config → every function is a no-op,
+ * app keeps working exactly as before (offline-first, server pairing).
+ */
+
+import { AppState, ServerCfg, SharedNoteItem } from "./types";
+import { BAKED_FIREBASE } from "./firebase-baked";
+
+type AnyRec = Record<string, unknown>;
+
+let fbApp: AnyRec | null = null;
+let fsDb: AnyRec | null = null;
+let initErr = "";
+
+export interface FbStatus {
+  configured: boolean;
+  projectId: string;
+  error: string;
+}
+
+function parseCfg(raw: string): AnyRec | null {
+  try {
+    const o = JSON.parse(raw) as AnyRec;
+    return o && o.apiKey && o.projectId ? o : null;
+  } catch {
+    return null;
+  }
+}
+
+export function currentFbRaw(serverCfg?: Partial<ServerCfg> | null): string | null {
+  const fromServer = serverCfg?.firebase?.on ? serverCfg.firebase.config : null;
+  if (fromServer && parseCfg(fromServer)) return fromServer;
+  if (BAKED_FIREBASE && parseCfg(BAKED_FIREBASE)) return BAKED_FIREBASE;
+  try {
+    const local = localStorage.getItem("oh-fb-test");
+    if (local && parseCfg(local)) return local;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/** Lazily initialize Firebase (dynamic import → tiny chunk only when used). */
+export async function ensureFirebase(serverCfg?: Partial<ServerCfg> | null): Promise<FbStatus> {
+  if (fbApp && fsDb) {
+    return { configured: true, projectId: (fbApp.options?.projectId as string) || "", error: "" };
+  }
+  if (initErr) return { configured: false, projectId: "", error: initErr };
+  const raw = currentFbRaw(serverCfg);
+  if (!raw) return { configured: false, projectId: "", error: "" };
+  const cfgObj = parseCfg(raw);
+  if (!cfgObj) return { configured: false, projectId: "", error: "bad_config" };
+  try {
+    const [{ initializeApp, getApps, getApp }, { getFirestore }] = await Promise.all([
+      import("firebase/app"),
+      import("firebase/firestore"),
+    ]);
+    fbApp = getApps().length ? getApp() : initializeApp(cfgObj);
+    fsDb = getFirestore(fbApp);
+    return { configured: true, projectId: (cfgObj.projectId as string) || "", error: "" };
+  } catch (e) {
+    initErr = String(e);
+    return { configured: false, projectId: "", error: initErr };
+  }
+}
+
+export function fbConfigured(serverCfg?: Partial<ServerCfg> | null): boolean {
+  return Boolean(currentFbRaw(serverCfg));
+}
+
+// ---------- Auth (Google sign-in for personal backup) ----------
+
+export async function fbGoogleSignIn(serverCfg?: Partial<ServerCfg> | null): Promise<{ name: string; email: string } | null> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return null;
+  try {
+    const [{ getAuth, GoogleAuthProvider, signInWithPopup }, { doc, setDoc }] = await Promise.all([
+      import("firebase/auth"),
+      import("firebase/firestore"),
+    ]);
+    const auth = getAuth(fbApp!);
+    const res = await signInWithPopup(auth, new GoogleAuthProvider());
+    const u = res.user;
+    if (u?.uid) {
+      await setDoc(doc(fsDb!, "usersIndex", u.uid), { name: u.displayName || "", email: u.email || "" }, { merge: true });
+    }
+    return { name: u.displayName || "", email: u.email || "" };
+  } catch {
+    return null;
+  }
+}
+
+export async function fbSignOut(): Promise<void> {
+  try {
+    const { getAuth, signOut } = await import("firebase/auth");
+    await signOut(getAuth(fbApp!));
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function fbCurrentUser(): Promise<{ name: string; email: string } | null> {
+  try {
+    const { getAuth } = await import("firebase/auth");
+    const u = getAuth(fbApp!).currentUser;
+    return u ? { name: u.displayName || "", email: u.email || "" } : null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------- Full backup / restore + live day summaries ----------
+// NOTE: we store EVERYTHING under backups/{uid}:  { state, days:{date:summary} }.
+// Days live INSIDE the doc (not a subcollection) because the owner's Firestore
+// rules allow the backups collection itself — verified live via REST probes.
+
+export async function backupState(state: AppState, serverCfg?: Partial<ServerCfg> | null): Promise<boolean> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return false;
+  try {
+    const { doc, setDoc, serverTimestamp } = await import("firebase/firestore");
+    const key = state.account?.uid || "local";
+    // merge:true — never wipe the days map that pushDay keeps in the same doc
+    await setDoc(
+      doc(fsDb!, "backups", key),
+      { state: JSON.parse(JSON.stringify(state)), updatedAt: serverTimestamp() },
+      { merge: true }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function restoreState(username: string, serverCfg?: Partial<ServerCfg> | null): Promise<AppState | null> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return null;
+  try {
+    const { doc, getDoc } = await import("firebase/firestore");
+    const snap = await getDoc(doc(fsDb!, "backups", username));
+    if (!snap.exists()) return null;
+    const data = snap.data() as { state?: AppState };
+    return data.state ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------- Remote meta (ads cfg + auto-update) for APK/static users ----------
+
+export async function mirrorMeta(cfg: ServerCfg, serverCfg?: Partial<ServerCfg> | null): Promise<boolean> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return false;
+  try {
+    const { doc, setDoc, serverTimestamp } = await import("firebase/firestore");
+    await setDoc(
+      doc(fsDb!, "app", "meta"),
+      { cfg: JSON.parse(JSON.stringify(cfg)), updatedAt: serverTimestamp() },
+      { merge: true }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchRemoteMeta(serverCfg?: Partial<ServerCfg> | null): Promise<Partial<ServerCfg> | null> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return null;
+  try {
+    const { doc, getDoc } = await import("firebase/firestore");
+    const snap = await getDoc(doc(fsDb!, "app", "meta"));
+    if (!snap.exists()) return null;
+    const data = snap.data() as { cfg?: Partial<ServerCfg> | string };
+    // accepts BOTH shapes: object (admin panel mirror) or JSON string (seed script)
+    if (!data.cfg) return null;
+    if (typeof data.cfg === "string") {
+      try {
+        return JSON.parse(data.cfg) as Partial<ServerCfg>;
+      } catch {
+        return null;
+      }
+    }
+    return data.cfg as Partial<ServerCfg>;
+  } catch {
+    return null;
+  }
+}
+
+// ---------- Real-time shared notes (works even without our server) ----------
+
+export function pairKeyOf(a: string, b: string): string {
+  return [a, b].sort().join("|");
+}
+
+/**
+ * Raw note writer for the offline queue engine (note-sync.ts).
+ * setDoc with the SAME note id + merge → retries can never create duplicates.
+ */
+export async function fbPutNote(
+  pairKey: string,
+  note: Record<string, unknown>,
+  serverCfg?: Partial<ServerCfg> | null
+): Promise<boolean> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return false;
+  try {
+    const { doc, setDoc } = await import("firebase/firestore");
+    await setDoc(
+      doc(fsDb!, "pairs", pairKey, "notes", String(note.id)),
+      JSON.parse(JSON.stringify(note)),
+      { merge: true }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function mirrorNoteAdd(
+  pairKey: string,
+  item: SharedNoteItem,
+  serverCfg?: Partial<ServerCfg> | null
+): Promise<void> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return;
+  try {
+    const { doc, setDoc } = await import("firebase/firestore");
+    await setDoc(doc(fsDb!, "pairs", pairKey, "notes", item.id), JSON.parse(JSON.stringify(item)));
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function mirrorNoteUpdate(
+  pairKey: string,
+  noteId: string,
+  patch: { done: boolean; doneBy: string | null },
+  serverCfg?: Partial<ServerCfg> | null
+): Promise<void> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return;
+  try {
+    const { doc, updateDoc } = await import("firebase/firestore");
+    await updateDoc(doc(fsDb!, "pairs", pairKey, "notes", noteId), patch);
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function mirrorNoteDelete(pairKey: string, noteId: string, serverCfg?: Partial<ServerCfg> | null): Promise<void> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return;
+  try {
+    const { doc, deleteDoc } = await import("firebase/firestore");
+    await deleteDoc(doc(fsDb!, "pairs", pairKey, "notes", noteId));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Live listener for a pair's notes. Returns an unsubscribe function (or null). */
+export function listenNotes(
+  pairKey: string,
+  cb: (notes: SharedNoteItem[]) => void,
+  serverCfg?: Partial<ServerCfg> | null
+): (() => void) | null {
+  if (!fbConfigured(serverCfg)) return null;
+  ensureFirebase(serverCfg).then((st) => {
+    if (!st.configured) return;
+    import("firebase/firestore").then(({ collection, onSnapshot, orderBy, query }) => {
+      const q = query(collection(fsDb!, "pairs", pairKey, "notes"), orderBy("createdAt", "asc"));
+      return onSnapshot(
+        q,
+        (snap) => {
+          const out: SharedNoteItem[] = [];
+          snap.forEach((d) => out.push(d.data() as SharedNoteItem));
+          cb(out);
+        },
+        () => {
+          /* permission/offline — stay silent */
+        }
+      );
+    });
+  });
+  return () => undefined;
+}
+
+// ==================== AUTH: Email/Password + verification ====================
+
+export interface FbUser { uid: string; name: string; email: string; emailVerified: boolean; provider: "google" | "password" }
+
+// When a user signs up, onAuthStateChanged can fire BEFORE updateProfile()
+// lands — the listener would then read displayName=null and fall back to the
+// email prefix. Remember the chosen name here so the listener uses it instead.
+let pendingDisplayName = "";
+
+function mapAuthErr(e: unknown): string {
+  const code = String((e as { code?: string })?.code || e || "");
+  if (code.includes("email-already-in-use")) return "errEmailInUse";
+  if (code.includes("invalid-credential") || code.includes("wrong-password") || code.includes("user-not-found")) return "errWrongPass";
+  if (code.includes("weak-password")) return "errWeakPass";
+  if (code.includes("invalid-email")) return "errInvalidEmail";
+  if (code.includes("too-many-requests")) return "errTooMany";
+  if (code.includes("network")) return "errNetwork";
+  return "errGeneric";
+}
+
+export async function fbEmailSignUp(email: string, password: string, name: string, serverCfg?: Partial<ServerCfg> | null): Promise<{ ok: boolean; error?: string; uid?: string }> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return { ok: false, error: "errNetwork" };
+  try {
+    const { getAuth, createUserWithEmailAndPassword, updateProfile, sendEmailVerification } = await import("firebase/auth");
+    const auth = getAuth(fbApp!);
+    const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+    pendingDisplayName = name;
+    if (name) await updateProfile(cred.user, { displayName: name });
+    try { await sendEmailVerification(cred.user); } catch { /* quota */ }
+    return { ok: true, uid: cred.user.uid };
+  } catch (e) {
+    console.error("fbAuthErr(signUp)", e);
+    return { ok: false, error: mapAuthErr(e) };
+  }
+}
+
+export async function fbEmailSignIn(email: string, password: string, serverCfg?: Partial<ServerCfg> | null): Promise<{ ok: boolean; error?: string }> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return { ok: false, error: "errNetwork" };
+  try {
+    const { getAuth, signInWithEmailAndPassword } = await import("firebase/auth");
+    await signInWithEmailAndPassword(getAuth(fbApp!), email.trim(), password);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: mapAuthErr(e) };
+  }
+}
+
+export async function fbSendVerification(): Promise<boolean> {
+  try {
+    const { getAuth, sendEmailVerification } = await import("firebase/auth");
+    const u = getAuth(fbApp!).currentUser;
+    if (!u) return false;
+    await sendEmailVerification(u);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function fbCheckVerified(): Promise<boolean> {
+  try {
+    const { getAuth } = await import("firebase/auth");
+    const u = getAuth(fbApp!).currentUser;
+    if (!u) return false;
+    await u.reload();
+    return Boolean(u.emailVerified);
+  } catch {
+    return false;
+  }
+}
+
+/** Live auth state → cb(null) when signed out. Returns unsubscribe. */
+export function fbListenAuth(cb: (u: FbUser | null) => void, serverCfg?: Partial<ServerCfg> | null): () => void {
+  let un: (() => void) | null = null;
+  let cancelled = false;
+  ensureFirebase(serverCfg)
+    .then((st) => {
+      if (!st.configured || cancelled) return;
+      import("firebase/auth").then(({ getAuth, onAuthStateChanged }) => {
+        if (cancelled) return;
+        un = onAuthStateChanged(getAuth(fbApp!), (u) => {
+          if (!u) {
+            pendingDisplayName = "";
+            return cb(null);
+          }
+          cb({
+            uid: u.uid,
+            name: u.displayName || pendingDisplayName || (u.email ? u.email.split("@")[0] : ""),
+            email: u.email || "",
+            emailVerified: u.emailVerified,
+            provider: u.providerData[0]?.providerId === "google.com" ? "google" : "password",
+          });
+        });
+      });
+    })
+    .catch(() => cb(null));
+  return () => {
+    cancelled = true;
+    if (un) un();
+  };
+}
+
+// ==================== PROFILES: pairing by invite code (Firestore) ====================
+
+export interface FbProfile {
+  uid: string;
+  name: string;
+  email: string;
+  inviteCode: string;
+  friends: { uid: string; name: string; email: string }[];
+}
+
+export interface DaySummary {
+  date: string;
+  points: number;
+  prayers: Record<string, boolean>;
+  prayerWater: boolean[];
+  waterMl: number;
+  waterGoalMl: number;
+  reels: Record<string, number>;
+  reelsMin: number;
+  dhikrTotal: number;
+  meditationMin: number;
+  focusMin: number;
+  mood: number | null;
+  sleepBed: string | null;
+  sleepWake: string | null;
+  completion: number;
+  streak: number;
+  updatedAt?: unknown;
+}
+
+function makeCode(): string {
+  const A = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  let s = "";
+  for (let i = 0; i < 6; i++) s += A[Math.floor(Math.random() * A.length)];
+  return s;
+}
+
+/**
+ * Create (or refresh) the user's profile doc; returns the profile with a stable invite code.
+ * Lives in usersIndex/{uid} — the owner's rules allow auth read/write/QUERY there
+ * (profiles/* is blocked by their rules, verified via REST probes).
+ */
+export async function ensureProfile(u: FbUser, serverCfg?: Partial<ServerCfg> | null): Promise<FbProfile | null> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return null;
+  try {
+    const { doc, getDoc, setDoc } = await import("firebase/firestore");
+    const ref = doc(fsDb!, "usersIndex", u.uid);
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      const p = snap.data() as Partial<FbProfile>;
+      const profile: FbProfile = {
+        uid: u.uid,
+        name: p.name || u.name,
+        email: p.email || u.email,
+        inviteCode: p.inviteCode || makeCode(),
+        friends: (p.friends as FbProfile["friends"]) || [],
+      };
+      // keep name/email/code fresh (merge — never lose friends/code)
+      await setDoc(
+        ref,
+        { name: profile.name, email: profile.email, inviteCode: profile.inviteCode },
+        { merge: true }
+      );
+      return profile;
+    }
+    const p: FbProfile = { uid: u.uid, name: u.name || "Friend", email: u.email, inviteCode: makeCode(), friends: [] };
+    await setDoc(ref, JSON.parse(JSON.stringify(p)));
+    return p;
+  } catch {
+    return null;
+  }
+}
+
+export function listenProfile(uid: string, cb: (p: FbProfile | null) => void, serverCfg?: Partial<ServerCfg> | null): () => void {
+  if (!fbConfigured(serverCfg)) { cb(null); return () => undefined; }
+  ensureFirebase(serverCfg).then((st) => {
+    if (!st.configured) { cb(null); return; }
+    import("firebase/firestore").then(({ doc, onSnapshot }) => {
+      return onSnapshot(
+        doc(fsDb!, "usersIndex", uid),
+        (snap) => cb(snap.exists() ? ({ ...(snap.data() as FbProfile), uid }) : null),
+        () => cb(null)
+      );
+    });
+  });
+  return () => undefined;
+}
+
+/** Add a friend (both sides) by invite code — queried on usersIndex (auth-required by rules). */
+export async function addFriendByCode(me: FbProfile, code: string, serverCfg?: Partial<ServerCfg> | null): Promise<{ ok: boolean; error?: string }> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return { ok: false, error: "errNetwork" };
+  try {
+    const { collection, query, where, limit, getDocs, doc, getDoc, setDoc } = await import("firebase/firestore");
+    const q = query(collection(fsDb!, "usersIndex"), where("inviteCode", "==", code.trim().toUpperCase()), limit(1));
+    const snap = await getDocs(q);
+    if (snap.empty) return { ok: false, error: "codeNotFound" };
+    const otherDoc = snap.docs[0];
+    const other = otherDoc.data() as FbProfile;
+    if (other.uid === me.uid) return { ok: false, error: "friendExists" };
+    if ((me.friends || []).some((f) => f.uid === other.uid)) return { ok: false, error: "friendExists" };
+    const mineRef = doc(fsDb!, "usersIndex", me.uid);
+    const theirRef = doc(fsDb!, "usersIndex", other.uid);
+    await setDoc(mineRef, { friends: [...(me.friends || []), { uid: other.uid, name: other.name, email: other.email }] }, { merge: true });
+    const theirSnap = await getDoc(theirRef);
+    const their = theirSnap.exists() ? (theirSnap.data() as FbProfile) : { ...other, friends: [] };
+    await setDoc(theirRef, { friends: [...(their.friends || []), { uid: me.uid, name: me.name, email: me.email }] }, { merge: true });
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "errGeneric" };
+  }
+}
+
+export async function removeFriend(me: FbProfile, friendUid: string, serverCfg?: Partial<ServerCfg> | null): Promise<void> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return;
+  try {
+    const { doc, getDoc, setDoc } = await import("firebase/firestore");
+    const mineRef = doc(fsDb!, "usersIndex", me.uid);
+    await setDoc(mineRef, { friends: (me.friends || []).filter((f) => f.uid !== friendUid) }, { merge: true });
+    const theirRef = doc(fsDb!, "usersIndex", friendUid);
+    const theirSnap = await getDoc(theirRef);
+    if (theirSnap.exists()) {
+      const their = theirSnap.data() as FbProfile;
+      await setDoc(theirRef, { friends: (their.friends || []).filter((f) => f.uid !== me.uid) }, { merge: true });
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Push today's summary → backups/{uid} at days.{date} (merge).
+ * Days live inside the doc because subcollections are blocked by the owner's rules.
+ * The map is trimmed to the last 14 days so the doc stays small.
+ */
+export async function pushDay(uid: string, summary: DaySummary, serverCfg?: Partial<ServerCfg> | null): Promise<void> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return;
+  try {
+    const { doc, setDoc, getDoc, serverTimestamp } = await import("firebase/firestore");
+    const ref = doc(fsDb!, "backups", uid);
+    // read existing days to trim (cheap: only every 60s per user)
+    const snap = await getDoc(ref);
+    const prev = (snap.exists() ? ((snap.data() as { days?: Record<string, DaySummary> }).days || {}) : {});
+    const days: Record<string, DaySummary> = { ...prev, [summary.date]: summary };
+    const keys = Object.keys(days).sort();
+    if (keys.length > 14) for (const k of keys.slice(0, keys.length - 14)) delete days[k];
+    await setDoc(
+      ref,
+      { days: JSON.parse(JSON.stringify(days)), updatedAt: serverTimestamp() },
+      { merge: true }
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Live-listen a friend's day summary from backups/{uid}.days — realtime for the partner card. */
+export function listenDay(uid: string, date: string, cb: (d: DaySummary | null) => void, serverCfg?: Partial<ServerCfg> | null): () => void {
+  if (!fbConfigured(serverCfg)) { cb(null); return () => undefined; }
+  ensureFirebase(serverCfg).then((st) => {
+    if (!st.configured) { cb(null); return; }
+    import("firebase/firestore").then(({ doc, onSnapshot }) => {
+      return onSnapshot(
+        doc(fsDb!, "backups", uid),
+        (snap) => {
+          if (!snap.exists()) return cb(null);
+          const days = (snap.data() as { days?: Record<string, DaySummary> }).days || {};
+          cb(days[date] ?? null);
+        },
+        () => cb(null)
+      );
+    });
+  });
+  return () => undefined;
+}
