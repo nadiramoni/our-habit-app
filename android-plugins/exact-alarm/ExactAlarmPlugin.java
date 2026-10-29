@@ -291,7 +291,6 @@ public class ExactAlarmPlugin extends Plugin {
       SharedPreferences sp = prefs(ctx);
       String throttleKey = "speak_once_" + key;
       long last = sp.getLong(throttleKey, 0L);
-      long throttleMs = (throttleMin == null ? 30 : throttleMin) * 60_000L;
       if (last > 0 && System.currentTimeMillis() - last < throttleMs) {
         JSObject r = new JSObject();
         r.put("spoken", false);

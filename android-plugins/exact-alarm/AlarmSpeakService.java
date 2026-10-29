@@ -13,8 +13,8 @@ import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Build;
 import android.os.IBinder;
-import android.s.tts.TextToSpeech;
-import android.s.tts.UtteranceProgressListener;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
