@@ -53,6 +53,10 @@ const PLUGINS = [
   "usage-tracker/UsageTrackerPlugin.java",
   "app-permissions/AppPermissionsPlugin.java",
   "nearby-sync/NearbySyncPlugin.java",
+  // v2.8: the EXACT azan engine (setAlarmClock + full-screen azan intent)
+  "exact-alarm/ExactAlarmPlugin.java",
+  "exact-alarm/AlarmFireReceiver.java",
+  "exact-alarm/ExactBootReceiver.java",
 ];
 for (const rel of PLUGINS) {
   fs.copyFileSync(path.join(ROOT, "android-plugins", rel), path.join(appPkgDir, path.basename(rel)));
@@ -73,6 +77,7 @@ const REG_CALLS = [
   "UsageTrackerPlugin.class",
   "AppPermissionsPlugin.class",
   "NearbySyncPlugin.class",
+  "ExactAlarmPlugin.class",
 ]
   .map((c) => `    registerPlugin(${c});`)
   .join("\n");
@@ -111,7 +116,12 @@ if (!mf.includes("xmlns:tools")) {
   mf = mf.replace("<manifest ", '<manifest xmlns:tools="http://schemas.android.com/tools" ');
 }
 const PERMS = [
-  '<uses-permission android:name="android.app.usage.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />',
+  // ⚠️ v2.8 ROOT-CAUSE FIX (owner: "Usage Access লিস্টে Our Habit দেখায় না"):
+  // the v1 string "android.app.usage.PACKAGE_USAGE_STATS" was WRONG — Android
+  // only lists apps that request "android.permission.PACKAGE_USAGE_STATS"
+  // under Settings → Usage access. With the wrong string the app NEVER
+  // appeared in the list → the user could not grant it → Reels tracking dead.
+  '<uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />',
   '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
   '<uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />',
   // v2.5 Fajr REAL FIX: on Android 12/13/14 SCHEDULE_EXACT_ALARM alone is NOT
@@ -138,6 +148,8 @@ const PERMS = [
   // v2.4: full-screen alarm intent — azan/meal alarms may show over the
   // lock screen when the exact-alarm notification arrives
   '<uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />',
+  // v2.8: re-arm the exact azan schedule after a phone reboot
+  '<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />',
 ];
 let changed = false;
 for (const p of PERMS) {
@@ -147,6 +159,22 @@ for (const p of PERMS) {
     mf = mf.replace(/<application\b/, `${p}\n    <application`);
     changed = true;
   }
+}
+
+// v2.8: alarm receivers — AlarmFireReceiver (notification + full-screen
+// azan launch) + ExactBootReceiver (re-arm the schedule after reboot)
+const RX_FIRE = '<receiver android:name="com.ourhabit.app.AlarmFireReceiver" android:exported="false" />';
+const RX_BOOT = [
+  '<receiver android:name="com.ourhabit.app.ExactBootReceiver" android:exported="true">',
+  '  <intent-filter>',
+  '    <action android:name="android.intent.action.BOOT_COMPLETED" />',
+  '    <action android:name="android.intent.action.QUICKBOOT_POWERON" />',
+  '  </intent-filter>',
+  '</receiver>',
+].join("\n    ");
+if (!mf.includes("AlarmFireReceiver")) {
+  mf = mf.replace(/<\/application>/, `    ${RX_FIRE}\n    ${RX_BOOT}\n  </application>`);
+  changed = true;
 }
 if (changed) {
   fs.writeFileSync(manifestPath, mf);
@@ -179,7 +207,13 @@ if (!gradle0.includes("play-services-nearby")) {
 const rawDir = path.join(ROOT, "android", "app", "src", "main", "res", "raw");
 fs.mkdirSync(rawDir, { recursive: true });
 const RAW_MAP = [
-  ["public/adhan.mp3", "adhan.mp3", "REAL adhan for prayer reminders"],
+  ["public/adhan.mp3", "adhan.mp3", "REAL adhan (owner's recording) — azan default, key 'adhan.mp3'"],
+  // v2.8: 4 MORE real azan recitations (owner: "অনেকগুলা মিউজিক অ্যাড করাও") —
+  // picked with the in-app azan-sound picker (আজানের ধ্বনি)
+  ["public/azan2.mp3", "azan2.mp3", "azan track 2 — Very Beautiful Azan"],
+  ["public/azan3.mp3", "azan3.mp3", "azan track 3"],
+  ["public/azan4.mp3", "azan4.mp3", "azan track 4 — Dhuhr recitation"],
+  ["public/azan5.mp3", "azan5.mp3", "azan track 5 — Dhuhr recitation 2"],
   ["public/meal-alarm.mp3", "mealalarm.mp3", "owner's alarm-clock sound for meal alarms"],
   ["public/meal-music1.mp3", "mealmusic1.mp3", "owner's 2nd music track — meal alarms play the two tracks RANDOMLY (v2.5)"],
   ["public/water-alarm.mp3", "wateralarm.mp3", "owner's music loop for water reminders"],
