@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Advertisement</title>
+<style>
+  html,body{margin:0;padding:0;background:transparent;overflow:hidden;height:100%}
+  body{display:flex;align-items:center;justify-content:center}
+  iframe{border:0}
+</style>
+</head>
+<body>
+<script>
+/**
+ * ad.html — v2.6 REAL banner fix.
+ *
+ * Why this page exists: the old renderer put the Adsterra banner inside a
+ * SANDBOXED srcdoc iframe. A sandbox without allow-same-origin gives the ad
+ * an "opaque origin" — no cookies, no storage, no document.referrer. Adsterra's
+ * script loaded (the health beacon even said "rendering") but the creative
+ * itself never displayed — invisible banner.
+ *
+ * This page runs in a NORMAL iframe (no sandbox attribute) with the app's own
+ * origin (https://localhost in the APK) — exactly like embedding on a website.
+ * Cookies work, nested iframes work, the creative actually displays.
+ *
+ * Usage: /ad.html?k=<32-hex key>&w=468&h=60&src=<zone script url>&r=<cache-bust>
+ * Each iframe instance is its own document → its own atOptions → the same zone
+ * can safely run in several slots at once.
+ */
+(function () {
+  var q = new URLSearchParams(location.search);
+  var key = (q.get("k") || "").replace(/[^a-f0-9]/gi, "");
+  var src = q.get("src") || "";
+  var w = parseInt(q.get("w") || "468", 10) || 468;
+  var h = parseInt(q.get("h") || "60", 10) || 60;
+  var bust = q.get("r") || "";
+  if (!/^[a-f0-9]{32}$/i.test(key)) return;
+  if (!/^https:\/\//i.test(src)) src = "https://bicea.org/22/" + key;
+  if (bust) src = src + (src.indexOf("?") >= 0 ? "&" : "?") + "r=" + encodeURIComponent(bust);
+
+  // atOptions MUST exist before the zone script executes
+  window.atOptions = { key: key, format: "iframe", height: h, width: w, params: {} };
+
+  var s = document.createElement("script");
+  s.async = true;
+  s.src = src;
+  s.setAttribute("data-cfasync", "false");
+  document.body.appendChild(s);
+
+  // ---- health phases: check whether the creative REALLY rendered ----
+  // A real creative = the network's iframe exists AND has visible size.
+  // (An empty/blank iframe node or a collapsed wrapper is NOT a render.)
+  function measure() {
+    var frames = document.querySelectorAll("iframe");
+    var best = null;
+    for (var i = 0; i < frames.length; i++) {
+      var f = frames[i];
+      var r = f.getBoundingClientRect();
+      var rw = Math.max(r.width, parseFloat(f.getAttribute("width") || "0") || 0);
+      var rh = Math.max(r.height, parseFloat(f.getAttribute("height") || "0") || 0);
+      var vis = r.width > 30 && r.height > 15;
+      if (vis && (!best || rh > best.h)) best = { w: rw, h: rh };
+    }
+    return best;
+  }
+  function post(ok, phase, m) {
+    try {
+      parent.postMessage({ __atAd: true, key: key, ok: ok, phase: phase, w: m ? m.w : 0, h: m ? m.h : 0 }, "*");
+    } catch (e) { /* parent gone */ }
+  }
+  // patient ladder: quick checks first, slower later; total ≈ 87s per cycle
+  var phases = [5000, 7000, 13000, 20000, 45000];
+  var t0 = Date.now();
+  phases.forEach(function (delay, i) {
+    setTimeout(function () {
+      var m = measure();
+      if (m) post(true, i, m); // success — no more checks needed? keep last phase quiet
+    }, delay);
+  });
+  // final verdict after the full ladder
+  setTimeout(function () {
+    var m = measure();
+    post(Boolean(m), 99, m || null);
+    // keep a slow heartbeat: if the creative lands later (lazy fill), tell parent
+    setInterval(function () {
+      var m2 = measure();
+      if (m2) post(true, 100, m2);
+    }, 60000);
+  }, 87000);
+})();
+</script>
+</body>
+</html>
