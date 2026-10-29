@@ -105,6 +105,126 @@ export function playChime() {
 /** Pre-warm audio on first user gesture (browsers block audio before interaction). */
 export function warmAudio() {
   ensureCtx();
+  unlockMedia();
+}
+
+// ==================== v2.6: REAL audio files (meal music + adhan) ====================
+// The owner's own files play in-app — meals randomly pick one of the 2 tracks
+// (একটার পর একটা), adhan plays the real recording. HTMLMediaElement unlock
+// trick: on the first user gesture we play+pause each element at volume 0 so
+// later programmatic play() calls are allowed by the WebView.
+
+const MEDIA_FILES = ["/meal-alarm.mp3", "/meal-music1.mp3", "/adhan.mp3", "/water-alarm.mp3"];
+const mediaEls: HTMLAudioElement[] = [];
+let mediaUnlocked = false;
+
+function ensureMediaEls(): HTMLAudioElement[] {
+  if (typeof window === "undefined") return [];
+  if (!mediaEls.length) {
+    for (const f of MEDIA_FILES) {
+      try {
+        const a = new Audio(f);
+        a.preload = "auto";
+        mediaEls.push(a);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  return mediaEls;
+}
+
+function unlockMedia() {
+  if (mediaUnlocked) return;
+  mediaUnlocked = true;
+  for (const a of ensureMediaEls()) {
+    try {
+      a.volume = 0;
+      const p = a.play();
+      if (p && typeof p.then === "function") p.then(() => { a.pause(); a.currentTime = 0; a.volume = 1; }).catch(() => { a.volume = 1; });
+      else a.volume = 1;
+    } catch {
+      try { a.volume = 1; } catch { /* ignore */ }
+    }
+  }
+}
+
+/** Start the owner's REAL meal music — a RANDOM track of the two, looping. Returns stop. */
+export function startMealMusic(): () => void {
+  stopMedia();
+  const tracks = ["/meal-alarm.mp3", "/meal-music1.mp3"];
+  const pick = tracks[Math.floor(Math.random() * tracks.length)];
+  const el = ensureMediaEls().find((a) => a.src.endsWith(pick));
+  if (!el) return startAlarmMusic(); // no media support → synthesized fallback
+  try {
+    el.loop = true;
+    el.volume = 1;
+    const p = el.play();
+    if (p && typeof p.catch === "function") {
+      p.catch(() => {
+        // autoplay still blocked (no gesture yet) → synthesized fallback
+        el.loop = false;
+        startAlarmMusic();
+      });
+    }
+    return () => {
+      try { el.pause(); el.currentTime = 0; el.loop = false; } catch { /* ignore */ }
+    };
+  } catch {
+    return startAlarmMusic();
+  }
+}
+
+/** Play the REAL adhan recording once (in-app azan overlay). Returns stop. */
+export function startAdhan(): () => void {
+  stopMedia();
+  const el = ensureMediaEls().find((a) => a.src.endsWith("/adhan.mp3"));
+  if (!el) return startAlarmMusic();
+  try {
+    el.loop = false;
+    el.volume = 1;
+    const p = el.play();
+    if (p && typeof p.catch === "function") p.catch(() => startAlarmMusic());
+    return () => {
+      try { el.pause(); el.currentTime = 0; } catch { /* ignore */ }
+    };
+  } catch {
+    return startAlarmMusic();
+  }
+}
+
+function stopMedia() {
+  for (const a of ensureMediaEls()) {
+    try { a.pause(); a.currentTime = 0; } catch { /* ignore */ }
+  }
+}
+
+// ==================== v2.6: loud alarm-ON confirmation ====================
+// The owner: "যেকোনো ফাংশন অন করলে ঐটা যাতে সাউন্ড করে" — a clear, louder
+// two-voice success jingle (played together with the native confirmation
+// notification, so it's audible through BOTH the media and the notification
+// volume streams).
+
+export function playAlarmOn() {
+  const ac = ensureCtx();
+  if (!ac) return;
+  try {
+    const t0 = ac.currentTime + 0.01;
+    // melody voice — rising major arpeggio
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
+      blip(ac, t0 + i * 0.11, f, f, 0.3, 0.34, "sine");
+    });
+    // sparkle voice — octave doubles, slightly delayed
+    [1046.5, 1318.5, 1568.0, 2093.0].forEach((f, i) => {
+      blip(ac, t0 + 0.05 + i * 0.11, f, f, 0.2, 0.1, "sine");
+    });
+    // final chord
+    [523.25, 659.25, 783.99].forEach((f) => {
+      blip(ac, t0 + 0.5, f, f, 0.5, 0.16, "sine");
+    });
+  } catch {
+    /* ignore */
+  }
 }
 
 // ==================== UI interaction sounds (owner round-4) ====================

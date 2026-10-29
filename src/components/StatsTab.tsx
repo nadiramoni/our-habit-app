@@ -3,7 +3,6 @@
 import React, { useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { Bar, Card, Ring, SectionTitle } from "@/components/ui-bits";
-import AdsBanner from "@/components/AdsBanner";
 import { addDays, getLog } from "@/lib/types";
 import {
   BADGES,
@@ -414,9 +413,7 @@ export default function StatsTab() {
       <Badges />
       <HabitProgress />
       <CalendarCard />
-      <div className="mt-1 mb-2">
-        <AdsBanner compact />
-      </div>
+      {/* v2.6: banners live ONLY on Home (owner: exactly 3 places) */}
     </div>
   );
 }

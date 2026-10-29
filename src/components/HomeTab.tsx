@@ -18,50 +18,182 @@ import {
   qiblaBearing,
 } from "@/lib/types";
 import { dayPoints, fetchPrayerTimes, reminderOfTheDay, dhikrTotal, computeStreaks, MAX_POINTS } from "@/lib/logic";
-import AdsBanner, { AtNativeInline } from "@/components/AdsBanner";
-import { isNative, nativeGetVideoUsage, nativeOpenUsageAccess, nativeVibrate, UsageResult } from "@/lib/native";
-import { playAdd, playChime, playFanfare, playMinus, playStart, playTick } from "@/lib/audio";
+import AdsBanner from "@/components/AdsBanner";
+import { isNative, nativeGetVideoUsage, nativeOpenUsageAccess, nativeVibrate, nativeEnsureNotifPermission, nativeConfirmNotification, nativeRequestNotifications, nativeOpenNotificationSettings, UsageResult } from "@/lib/native";
+import { playAdd, playAlarmOn, playChime, playFanfare, playMinus, playStart, playTick } from "@/lib/audio";
 import { glassesOf, waterAlarmTimes, WaterAlarmCfg, shiftTime } from "@/lib/types";
 
 // ---------- v2.4: alarm ON/OFF confirmation popup (owner round-6 #3) ----------
 // "অ্যালার্ম চালু করলে সাথে সাথে একটি পপ-আপ: আপনার অ্যালার্মটি সফলভাবে চালু
 // হয়েছে" — green check animation, vibrates, auto-dismisses.
-function AlarmConfirm({ text }: { text: string }) {
+function AlarmConfirm({ text, warn }: { text: string; warn?: boolean }) {
   return (
     <div className="fixed inset-0 z-[92] flex items-center justify-center p-6 pointer-events-none">
-      <div className="alarm-confirm-pop rounded-3xl bg-card border-2 border-primary/50 shadow-2xl shadow-primary/30 px-6 py-5 flex flex-col items-center gap-2 text-center max-w-[320px]">
-        <span className="w-14 h-14 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-2xl font-extrabold shadow-lg shadow-primary/30">✓</span>
-        <p className="text-sm font-bold text-primary leading-snug">{text}</p>
+      <div
+        className={`alarm-confirm-pop rounded-3xl bg-card border-2 shadow-2xl px-6 py-5 flex flex-col items-center gap-2 text-center max-w-[320px] ${
+          warn ? "border-destructive/60 shadow-destructive/20" : "border-primary/50 shadow-primary/30"
+        }`}
+      >
+        <span
+          className={`w-14 h-14 rounded-full flex items-center justify-center text-2xl font-extrabold shadow-lg ${
+            warn ? "bg-destructive text-white shadow-destructive/30" : "bg-primary text-primary-foreground shadow-primary/30"
+          }`}
+        >
+          {warn ? "⚠️" : "✓"}
+        </span>
+        <p className={`text-sm font-bold leading-snug ${warn ? "text-destructive" : "text-primary"}`}>{text}</p>
       </div>
     </div>
   );
 }
 
+/** "HH:MM" (24h) → "8:00 AM" — how the owner's reference app shows times. */
+function fmt12(hhmm: string): string {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || "");
+  if (!m) return hhmm || "";
+  const h = parseInt(m[1], 10);
+  const ap = h < 12 ? "AM" : "PM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${m[2]} ${ap}`;
+}
+
 /**
- * Shared hook for every alarm toggle: shows the success popup + vibrates.
- * Pass on=false to show the "turned off" variant instead.
+ * Shared hook for every alarm toggle — v2.6 makes confirmation UNMISTAKABLE:
+ *   ON  → permission gate (real dialog if needed) → LOUD jingle + vibration
+ *        + green popup WITH the next ring time + a REAL Android notification
+ *        with sound (audible even at low media volume — notification stream)
+ *   OFF → soft chime + popup
+ * If notifications are denied the popup turns RED and the system settings
+ * open — no more silent failures.
  */
 function useAlarmConfirm() {
   const { t } = useStore();
   const [msg, setMsg] = useState<string | null>(null);
+  const [warn, setWarn] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const show = (on: boolean) => {
-    void nativeVibrate(on ? 40 : 20);
-    // v2.5: the owner asked for a SOUND too — every alarm ON plays a happy
-    // success jingle, OFF plays a soft chime (খাওয়ার অ্যালার্ম দিয়ে শুরু করে
-    // যতগুলা অ্যালার্ম অন করব তখন যাদের একটা সাউন্ড দেয়)
-    try {
-      if (on) playFanfare();
-      else playChime();
-    } catch {
-      /* audio not ready yet */
+  const show = (on: boolean, label?: string, nextAt?: string) => {
+    if (on) {
+      void (async () => {
+        const granted = await nativeEnsureNotifPermission();
+        if (granted) {
+          void nativeVibrate(40);
+          try {
+            playAlarmOn();
+          } catch {
+            /* audio not ready yet */
+          }
+          const name = label ? `${label} ` : "";
+          const when = nextAt ? ` — ⏰ ${t("next")}: ${fmt12(nextAt)}` : "";
+          setWarn(false);
+          setMsg(`${name}${t("alarmOnToast")}${when}`);
+          // the AUDIBLE native confirmation (notification stream, fixed id →
+          // each confirmation replaces the previous one, the shade never fills)
+          void nativeConfirmNotification(`✓ ${label || t("appName")}`, `${t("alarmOnToast")}${when}`);
+        } else {
+          void nativeVibrate(80);
+          setWarn(true);
+          setMsg(t("alarmPermWarn"));
+          await nativeOpenNotificationSettings();
+        }
+      })();
+    } else {
+      void nativeVibrate(20);
+      try {
+        playChime();
+      } catch {
+        /* ignore */
+      }
+      setWarn(false);
+      setMsg(t("alarmOffToast"));
     }
-    setMsg(on ? t("alarmOnToast") : t("alarmOffToast"));
     if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => setMsg(null), 2000);
+    timerRef.current = setTimeout(() => setMsg(null), 2600);
   };
-  const node = msg ? <AlarmConfirm text={msg} /> : null;
+  const node = msg ? <AlarmConfirm text={msg} warn={warn} /> : null;
   return { show, node };
+}
+
+// ---------- v2.6: live alarm truth — what the OS REALLY holds ----------
+interface AlarmStatus {
+  ok: boolean;
+  permDenied: boolean;
+  pending: number;
+  expected: number;
+  anyOn: boolean;
+  nextAt: string;
+  at: number;
+}
+
+function useAlarmStatus(): AlarmStatus | null {
+  const [st, setSt] = useState<AlarmStatus | null>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("oh_alarmstatus") || "null") as AlarmStatus | null;
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent).detail as AlarmStatus | undefined;
+      if (d) setSt(d);
+    };
+    window.addEventListener("oh:alarmstatus", on);
+    return () => window.removeEventListener("oh:alarmstatus", on);
+  }, []);
+  return st;
+}
+
+/** Status chip for the meals + alarms screens: green = OS-verified active
+ *  alarms, red = something is wrong (permission / nothing pending). */
+function AlarmStatusBar() {
+  const { t } = useStore();
+  const st = useAlarmStatus();
+  const [, force] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(() => force((n) => n + 1), 15000);
+    return () => clearInterval(iv);
+  }, []);
+  if (!isNative()) return null;
+  if (!st) return null;
+  if (!st.anyOn) return null;
+  if (st.permDenied) {
+    return (
+      <div className="mb-3 rounded-xl border border-destructive/40 bg-destructive/10 p-3 flex items-center gap-3">
+        <span className="text-xl shrink-0">🔕</span>
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-bold text-destructive">{t("alarmPermWarnShort")}</div>
+        </div>
+        <button
+          type="button"
+          onClick={async () => {
+            const ok = await nativeRequestNotifications();
+            if (!ok) await nativeOpenNotificationSettings();
+          }}
+          className="rounded-xl bg-destructive text-white text-xs font-bold px-3 py-2.5 min-h-[40px] shrink-0"
+        >
+          {t("alarmAllowBtn")}
+        </button>
+      </div>
+    );
+  }
+  if (!st.ok || st.pending === 0) {
+    return (
+      <div className="mb-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 flex items-center gap-3">
+        <span className="text-xl shrink-0">⚠️</span>
+        <div className="text-xs font-semibold text-amber-600 dark:text-amber-400">{t("alarmNonePending")}</div>
+      </div>
+    );
+  }
+  const next = st.nextAt ? fmt12(new Date(st.nextAt).toTimeString().slice(0, 5)) : "";
+  return (
+    <div className="mb-3 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2.5 flex items-center gap-2">
+      <span className="text-base shrink-0">🔔</span>
+      <div className="text-xs font-semibold text-primary">
+        {st.pending} {t("alarmsActiveWord")}
+        {next ? ` · ${t("next")}: ${next}` : ""}
+      </div>
+    </div>
+  );
 }
 
 // ---------- Header ----------
@@ -1249,6 +1381,7 @@ function SleepCard() {
   const [wake, setWake] = useState(log.sleepWake || "");
   const [saved, setSaved] = useState(false);
   const s = state.settings;
+  const confirm = useAlarmConfirm();
 
   const save = () => {
     updateLog(today, { sleepBed: bed || null, sleepWake: wake || null });
@@ -1304,6 +1437,7 @@ function SleepCard() {
         </div>
       ) : null}
       {/* daily bedtime reminder — one alert each day (owner round-5) */}
+      {confirm.node}
       <div className="mt-3 pt-3 border-t border-border flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="text-sm font-medium">⏰ {t("sleepAlarm")}</div>
@@ -1321,7 +1455,7 @@ function SleepCard() {
             role="switch"
             aria-checked={Boolean(s.sleepAlarm?.on)}
             onClick={() => {
-              void nativeVibrate(25);
+              confirm.show(!s.sleepAlarm?.on, t("sleepAlarm"), s.sleepAlarm?.time || "22:30");
               updateSettings({ sleepAlarm: { on: !s.sleepAlarm?.on, time: s.sleepAlarm?.time || "22:30" } });
             }}
             className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${s.sleepAlarm?.on ? "bg-primary" : "bg-muted border border-border"}`}
@@ -1371,13 +1505,19 @@ function TodayNoteCard() {
 }
 
 // ---------- Meals (detail page: display + config TOGETHER) ----------
+// v2.6: this is the screen the owner marked — every toggle now confirms
+// audibly (loud jingle + REAL Android notification sound), shows the next
+// ring time, and the OS-verified status bar proves the alarms are live.
 function MealsCard() {
   const { state, updateSettings, t } = useStore();
   const meals = state.settings.mealAlarms;
+  const confirm = useAlarmConfirm();
   const icons: Record<MealKey, string> = { breakfast: "🌅", lunch: "🍛", dinner: "🌙" };
   return (
     <Card className="mb-4">
       <SectionTitle title={`🍽 ${t("meals")}`} sub={t("mealsSub")} />
+      {confirm.node}
+      <AlarmStatusBar />
       <div className="flex flex-col gap-1">
         {MEAL_KEYS.map((mk) => (
           <div key={mk} className={`rounded-xl border p-3 ${meals[mk].on ? "border-primary/40 bg-primary/5" : "border-border bg-secondary/40"}`}>
@@ -1385,7 +1525,7 @@ function MealsCard() {
               <span className="text-2xl">{icons[mk]}</span>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-semibold">{t(`meal_${mk}`)}</div>
-                <div className="text-xs text-muted-foreground">{meals[mk].on ? `🎵 ${t("mealsSub")}` : t("off")}</div>
+                <div className="text-xs text-muted-foreground">{meals[mk].on ? `🎵 ${t("mealsSub")} · ⏰ ${fmt12(meals[mk].time)}` : t("off")}</div>
               </div>
               <input
                 type="time"
@@ -1398,7 +1538,10 @@ function MealsCard() {
                 role="switch"
                 aria-checked={meals[mk].on}
                 aria-label={t(`meal_${mk}`)}
-                onClick={() => updateSettings({ mealAlarms: { ...meals, [mk]: { ...meals[mk], on: !meals[mk].on } } })}
+                onClick={() => {
+                  confirm.show(!meals[mk].on, t(`meal_${mk}`), meals[mk].time);
+                  updateSettings({ mealAlarms: { ...meals, [mk]: { ...meals[mk], on: !meals[mk].on } } });
+                }}
                 className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${meals[mk].on ? "bg-primary" : "bg-muted border border-border"}`}
               >
                 <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${meals[mk].on ? "left-[22px]" : "left-0.5"}`} />
@@ -1445,6 +1588,7 @@ function AlarmsCard() {
   return (
     <div>
       {confirm.node}
+      <AlarmStatusBar />
       <Card className="mb-4">
         <SectionTitle title={`🕌 ${t("fajrAlarm")}`} sub={t("fajrAlarmSub")} />
         <div className="flex items-center justify-between gap-3">
@@ -1461,7 +1605,7 @@ function AlarmsCard() {
               role="switch"
               aria-checked={s.fajrAlarm.on}
               onClick={() => {
-                confirm.show(!s.fajrAlarm.on);
+                confirm.show(!s.fajrAlarm.on, t("fajrAlarm"), s.fajrAlarm.time);
                 updateSettings({ fajrAlarm: { ...s.fajrAlarm, on: !s.fajrAlarm.on } });
               }}
               className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${s.fajrAlarm.on ? "bg-primary" : "bg-muted border border-border"}`}
@@ -1506,7 +1650,7 @@ function AlarmsCard() {
                 role="switch"
                 aria-checked={s.adhanAlerts[k].on}
                 onClick={() => {
-                  confirm.show(!s.adhanAlerts[k].on);
+                  confirm.show(!s.adhanAlerts[k].on, t(`prayer_${k}`), s.adhanAlerts[k].time);
                   setAdhanTime(k, { on: !s.adhanAlerts[k].on });
                 }}
                 className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${s.adhanAlerts[k].on ? "bg-primary" : "bg-muted border border-border"}`}
@@ -1529,7 +1673,7 @@ function AlarmsCard() {
             role="switch"
             aria-checked={wa.on}
             onClick={() => {
-              confirm.show(!wa.on);
+              confirm.show(!wa.on, t("water"), waterAlarmTimes(wa)[0]);
               setWa({ on: !wa.on });
             }}
             className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${wa.on ? "bg-primary" : "bg-muted border border-border"}`}
@@ -1596,7 +1740,7 @@ function AlarmsCard() {
               role="switch"
               aria-checked={Boolean(s.habitsAlarm?.on)}
               onClick={() => {
-                confirm.show(!s.habitsAlarm?.on);
+                confirm.show(!s.habitsAlarm?.on, t("habitsReminder"), s.habitsAlarm?.time || "20:00");
                 updateSettings({ habitsAlarm: { on: !s.habitsAlarm?.on, time: s.habitsAlarm?.time || "20:00" } });
               }}
               className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${s.habitsAlarm?.on ? "bg-primary" : "bg-muted border border-border"}`}
@@ -1624,7 +1768,7 @@ function AlarmsCard() {
                 role="switch"
                 aria-checked={s.mealAlarms[mk].on}
                 onClick={() => {
-                  confirm.show(!s.mealAlarms[mk].on);
+                  confirm.show(!s.mealAlarms[mk].on, t(`meal_${mk}`), s.mealAlarms[mk].time);
                   updateSettings({ mealAlarms: { ...s.mealAlarms, [mk]: { ...s.mealAlarms[mk], on: !s.mealAlarms[mk].on } } });
                 }}
                 className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${s.mealAlarms[mk].on ? "bg-primary" : "bg-muted border border-border"}`}
@@ -1672,7 +1816,7 @@ function AlarmsCard() {
               role="switch"
               aria-checked={s.ayatNotif.on}
               onClick={() => {
-                confirm.show(!s.ayatNotif.on);
+                confirm.show(!s.ayatNotif.on, t("dailyAyat"), s.ayatNotif.time);
                 updateSettings({ ayatNotif: { ...s.ayatNotif, on: !s.ayatNotif.on } });
               }}
               className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${s.ayatNotif.on ? "bg-primary" : "bg-muted border border-border"}`}
@@ -2187,7 +2331,7 @@ export default function HomeTab({ onSecret }: { onSecret?: () => void }) {
   return (
     <div>
       <Header onSecret={onSecret} />
-      <AdsBanner compact variant="a" />
+      <AdsBanner variant="a" />
       <ReminderCard />
       <MonthCard />
       <div className="px-1 mb-2">
@@ -2195,9 +2339,10 @@ export default function HomeTab({ onSecret }: { onSecret?: () => void }) {
       </div>
       <HabitGrid onOpen={setDetail} />
       <PrayerWaterStrip />
-      <AdsBanner compact variant="b" />
       <AlarmsLayer onOpen={setDetail} />
-      <AtNativeInline />
+      {/* v2.6: exactly 3 banner slots (owner: "অ্যাডস ৩ জায়গায়") — top
+          compact 320×50 (line above), mid + bottom 468×60, all baked-in zones */}
+      <AdsBanner variant="b" />
       <div className="mb-2">
         <AdsBanner variant="b" />
       </div>

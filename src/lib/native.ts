@@ -308,6 +308,83 @@ export interface NativeAlarm {
   sound?: string;
 }
 
+/** v2.6: rich result of an alarm sync — the UI shows the OWNER the truth. */
+export interface AlarmSyncResult {
+  ok: boolean; // permissions + scheduling succeeded
+  expected: number; // alarms we asked the OS to schedule
+  pending: number; // alarms the OS ACTUALLY holds now (verified!)
+  permDenied: boolean; // notification permission missing → nothing can ring
+  nextAt: string; // earliest upcoming schedule time ("" if none)
+}
+
+/** Read what the OS is really holding right now (pending local notifications). */
+export async function nativeAlarmPending(): Promise<{ count: number; nextAt: string; nextTitle: string }> {
+  try {
+    const { LocalNotifications } = await import("@capacitor/local-notifications");
+    const res = await LocalNotifications.getPending();
+    const list = res?.notifications || [];
+    let nextAt = "";
+    let nextTitle = "";
+    for (const n of list) {
+      const at = (n as unknown as { schedule?: { at?: string | Date } }).schedule?.at;
+      if (!at) continue;
+      const d = typeof at === "string" ? new Date(at) : at;
+      if (!nextAt || d < new Date(nextAt)) {
+        nextAt = d.toISOString();
+        nextTitle = String(n.title || "");
+      }
+    }
+    return { count: list.length, nextAt, nextTitle };
+  } catch {
+    return { count: 0, nextAt: "", nextTitle: "" };
+  }
+}
+
+/**
+ * v2.6: the AUDIBLE toggle confirmation (owner: "যেকোনো ফাংশন অন করলে ঐটা
+ * যাতে সাউন্ড করে"). Fires a REAL Android notification ~1.2s from now with a
+ * fixed id (each confirmation replaces the previous — the shade never fills
+ * up), so a clear sound plays through the NOTIFICATION volume stream even if
+ * the media volume is low.
+ */
+export async function nativeConfirmNotification(title: string, body: string): Promise<boolean> {
+  if (!isNative()) return false;
+  try {
+    const { LocalNotifications } = await import("@capacitor/local-notifications");
+    const perm = await LocalNotifications.checkPermissions();
+    if (perm.display !== "granted") return false;
+    await LocalNotifications.cancel({ notifications: [{ id: 424250 }] });
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          id: 424250,
+          title,
+          body,
+          schedule: { at: new Date(Date.now() + 1200), allowWhileIdle: true },
+          sound: "alarm.wav",
+        },
+      ],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Ask for (or re-ask) the notification permission. Returns granted state. */
+export async function nativeEnsureNotifPermission(): Promise<boolean> {
+  if (!isNative()) return true; // web — nothing to do
+  try {
+    const { LocalNotifications } = await import("@capacitor/local-notifications");
+    const cur = await LocalNotifications.checkPermissions();
+    if (cur.display === "granted") return true;
+    const req = await LocalNotifications.requestPermissions();
+    return req.display === "granted";
+  } catch {
+    return false;
+  }
+}
+
 /** Schedule exact alarm notifications (meal / Fajr / adhan) — APK only. */
 const ALARM_CHANNELS: { id: string; name: string; sound: string }[] = [
   { id: "sound_adhan", name: "Adhan / prayer alarms", sound: "adhan.mp3" },
@@ -345,12 +422,19 @@ async function ensureAlarmChannels(): Promise<void> {
   }
 }
 
-export async function nativeScheduleAlarms(alarms: NativeAlarm[]): Promise<boolean> {
-  if (!isNative()) return false;
+export async function nativeScheduleAlarms(alarms: NativeAlarm[]): Promise<AlarmSyncResult> {
+  const fail = (permDenied: boolean): AlarmSyncResult => ({
+    ok: false,
+    expected: alarms.length,
+    pending: 0,
+    permDenied,
+    nextAt: "",
+  });
+  if (!isNative()) return fail(false);
   try {
     const { LocalNotifications } = await import("@capacitor/local-notifications");
     const perm = await LocalNotifications.requestPermissions();
-    if (perm.display !== "granted") return false;
+    if (perm.display !== "granted") return fail(true);
     await ensureAlarmChannels();
     await registerWaterActions();
     await LocalNotifications.cancelAll();
@@ -385,9 +469,18 @@ export async function nativeScheduleAlarms(alarms: NativeAlarm[]): Promise<boole
       const r = await LocalNotifications.schedule({ notifications: list });
       if (r?.warning) console.warn("[alarms] scheduled (some inexact):", r.warning.message);
     }
-    return true;
+    // v2.6: VERIFY — read back what the OS actually holds. If the OS didn't
+    // take the alarms, the UI shows a red warning instead of silence.
+    const pend = await nativeAlarmPending();
+    return {
+      ok: true,
+      expected: list.length,
+      pending: pend.count,
+      permDenied: false,
+      nextAt: pend.nextAt,
+    };
   } catch {
-    return false;
+    return fail(false);
   }
 }
 

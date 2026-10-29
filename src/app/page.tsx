@@ -18,7 +18,7 @@ import { getLog, todayStr } from "@/lib/types";
 import { pushDay, ensureProfile, DaySummary } from "@/lib/cloud";
 import { APP_VERSION } from "@/lib/version";
 import { warmAudio, playChime } from "@/lib/audio";
-import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm } from "@/lib/native";
+import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm, AlarmSyncResult } from "@/lib/native";
 import { waterAlarmTimes, shiftTime, randomMealMusic, PRAYER_KEYS } from "@/lib/types";
 
 type Tab = "home" | "notes" | "stats" | "friends" | "settings";
@@ -203,6 +203,10 @@ function Shell() {
   const [tab, setTab] = useState<Tab>("home");
   const [alarm, setAlarm] = useState<ActiveAlarm | null>(null);
   const [adminOpen, setAdminOpen] = useState(false);
+  // v2.6: bumped every time the app comes back to the foreground → the alarm
+  // sync re-runs (cheap insurance against aggressive OEM battery killers that
+  // wipe scheduled alarms while the app is backgrounded)
+  const [resumeTick, setResumeTick] = useState(0);
   const stateRef = useRef(state);
   stateRef.current = state;
   const tRef = useRef(t);
@@ -297,6 +301,47 @@ function Shell() {
         state.settings.mealPreAlert,
       ])
     : "";
+
+  // v2.6: publish the OS-verified alarm truth so the UI can show it —
+  // "Nটি অ্যালার্ম সক্রিয় · পরবর্তী HH:MM" or a red permission warning.
+  const publishAlarmStatus = (r: AlarmSyncResult | null, anyOn: boolean) => {
+    const st = {
+      ok: Boolean(r?.ok),
+      permDenied: Boolean(r?.permDenied),
+      pending: r?.pending ?? 0,
+      expected: r?.expected ?? 0,
+      anyOn,
+      nextAt: r?.nextAt || "",
+      at: Date.now(),
+    };
+    try {
+      localStorage.setItem("oh_alarmstatus", JSON.stringify(st));
+    } catch {
+      /* ignore */
+    }
+    window.dispatchEvent(new CustomEvent("oh:alarmstatus", { detail: st }));
+  };
+
+  // app resume → re-sync alarms (OEM killers, missed changes while backgrounded)
+  useEffect(() => {
+    if (!isNative()) return;
+    let un: (() => void) | null = null;
+    void (async () => {
+      try {
+        const { App: CapApp } = await import("@capacitor/app");
+        const l = await CapApp.addListener("appStateChange", (s: { isActive: boolean }) => {
+          if (s.isActive) setResumeTick((n) => n + 1);
+        });
+        un = () => void l.remove();
+      } catch {
+        /* plugin missing */
+      }
+    })();
+    return () => {
+      if (un) un();
+    };
+  }, []);
+
   useEffect(() => {
     if (!ready || !alarmSig || !isNative()) return;
     const s = stateRef.current;
@@ -344,8 +389,22 @@ function Shell() {
       list.push({ id: "nudge_morning", time: "10:00", title: `👋 ${t("appName")}`, body: t("nudgeBody") });
       list.push({ id: "nudge_afternoon", time: "16:00", title: `👋 ${t("appName")}`, body: t("nudgeBody") });
     }
-    if (list.length) void nativeScheduleAlarms(list);
-  }, [ready, alarmSig, t]);
+    const anyOn = list.length > 0;
+    if (list.length) {
+      void nativeScheduleAlarms(list).then((r) => publishAlarmStatus(r, anyOn));
+    } else {
+      // everything off — clear the OS list and publish the calm state
+      void (async () => {
+        try {
+          const { LocalNotifications } = await import("@capacitor/local-notifications");
+          await LocalNotifications.cancelAll();
+        } catch {
+          /* ignore */
+        }
+      })();
+      publishAlarmStatus({ ok: true, expected: 0, pending: 0, permDenied: false, nextAt: "" }, false);
+    }
+  }, [ready, alarmSig, t, resumeTick]);
 
   // v2.4: notification ACTION buttons (water "✓ Drink" / "💤 Later") —
   // tapping Drink logs a glass instantly; Later snoozes 15 minutes.

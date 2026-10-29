@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef } from "react";
 import { useStore } from "@/lib/store";
-import { startAlarmMusic, stopAlarmMusic } from "@/lib/audio";
+import { startAlarmMusic, startMealMusic, startAdhan, stopAlarmMusic } from "@/lib/audio";
 
 export interface ActiveAlarm {
   key: string;
@@ -87,7 +87,15 @@ export default function AlarmOverlay({ alarm, onDismiss }: { alarm: ActiveAlarm 
   useEffect(() => {
     if (alarm?.sound) {
       try {
-        stopRef.current = startAlarmMusic();
+        // v2.6: REAL owner files — meals play a RANDOM one of the 2 music
+        // tracks (র্যান্ডম মিউজিক, একটার পর একটা), azan plays the real adhan
+        // recording; everything else keeps the synthesized music box.
+        const key = alarm.key || "";
+        const isMeal = key.startsWith("meal_") && !key.startsWith("mealpre_");
+        const isAzan = key === "fajr" || key.startsWith("adhan_");
+        if (isMeal) stopRef.current = startMealMusic();
+        else if (isAzan) stopRef.current = startAdhan();
+        else stopRef.current = startAlarmMusic();
       } catch {
         /* audio blocked until user interacts */
       }

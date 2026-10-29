@@ -22,6 +22,7 @@ import {
   nativeRequestNotifications,
   nativeOpenUsageAccess,
   nativeOpenNotificationSettings,
+  nativeOpenBatteryList,
   PermStatus,
 } from "@/lib/native";
 

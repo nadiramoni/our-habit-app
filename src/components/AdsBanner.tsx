@@ -1,14 +1,14 @@
 "use client";
 
-import React, { useEffect, useId, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useServerCfg } from "@/lib/cfg";
 import { useStore } from "@/lib/store";
+import { AdZone, ZONE_LADDER } from "@/lib/ad-zones";
 
 /**
  * Extract the Adsterra key AND declared banner size from either a raw 32-hex
  * key or the full pasted <script> snippet (atOptions + script src).
- * Beginner-proof: paste anything — the width/height inside the pasted
- * atOptions win, so a 320×50 and a 468×60 zone both render pixel-perfect.
+ * Used by the admin panel's paste validation (Social Bar / Popunder / …).
  */
 export function extractAdsterra(raw: string): { key: string; src: string; w: number; h: number } | null {
   const text = (raw || "").trim();
@@ -18,7 +18,7 @@ export function extractAdsterra(raw: string): { key: string; src: string; w: num
   const bare = text.match(/\b([a-f0-9]{32})\b/);
   const key = keyMatch?.[1] || srcMatch?.[1] || bare?.[1];
   if (!key) return null;
-  const src = srcMatch ? srcMatch[0] : `https://bicea.org/22/${key}`; // owner's delivery domain
+  const src = srcMatch ? srcMatch[0] : `https://bicea.org/22/${key}`;
   const wMatch = text.match(/['"]?width['"]?\s*:\s*['"]?(\d+)['"]?/i);
   const hMatch = text.match(/['"]?height['"]?\s*:\s*['"]?(\d+)['"]?/i);
   const w = wMatch ? parseInt(wMatch[1], 10) || 468 : 468;
@@ -26,11 +26,8 @@ export function extractAdsterra(raw: string): { key: string; src: string; w: num
   return { key, src, w, h };
 }
 
-/**
- * Extract any script/direct URL from pasted Adsterra code (Social Bar,
- * Popunder, Native Banner, Smartlink). Accepts full <script> snippet,
- * protocol-relative "//host/..." or a bare URL.
- */
+/** Extract any script/direct URL from pasted Adsterra code (Social Bar,
+ * Popunder, Native Banner, Smartlink). */
 export function extractScriptUrl(raw: string): string | null {
   const text = (raw || "").trim();
   if (!text) return null;
@@ -54,7 +51,7 @@ export function extractContainerId(raw: string): string | null {
 /** Guard so a zone script is injected only once per page load (StrictMode-safe). */
 const injected = new Set<string>();
 
-// v2.4: live banner health, read by the secret admin panel —
+// live banner health, read by the secret admin panel —
 // window.__atHealth[key] = { ok, mode, at }
 export function beaconHealth(key: string, ok: boolean, mode: string): void {
   try {
@@ -82,52 +79,48 @@ function useZoneScript(url: string | null, zoneKey: string) {
 }
 
 /**
- * Real Adsterra banner — rendered inside a sandboxed iframe (safe, no page pollution).
+ * v2.6 AdFrame — the REAL banner fix.
  *
- * v2.0 FIX (the ad was invisible in the APK): the old code measured the
- * wrapper once on mount — if layout wasn't ready the width was 0 → scale=0 →
- * the whole banner collapsed to 0px height FOREVER (no window resize ever
- * fires inside a phone WebView). Now:
- *   • ResizeObserver watches the wrapper and refits on ANY size change
- *   • a 0-width measurement is ignored and retried (never collapses)
+ * History: v2.2–v2.5 rendered the banner inside a SANDBOXED srcdoc iframe.
+ * On the owner's phone the Adsterra script even loaded (health beacon ✓) but
+ * the creative never displayed — a sandbox without allow-same-origin means an
+ * OPAQUE ORIGIN: no cookies, no referrer, blocked nested context — Adsterra's
+ * ad server serves nothing visible.
  *
- * v2.2.1 TRUTH-CHECK: an iframe "load" event fires even when Adsterra
- * returns an EMPTY script (new zones serve 200/0-byte until they activate —
- * verified live). So "ready" is now driven by a REAL render check: the
- * srcdoc inspects its own body after 8s and postMessages the parent whether
- * the network wrote any visible node. No render → elegant placeholder stays
- * + cache-busted retry ladder (6×45s then every 5min) → the banner appears
- * the moment Adsterra activates the zone. NO reinstall needed, ever.
+ * Now each banner slot renders a NORMAL iframe pointing at /ad.html (our own
+ * origin — exactly how a website embeds Adsterra). Cookies work, creatives
+ * display. Each iframe is its own document → no atOptions collisions between
+ * the 3 slots.
+ *
+ * Reliability:
+ *  • /ad.html self-checks for a REAL render (iframe with visible size) over a
+ *    ~87s phase ladder and postMessages the verdict
+ *  • final-fail → parent remounts with a cache-bust; every 2nd cycle rotates
+ *    to the next baked zone (no-fill on one zone → the others try)
+ *  • after 6 cycles the remount ladder slows to every 5 minutes
+ *  • every verdict beacons to window.__atHealth → admin panel truth display
  */
-function AdsterraIframe({ code, w, h }: { code: string; w?: number; h?: number }) {
-  const parsed = extractAdsterra(code);
-  // declared size from the pasted atOptions wins; props are only a fallback
-  const W = w ?? parsed?.w ?? 468;
-  const H = h ?? parsed?.h ?? 60;
-  const slotId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
+function AdFrame({ ladder }: { ladder: AdZone[] }) {
   const wrapRef = useRef<HTMLDivElement>(null);
-  const directRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   const [ready, setReady] = useState(false);
   const [bust, setBust] = useState(0);
-  // v2.4: after 3 failed srcdoc attempts try the OFFICIAL injection path —
-  // atOptions + script straight into the page (some networks only render there)
-  const [mode, setMode] = useState<"iframe" | "direct">("iframe");
+  const [zoneIdx, setZoneIdx] = useState(0);
   const failsRef = useRef(0);
-  const loadedRef = useRef(false);
+  const cyclesRef = useRef(0);
+  const doneRef = useRef(false);
 
+  const active = ladder[zoneIdx % ladder.length];
+
+  // fit to container width (never collapse on 0-width measurement)
   useEffect(() => {
-    if (!parsed) return;
     const el = wrapRef.current;
     if (!el) return;
-
     const fit = () => {
       const cw = el.clientWidth;
-      if (cw > 0) setScale(Math.min(1, cw / W));
-      // cw === 0 → layout not ready yet; ResizeObserver will fire again
+      if (cw > 0) setScale(Math.min(1, cw / active.w));
     };
     fit();
-
     let raf = 0;
     const ro = new ResizeObserver(() => {
       cancelAnimationFrame(raf);
@@ -135,132 +128,74 @@ function AdsterraIframe({ code, w, h }: { code: string; w?: number; h?: number }
     });
     ro.observe(el);
     window.addEventListener("resize", fit);
-
     return () => {
       ro.disconnect();
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", fit);
     };
-  }, [parsed, W]);
+  }, [active]);
 
-  // real-render verdict from inside the iframe (works even under sandbox:
-  // allow-scripts lets the child postMessage the parent)
+  // verdicts from /ad.html
   useEffect(() => {
-    if (!parsed || mode !== "iframe") return;
     const onMsg = (e: MessageEvent) => {
-      const d = e.data as { __at?: string; ok?: boolean } | null;
-      if (!d || d.__at !== slotId) return;
-      const ok = d.ok === true;
-      loadedRef.current = ok;
-      setReady(ok);
-      beaconHealth(parsed.key, ok, "iframe");
-      if (!ok) {
-        // 3 empty verdicts → try the official direct injection path once
+      const d = e.data as { __atAd?: boolean; key?: string; ok?: boolean; phase?: number } | null;
+      if (!d || d.__atAd !== true || d.key !== active.key) return;
+      if (d.ok) {
+        doneRef.current = true;
+        setReady(true);
+        beaconHealth(active.key, true, "frame");
+      } else if (d.phase === 99) {
+        // full ladder failed in this document → cache-busted remount (+rotation)
+        if (doneRef.current) return;
         failsRef.current += 1;
-        if (failsRef.current >= 3) setMode("direct");
+        cyclesRef.current += 1;
+        beaconHealth(active.key, false, "frame");
+        setReady(false);
+        if (failsRef.current % 2 === 0) setZoneIdx((i) => i + 1); // rotate zone
+        setBust((b) => b + 1); // fresh document + fresh ad request
       }
     };
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
-  }, [parsed, slotId, mode]);
+  }, [active]);
 
-  // v2.4 DIRECT INJECTION fallback — the exact usage Adsterra documents:
-  // a fresh atOptions global followed by the zone script, appended to the
-  // real page. One at a time (atOptions is a single global).
+  // long-run throttle: after 6 failed cycles, refetch at most every 5 min
   useEffect(() => {
-    if (!parsed || mode !== "direct") return;
-    const host = directRef.current;
-    if (!host) return;
-    const w2 = window as unknown as { __atDirectActive?: boolean; __atDirectDone?: Record<string, boolean> };
-    w2.__atDirectDone = w2.__atDirectDone || {};
-    if (w2.__atDirectActive || w2.__atDirectDone[parsed.key]) return;
-    w2.__atDirectActive = true;
-    w2.__atDirectDone[parsed.key] = true;
-    host.innerHTML = "";
-    const cfgScript = document.createElement("script");
-    cfgScript.text = `atOptions={'key':'${parsed.key}','format':'iframe','height':${H},'width':${W},'params':{}};`;
-    const zoneScript = document.createElement("script");
-    zoneScript.src = bust > 0 ? `${parsed.src}?r=${bust}` : parsed.src;
-    zoneScript.async = true;
-    host.appendChild(cfgScript);
-    host.appendChild(zoneScript);
-    const check = setTimeout(() => {
-      const ok = host.querySelectorAll("iframe, a[href], img, video").length > 0;
-      loadedRef.current = ok;
-      setReady((r) => r || ok);
-      beaconHealth(parsed.key, ok, "direct");
-      w2.__atDirectActive = false;
-    }, 8000);
-    return () => {
-      clearTimeout(check);
-      host.innerHTML = "";
-      w2.__atDirectActive = false;
-    };
-     
-  }, [mode, parsed, bust]);
+    if (bust === 0 || cyclesRef.current < 6) return;
+    const t = setTimeout(() => setBust((b) => b + 1), 5 * 60 * 1000);
+    return () => clearTimeout(t);
+  }, [bust]);
 
-  // retry ladder — Adsterra zones typically activate minutes…hours after
-  // creation; each rung refetches the zone script with a fresh cache-bust
-  useEffect(() => {
-    if (!parsed) return;
-    let cancelled = false;
-    let n = 0;
-    let t: ReturnType<typeof setTimeout>;
-    const arm = () => {
-      if (cancelled) return;
-      n += 1;
-      t = setTimeout(() => {
-        if (cancelled || loadedRef.current) return;
-        setBust((b) => b + 1);
-        arm();
-      }, n <= 6 ? 45000 : 300000);
-    };
-    arm();
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
-    };
-  }, [parsed]);
-
-  if (!parsed) return null;
-
-  const src = bust > 0 ? `${parsed.src}?r=${bust}` : parsed.src;
-  const srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;height:100%;overflow:hidden;background:transparent}body{display:flex;align-items:center;justify-content:center}</style></head><body><script>atOptions={'key':'${parsed.key}','format':'iframe','height':${H},'width':${W},'params':{}};</script><script src="${src}"></script><script>setTimeout(function(){try{var n=document.body.querySelectorAll('iframe,img,a[href],ins,div,video').length;parent.postMessage({__at:'${slotId}',ok:n>0},'*')}catch(e){parent.postMessage({__at:'${slotId}',ok:false},'*')}},8000)</script></body></html>`;
-
-  const BH = Math.max(1, Math.round(H * (scale || 1)));
+  const src = `/ad.html?k=${active.key}&w=${active.w}&h=${active.h}&src=${encodeURIComponent(active.src)}&r=${bust}`;
+  const BH = Math.max(1, Math.round(active.h * (scale || 1)));
 
   return (
     <div ref={wrapRef} className="relative w-full overflow-hidden" style={{ height: BH }}>
       {!ready ? (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none animate-pulse">
-          <span className="text-[9px] uppercase tracking-wider text-muted-foreground/60 border border-border/60 rounded px-1.5 py-0.5">
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <span className="text-[9px] uppercase tracking-wider text-muted-foreground/60 border border-border/60 rounded px-1.5 py-0.5 animate-pulse">
             Ad
           </span>
         </div>
       ) : null}
-      {mode === "direct" ? (
-        <div ref={directRef} className="absolute inset-0 flex items-center justify-center overflow-hidden" />
-      ) : (
-        <iframe
-          title="Advertisement"
-          srcDoc={srcdoc}
-          key={bust}
-          width={W}
-          height={H}
-          scrolling="no"
-          sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
-          loading="lazy"
-          referrerPolicy="no-referrer-when-downgrade"
-          style={{
-            border: 0,
-            position: "absolute",
-            top: 0,
-            left: 0,
-            transformOrigin: "top left",
-            transform: `scale(${scale || 1})`,
-          }}
-        />
-      )}
+      <iframe
+        title="Advertisement"
+        src={src}
+        key={`${active.key}-${bust}`}
+        width={active.w}
+        height={active.h}
+        scrolling="no"
+        loading="lazy"
+        referrerPolicy="no-referrer-when-downgrade"
+        style={{
+          border: 0,
+          position: "absolute",
+          top: 0,
+          left: 0,
+          transformOrigin: "top left",
+          transform: `scale(${scale || 1})`,
+        }}
+      />
     </div>
   );
 }
@@ -275,7 +210,6 @@ export function AtNativeInline() {
 
   useZoneScript(url, "at-native-banner");
 
-  // clean up when zone turns off / unmount
   useEffect(() => {
     if (!url && ref.current) ref.current.innerHTML = "";
   }, [url]);
@@ -323,68 +257,20 @@ export function SmartlinkButton({ className = "" }: { className?: string }) {
 }
 
 /**
- * Banner used on Home (3 slots: top / mid / bottom) + Stats / Friends.
- * variant "a" (top slot): prefer the small banner (banner300 zone = 320×50)
- * variant "b" (mid/bottom): prefer the main banner (adsterra zone = 468×60)
- * Each banner's declared atOptions width/height is parsed, so ANY Adsterra
- * banner size renders pixel-perfect — paste-anything, zero-config.
+ * The app's banner ad — v2.6: 100% baked-in (src/lib/ad-zones.ts), no manual
+ * config. Renders in exactly 3 places (Home top / mid / bottom):
+ *   variant "a" → compact 320×50 first (header stays slim)
+ *   variant "b" → the main 468×60 first
+ * The master toggle (admin panel) is the only kill-switch left.
  */
-export default function AdsBanner({ compact = false, variant = "b" }: { compact?: boolean; variant?: "a" | "b" }) {
+export default function AdsBanner({ variant = "b" }: { compact?: boolean; variant?: "a" | "b" }) {
   const { cfg, loaded } = useServerCfg();
-  const { t } = useStore();
-  const [wide, setWide] = useState(false);
-
-  useEffect(() => {
-    const mq = window.matchMedia("(min-width: 768px)");
-    const on = () => setWide(mq.matches);
-    on();
-    mq.addEventListener("change", on);
-    return () => mq.removeEventListener("change", on);
-  }, []);
-
   if (!loaded || !cfg.adsEnabled) return null;
-
-  const at = cfg.at;
-  const banner728 = at?.banner728?.on && extractAdsterra(at.banner728.code);
-  const banner300 = at?.banner300?.on && extractAdsterra(at.banner300.code);
-  const adsterra468 = cfg.ads.adsterra.on && extractAdsterra(cfg.ads.adsterra.id);
-  const admobBanner = cfg.ads.banner.on && cfg.ads.banner.id;
-  const adsense = cfg.ads.adsense.on && cfg.ads.adsense.id;
-
-  const renderAt = (parsed: { code: string; w: number; h: number }) => (
-    <div className="py-1 flex justify-center">
-      {/* keyed on the code: a config change remounts the banner with fresh state */}
-      <AdsterraIframe key={parsed.code} code={parsed.code} w={parsed.w} h={parsed.h} />
-    </div>
-  );
-
-  let body: React.ReactNode = null;
-  if (variant === "a") {
-    // TOP slot — small banner first so the page header stays compact
-    if (banner300) body = renderAt({ code: at.banner300.code, w: banner300.w, h: banner300.h });
-    else if (adsterra468) body = renderAt({ code: cfg.ads.adsterra.id, w: adsterra468.w, h: adsterra468.h });
-  } else if (wide && banner728) {
-    body = renderAt({ code: at.banner728.code, w: banner728.w, h: banner728.h });
-  } else if (adsterra468) {
-    body = renderAt({ code: cfg.ads.adsterra.id, w: adsterra468.w, h: adsterra468.h });
-  } else if (banner300) {
-    body = renderAt({ code: at.banner300.code, w: banner300.w, h: banner300.h });
-  }
-
-  if (!body && !admobBanner && !adsense) return null;
-
   return (
     <div role="complementary" aria-label="Advertisement" className="rounded-xl border border-border bg-card/60 overflow-hidden">
-      {body ? (
-        body
-      ) : (
-        <div className="flex items-center justify-center gap-2 px-3" style={{ minHeight: compact ? 44 : 56 }}>
-          <span className="text-[9px] uppercase tracking-wider text-muted-foreground border border-border rounded px-1 py-0.5">
-            {admobBanner ? "AdMob" : adsense ? "AdSense" : "Ad"}
-          </span>
-          <span className="text-[11px] text-muted-foreground text-center">{t("adsPlaceholder")}</span>
-        </div>
-      )}
+      <div className="py-1 flex justify-center">
+        <AdFrame key={variant} ladder={ZONE_LADDER[variant]} />
+      </div>
     </div>
   );
 }

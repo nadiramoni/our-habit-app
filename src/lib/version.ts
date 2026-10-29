@@ -1,5 +1,18 @@
 // App version — bump this when you ship an update.
 // The admin panel's "latest version" is compared against this to trigger auto-update.
+// v2.6.0 — owner's real-device round 8: BANNERS THAT ACTUALLY SHOW — 3 real
+//           Adsterra zones baked into the app (no manual config, admin paste
+//           rows closed), rendered in normal same-origin iframes (/ad.html)
+//           instead of sandboxed srcdoc (the sandbox's opaque origin blocked
+//           cookies/creatives = invisible banners), auto-rotation when a zone
+//           has no fill; MEAL ALARMS + every alarm: OS-verified scheduling
+//           (getPending read-back + status bar "Nটি সক্রিয় · পরবর্তী HH:MM"),
+//           permission gate + red warning when notifications are off,
+//           AUDIBLE toggle confirmation (loud jingle + REAL Android
+//           notification sound + next-ring time in the popup), in-app alarm
+//           music now plays the OWNER'S OWN FILES (meals = random of the 2
+//           tracks, azan = real adhan recording), alarms re-sync on every app
+//           resume; banners removed from Stats (exactly 3 places on Home)
 // v2.5.0 — owner's real-device round 7: FULL MONTH calendar (tap any date →
 //           that day's done/not-done record, "no record" days marked),
 //           নতুন হ্যাবিট (user-created habits, one-tap done), mosque-style
@@ -25,4 +38,4 @@
 //           minutes + start sound, sleep tracker + bedtime alert, points moved
 //           to Settings profile (full name), YouTube Shorts vs Long split
 // v2.2.1 — REAL Adsterra banners + REAL adhan recording wired end-to-end
-export const APP_VERSION = "2.5.0";
+export const APP_VERSION = "2.6.0";

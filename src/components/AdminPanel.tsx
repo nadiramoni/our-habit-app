@@ -4,8 +4,8 @@ import React, { useEffect, useState } from "react";
 import { useStore } from "@/lib/store";
 import { useServerCfg } from "@/lib/cfg";
 import { Card, SectionTitle, ToggleRow } from "@/components/ui-bits";
-import { AtCfg, AtZone, ServerAdsCfg, ServerCfg } from "@/lib/types";
-import { extractAdsterra, extractScriptUrl } from "@/components/AdsBanner";
+import { AtCfg, AtZone, ServerCfg } from "@/lib/types";
+import { extractScriptUrl } from "@/components/AdsBanner";
 import { mirrorMeta, readRawMeta, writeRawMeta } from "@/lib/cloud";
 import { isNative } from "@/lib/native";
 
@@ -260,32 +260,6 @@ function PinGate({ onUnlock, onClose }: { onUnlock: (pin: string) => void; onClo
   );
 }
 
-function SlotRow({
-  label,
-  idLabel,
-  slot,
-  onChange,
-}: {
-  label: string;
-  idLabel: string;
-  slot: { on: boolean; id: string };
-  onChange: (s: { on: boolean; id: string }) => void;
-}) {
-  return (
-    <div className="rounded-xl bg-secondary/60 p-2.5 mb-2">
-      <ToggleRow label={label} checked={slot.on} onChange={(v) => onChange({ ...slot, on: v })} />
-      {slot.on ? (
-        <input
-          value={slot.id}
-          onChange={(e) => onChange({ ...slot, id: e.target.value.trim() })}
-          placeholder={idLabel}
-          className="w-full bg-muted rounded-lg px-3 py-2 text-xs border border-border outline-none focus:ring-1 focus:ring-ring mb-1"
-        />
-      ) : null}
-    </div>
-  );
-}
-
 /** One Adsterra zone row (from the owner's dashboard screenshot). */
 function AtZoneRow({
   label,
@@ -347,7 +321,6 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
   // impossible until the real config is loaded.
   const cfgReady = loaded;
 
-  const setAds = (patch: Partial<ServerAdsCfg>) => setDraft((d) => ({ ...d, ads: { ...d.ads, ...patch } }));
   const setAt = (patch: Partial<AtCfg>) => setDraft((d) => ({ ...d, at: { ...d.at, ...patch } }));
 
   const fbValid = (() => {
@@ -445,74 +418,37 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
         <Card className="mb-4">
           <SectionTitle title={`💰 ${t("adsSection")}`} sub={t("adsSub")} />
 
-          {/* v2.5 BANNER HELP — the owner's #1 issue: banner zones serve an EMPTY
-              script (verified: HTTP 200/0 bytes + 403) → that means the zone is
-              NOT ACTIVE on Adsterra's side. No app code can fix that; the zones
-              activate from the dashboard. This box guides the owner exactly. */}
-          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 mb-3">
-            <div className="text-sm font-bold text-amber-600 dark:text-amber-400 mb-1">⚠️ Banner দেখাচ্ছে না? এই ৪টা স্টেপ ফলো করো</div>
-            <ol className="text-[11px] text-muted-foreground leading-relaxed list-decimal list-inside space-y-1">
-              <li>Adsterra Dashboard → <b>Websites</b> → তোমার সাইট/app-এর ডোমেইন <b>Added + Approved</b> আছে কিনা দেখো (Banner format-এর জন্য website approval বাধ্যতামূলক — Popunder/Social Bar-এ লাগে না, তাই ওগুলো চলে)।</li>
-              <li><b>Zones</b> → Banner 468×60 আর 300×250 zone-এর স্ট্যাটাস <b>Active</b> কিনা দেখো। Pending থাকলে Adsterra approve করা পর্যন্ত অপেক্ষা করো বা support-এ টিকেট দাও।</li>
-              <li>নিচের 🩺 Banner Health-এ লাল <b>✗ খালি</b> দেখালে = zone এখনো সার্ভার থেকে খালি স্ক্রিপ্ট দিচ্ছে। Zone Active হওয়ার সাথে সাথে অ্যাপে অটো বিজ্ঞাপন আসা শুরু হবে (কোনো রি-ইনস্টল লাগবে না)।</li>
-              <li>Social Bar ও Popunder-এর কোড আগের সেভে মুছে গিয়েছিল — দুইটা জোনের কোড <b>আবার পেস্ট করে ON করো</b>, ওগুলো সাথে সাথে কাজ করবে (তুমি নিজেই দেখেছ কাজ করছে)।</li>
-            </ol>
+          {/* v2.6: BANNERS ARE AUTO — the owner asked to CLOSE the manual
+              banner config ("ম্যানুয়াল অ্যাডস টোটালি ক্লোজ করো, তুমি নিজে
+              করতেছো"). His 3 banner zones are now BAKED into the app itself
+              (src/lib/ad-zones.ts) and render in exactly 3 places on Home.
+              Nothing to paste, nothing to break. */}
+          <div className="rounded-xl border border-primary/40 bg-primary/10 p-3 mb-3">
+            <div className="text-sm font-bold text-primary mb-1">📐 ব্যানার অ্যাড — অটো চালু ✅</div>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              হোম স্ক্রিনের <b>৩টি জায়গায়</b> ব্যানার অ্যাড অটো চলে — তোমার ৩টি Adsterra ব্যানার জোন অ্যাপের ভেতরে বেক করা। কোনো কোড পেস্ট করার দরকার নেই। একটি জোনে বিজ্ঞাপন না থাকলে অ্যাপ নিজেই অন্য জোনে চলে যায়। নিচের 🩺 Health-এ সবুজ দেখালেই বিজ্ঞাপন চলছে বুঝবে।
+            </p>
           </div>
 
           <ToggleRow label={t("admMaster")} checked={draft.adsEnabled} onChange={(v) => setDraft({ ...draft, adsEnabled: v })} />
 
           <div className="border-t border-border pt-3 mt-2">
-            <div className="text-sm font-bold">🎯 {t("admAdmob")}</div>
-            <div className="text-[11px] text-muted-foreground mb-2">{t("admAdmobSub")}</div>
-            <SlotRow label={`📐 ${t("admBanner")}`} idLabel={t("admBannerId")} slot={draft.ads.banner} onChange={(s) => setAds({ banner: s })} />
-            <SlotRow label={`🧩 ${t("admNative")}`} idLabel={t("admNativeId")} slot={draft.ads.native} onChange={(s) => setAds({ native: s })} />
-            <SlotRow label={`🎁 ${t("admRewarded")}`} idLabel={t("admRewardedId")} slot={draft.ads.rewarded} onChange={(s) => setAds({ rewarded: s })} />
-          </div>
-
-          <div className="border-t border-border pt-3 mt-2">
             <div className="text-sm font-bold">🌐 {t("admAdsterra")}</div>
-            <div className="text-[11px] text-muted-foreground mb-2">{t("admAdsterraSub")}</div>
-            <div className="rounded-xl bg-secondary/60 p-2.5 mb-2">
-              <ToggleRow
-                label={`📐 Banner 468×60 (${t("atLiveTag")})`}
-                checked={draft.ads.adsterra.on}
-                onChange={(v) => setAds({ adsterra: { ...draft.ads.adsterra, on: v } })}
-              />
-              {draft.ads.adsterra.on ? (
-                <textarea
-                  value={draft.ads.adsterra.id}
-                  onChange={(e) => setAds({ adsterra: { ...draft.ads.adsterra, id: e.target.value } })}
-                  placeholder={t("admAdsterraPaste")}
-                  rows={4}
-                  className="w-full bg-muted rounded-lg px-3 py-2 text-[11px] font-mono border border-border outline-none focus:ring-1 focus:ring-ring mb-1 resize-none"
-                />
-              ) : null}
-              {draft.ads.adsterra.on && extractAdsterra(draft.ads.adsterra.id) ? (
-                <div className="text-[10px] text-primary">✓ {t("admAdsterraOk")}</div>
-              ) : draft.ads.adsterra.on && draft.ads.adsterra.id.trim() ? (
-                <div className="text-[10px] text-destructive">✗ {t("admAdsterraBad")}</div>
-              ) : null}
-            </div>
+            <div className="text-[11px] text-muted-foreground mb-2">{t("admAtSub")}</div>
 
             <div className="border-t border-border pt-3 mt-3">
               <div className="text-sm font-bold">🧱 {t("admAt")}</div>
-              <div className="text-[11px] text-muted-foreground mb-2">{t("admAtSub")}</div>
-              <AtZoneRow label={`📐 ${t("atBanner300")}`} hint={t("atBanner300Hint")} zone={draft.at.banner300} onChange={(z) => setAt({ banner300: z })} />
-              <AtZoneRow label={`📐 ${t("atBanner728")}`} hint={t("atBanner728Hint")} zone={draft.at.banner728} onChange={(z) => setAt({ banner728: z })} />
+              <div className="text-[11px] text-muted-foreground mb-2">
+                📐 Banner 320×50 / 468×60 / 728×90 — <b>অটো (অ্যাপে বেক করা)</b>, এখানে কিছু করার নেই। নিচের বাকি ফরম্যাটগুলোর কোড Adsterra ড্যাশবোর্ড থেকে GET CODE করে পেস্ট করো।
+              </div>
               <AtZoneRow label={`🧩 ${t("atNativeBanner")}`} hint={t("atNativeBannerHint")} zone={draft.at.nativeBanner} onChange={(z) => setAt({ nativeBanner: z })} />
               <AtZoneRow label={`📊 ${t("atSocialBar")}`} hint={t("atSocialBarHint")} zone={draft.at.socialBar} onChange={(z) => setAt({ socialBar: z })} />
               <AtZoneRow label={`⚠️ ${t("atPopunder")}`} hint={t("atPopunderHint")} zone={draft.at.popunder} onChange={(z) => setAt({ popunder: z })} />
               <AtZoneRow label={`🔗 ${t("atSmartlink")}`} hint={t("atSmartlinkHint")} zone={draft.at.smartlink} isUrl onChange={(z) => setAt({ smartlink: z })} />
             </div>
 
-            {/* v2.4: LIVE banner health — did the network actually render? */}
+            {/* live banner health — did the network actually render? */}
             <BannerHealth />
-          </div>
-
-          <div className="border-t border-border pt-3 mt-2">
-            <div className="text-sm font-bold">ℹ️ {t("admAdsense")}</div>
-            <div className="text-[11px] text-muted-foreground mb-2">{t("admAdsenseSub")}</div>
-            <SlotRow label={`📐 ${t("admBanner")}`} idLabel={t("admAdsenseId")} slot={draft.ads.adsense} onChange={(s) => setAds({ adsense: s })} />
           </div>
         </Card>
 
