@@ -77,6 +77,43 @@ function getAdmin(): { auth: any; db: any } {
 // cookie = HMAC(passHash) — deterministic, survives dev-server restarts, and
 // dies the moment the password is changed.
 
+// ---------- v3.1: web-admin PIN (the standalone GitHub-Pages panel) ----------
+// The owner asked for his admin panel as ONE index.html file he can host on
+// GitHub Pages and log into with HIS pin (755). The pin never travels to the
+// public page as plain text: the panel sends it to THIS server, the server
+// hashes it (sha256 + salt) and compares against app/meta.webAdminPinHash.
+// Until the owner changes it, the effective pin is the DEFAULT (755).
+
+export const WEB_PIN_DEFAULT = "755"; // owner's pin — effective until he changes it
+const WEB_PIN_SALT = "ourhabit::webadmin";
+const DEFAULT_WEB_PIN_HASH = sha256(`${WEB_PIN_DEFAULT}::${WEB_PIN_SALT}`);
+
+export function webPinHash(pin: string): string {
+  return sha256(`${pin}::${WEB_PIN_SALT}`);
+}
+
+export interface WebPinState {
+  hash: string;
+  isDefault: boolean; // true → the effective pin is still the default 755
+}
+
+export async function getWebPinState(): Promise<WebPinState> {
+  const { db } = getAdmin();
+  const snap = await db.collection("app").doc("meta").get();
+  const h = snap.exists ? (snap.data()?.webAdminPinHash as string) : null;
+  if (typeof h === "string" && h) return { hash: h, isDefault: false };
+  return { hash: DEFAULT_WEB_PIN_HASH, isDefault: true };
+}
+
+export async function setWebPinHash(hash: string): Promise<void> {
+  await writeMeta({ webAdminPinHash: hash });
+}
+
+/** Bearer/cookie token that proves a web-pin login. */
+export function webPinToken(hash: string): string {
+  return createHmac("sha256", hash).update("ourhabit-admin-webpin").digest("hex");
+}
+
 export const ADMIN_COOKIE = "oh_admin_session";
 
 export function sha256(s: string): string {
@@ -95,15 +132,34 @@ export async function getAdminPassHash(): Promise<string | null> {
   return typeof h === "string" && h ? h : null;
 }
 
-/** Reads + verifies the session cookie from a Request. */
+/**
+ * Reads + verifies the admin credential from a Request. TWO ways in:
+ *   1. cookie oh_admin_session (the /admin page, same-origin)
+ *   2. Authorization: Bearer <token> (the standalone GitHub-Pages panel —
+ *      cross-origin pages can't rely on SameSite=Lax cookies)
+ * A token is valid if it matches EITHER the master-password token OR the
+ * web-pin token. One Firestore read (app/meta) verifies both.
+ */
 export async function isAdminAuthed(req: Request): Promise<boolean> {
   try {
     const cookie = req.headers.get("cookie") || "";
     const m = cookie.match(new RegExp(`${ADMIN_COOKIE}=([a-f0-9]+)`));
-    if (!m) return false;
-    const passHash = await getAdminPassHash();
-    if (!passHash) return false;
-    return m[1] === sessionToken(passHash);
+    const authHeader = req.headers.get("authorization") || "";
+    const bearer = authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
+    const token = (m && m[1]) || bearer;
+    if (!token || !/^[a-f0-9]{16,}$/.test(token)) return false;
+
+    const { db } = getAdmin();
+    const snap = await db.collection("app").doc("meta").get();
+    const data = snap.exists ? snap.data() || {} : {};
+    const passHash = typeof data.adminPassHash === "string" ? data.adminPassHash : null;
+    const webHash =
+      typeof data.webAdminPinHash === "string" && data.webAdminPinHash
+        ? data.webAdminPinHash
+        : DEFAULT_WEB_PIN_HASH;
+    if (passHash && token === sessionToken(passHash)) return true; // master password (cookie or bearer)
+    if (token === webPinToken(webHash)) return true; // web pin (v3.1 panel)
+    return false;
   } catch {
     return false;
   }
@@ -113,6 +169,46 @@ export function unauthorized(): Response {
   return Response.json({ error: "unauthorized" }, { status: 401 });
 }
 
+// ---------- v3.1: CORS (the panel lives on GitHub Pages, the API on the PC) ----------
+// GitHub Pages (https) → localhost:3000 (http) is a cross-origin call. localhost
+// counts as a potentially-trustworthy origin, so browsers allow it — the server
+// just has to answer the preflight properly. Bearer tokens (not cookies) mean
+// Access-Control-Allow-Origin: * is safe here: no credentials are ever attached.
+
+export function applyCors(res: Response): Response {
+  res.headers.set("Access-Control-Allow-Origin", "*");
+  res.headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+  res.headers.set("Access-Control-Allow-Headers", "Content-Type,Authorization");
+  res.headers.set("Access-Control-Max-Age", "86400");
+  // Chrome's Private Network Access: a public page (github.io) calling a
+  // private address (localhost) asks for explicit permission in the preflight.
+  res.headers.set("Access-Control-Allow-Private-Network", "true");
+  return res;
+}
+
+export function preflight(): Response {
+  return applyCors(new Response(null, { status: 204 }));
+}
+
+/**
+ * Wraps an admin route handler: answers OPTIONS preflights, adds CORS headers
+ * to every response (errors included) and converts thrown errors into 500s.
+ */
+export function adminHandler(
+  fn: (req: Request, ctx?: unknown) => Promise<Response>,
+): (req: Request, ctx?: unknown) => Promise<Response> {
+  return async (req: Request, ctx?: unknown): Promise<Response> => {
+    if (req.method === "OPTIONS") return preflight();
+    try {
+      return applyCors(await fn(req, ctx));
+    } catch (e) {
+      return applyCors(
+        Response.json({ error: "server", message: String((e as Error)?.message || e).slice(0, 200) }, { status: 500 }),
+      );
+    }
+  };
+}
+
 // ---------- Firestore helpers ----------
 
 /** Reads app/meta (ads cfg + everything else) as a plain object. */
@@ -120,6 +216,19 @@ export async function readMeta(): Promise<Record<string, unknown> | null> {
   const { db } = getAdmin();
   const snap = await db.collection("app").doc("meta").get();
   return snap.exists ? snap.data() : null;
+}
+
+/** Reads app/meta ONCE — pass hash + web-pin hash together (used by session GET). */
+export interface MetaAuthInfo {
+  passHash: string | null;
+  webPin: WebPinState;
+}
+export async function readMetaAuthInfo(): Promise<MetaAuthInfo> {
+  const meta = await readMeta();
+  const passHash = meta && typeof meta.adminPassHash === "string" ? meta.adminPassHash : null;
+  const stored = meta && typeof meta.webAdminPinHash === "string" ? meta.webAdminPinHash : null;
+  const webPin: WebPinState = stored ? { hash: stored, isDefault: false } : { hash: DEFAULT_WEB_PIN_HASH, isDefault: true };
+  return { passHash, webPin };
 }
 
 /** Merges fields into app/meta (same write path as the in-app panel). */

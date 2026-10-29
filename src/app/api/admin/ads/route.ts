@@ -8,12 +8,12 @@
  */
 
 import { NextResponse } from "next/server";
-import { isAdminAuthed, readMeta, unauthorized, writeMeta } from "@/lib/admin-fb";
+import { adminHandler, isAdminAuthed, preflight, readMeta, unauthorized, writeMeta } from "@/lib/admin-fb";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export async function GET(req: Request) {
+async function get_raw(req: Request) {
   if (!(await isAdminAuthed(req))) return unauthorized();
   try {
     const meta = await readMeta();
@@ -23,7 +23,7 @@ export async function GET(req: Request) {
   }
 }
 
-export async function POST(req: Request) {
+async function post_raw(req: Request) {
   if (!(await isAdminAuthed(req))) return unauthorized();
   let body: { cfg?: Record<string, unknown>; adminPin?: string };
   try {
@@ -42,3 +42,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "server", message: String((e as Error)?.message || e).slice(0, 200) }, { status: 500 });
   }
 }
+
+// ---------- CORS plumbing (v3.1: called cross-origin from the GitHub-Pages panel) ----------
+export const OPTIONS = preflight;
+export const GET = adminHandler(get_raw);
+export const POST = adminHandler(post_raw);

@@ -17,9 +17,11 @@
 
 import { NextResponse } from "next/server";
 import {
+  adminHandler,
   deleteUserData,
   getAdmin,
   isAdminAuthed,
+  preflight,
   readBackup,
   unauthorized,
 } from "@/lib/admin-fb";
@@ -53,7 +55,7 @@ function dayRow(date: string, log: Record<string, unknown> | undefined) {
   };
 }
 
-export async function GET(req: Request, ctx: { params: Promise<{ uid: string }> }) {
+async function get_raw(req: Request, ctx: { params: Promise<{ uid: string }> }) {
   if (!(await isAdminAuthed(req))) return unauthorized();
   const { uid } = await ctx.params;
   try {
@@ -94,7 +96,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ uid: string }> 
   }
 }
 
-export async function POST(req: Request, ctx: { params: Promise<{ uid: string }> }) {
+async function post_raw(req: Request, ctx: { params: Promise<{ uid: string }> }) {
   if (!(await isAdminAuthed(req))) return unauthorized();
   const { uid } = await ctx.params;
   let body: { action?: string; password?: string };
@@ -139,3 +141,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ uid: string }>
     return NextResponse.json({ error: "server", message: String((e as Error)?.message || e).slice(0, 200) }, { status: 500 });
   }
 }
+
+// ---------- CORS plumbing (v3.1: called cross-origin from the GitHub-Pages panel) ----------
+export const OPTIONS = preflight;
+export const GET = adminHandler(get_raw);
+export const POST = adminHandler(post_raw);

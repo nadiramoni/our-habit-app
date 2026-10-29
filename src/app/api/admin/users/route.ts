@@ -11,12 +11,20 @@
  */
 
 import { NextResponse } from "next/server";
-import { getAdmin, isAdminAuthed, readProfiles, readBackupSummaries, unauthorized } from "@/lib/admin-fb";
+import {
+  adminHandler,
+  getAdmin,
+  isAdminAuthed,
+  preflight,
+  readProfiles,
+  readBackupSummaries,
+  unauthorized,
+} from "@/lib/admin-fb";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export async function GET(req: Request) {
+async function get_raw(req: Request) {
   if (!(await isAdminAuthed(req))) return unauthorized();
   try {
     const { auth } = getAdmin();
@@ -84,3 +92,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "server", message: String((e as Error)?.message || e).slice(0, 200) }, { status: 500 });
   }
 }
+
+// ---------- CORS plumbing (v3.1: called cross-origin from the GitHub-Pages panel) ----------
+export const OPTIONS = preflight;
+export const GET = adminHandler(get_raw);
