@@ -39,13 +39,15 @@ import org.json.JSONObject;
  *    sound plays instead. Tapping it opens the same full-screen azan.
  *
  * JS bridge (window.Capacitor.Plugins.ExactAlarm):
- *   schedule({alarms:[{id, at, title, body, sound, key, time}]})
+ *   schedule({alarms:[{id, at, title, body, sound, key, time, speak, lang}]})
  *   cancelAll()
  *   pending() → {count, nextAt, nextTitle}
  *   consumeLaunch() → {has,key,title,body,sound,time}
  *   status() → {exactAlarm, fullScreen}
  *   openFullScreenSettings()
  *   rearm() → {armed}
+ *   speakOnce({key, text, lang, throttleMin}) → v2.9: speak NOW with the
+ *       user's registered name (Reels-limit warning etc.), throttled per key
  */
 @CapacitorPlugin(name = "ExactAlarm")
 public class ExactAlarmPlugin extends Plugin {
@@ -81,6 +83,8 @@ public class ExactAlarmPlugin extends Plugin {
         String sound = o.optString("sound", "adhan.mp3");
         String key = o.optString("key", id);
         String time = o.optString("time", "");
+        String speak = o.optString("speak", ""); // v2.9: named-alert voice
+        String lang = o.optString("lang", "bn");
 
         int reqCode = reqCode(id, i);
         Intent intent = new Intent(ctx, AlarmFireReceiver.class);
@@ -91,6 +95,8 @@ public class ExactAlarmPlugin extends Plugin {
         payload.put("body", body);
         payload.put("sound", sound);
         payload.put("time", time);
+        payload.put("speak", speak);
+        payload.put("lang", lang);
         intent.putExtra("payload", payload.toString());
 
         int flags = PendingIntent.FLAG_CANCEL_CURRENT;
@@ -257,6 +263,52 @@ public class ExactAlarmPlugin extends Plugin {
     }
   }
 
+  /**
+   * v2.9: SPEAK an alert right now (the user's registered name + message) —
+   * used for the Reels-limit warning while the app is open, and available to
+   * any future in-app voice reminder. Throttled per key (default 30 min) so
+   * it never becomes spammy.
+   */
+  @PluginMethod
+  public void speakOnce(PluginCall call) {
+    try {
+      Context ctx = getContext() != null ? getContext() : getActivity();
+      String key = call.getString("key", "generic");
+      String text = call.getString("text", "");
+      String lang = call.getString("lang", "bn");
+      Integer throttleMin = call.getInt("throttleMin", 30);
+      long throttleMs = (throttleMin == null ? 30 : throttleMin) * 60_000L;
+      // JS numbers may arrive as Double (bridge quirk) — clamp defensively
+      try {
+        Object raw = call.getData().opt("throttleMin");
+        if (raw instanceof Number) throttleMs = ((Number) raw).longValue() * 60_000L;
+      } catch (Exception ignored) {
+      }
+      if (ctx == null || text == null || text.trim().isEmpty()) {
+        call.resolve();
+        return;
+      }
+      SharedPreferences sp = prefs(ctx);
+      String throttleKey = "speak_once_" + key;
+      long last = sp.getLong(throttleKey, 0L);
+      long throttleMs = (throttleMin == null ? 30 : throttleMin) * 60_000L;
+      if (last > 0 && System.currentTimeMillis() - last < throttleMs) {
+        JSObject r = new JSObject();
+        r.put("spoken", false);
+        r.put("reason", "throttled");
+        call.resolve(r);
+        return;
+      }
+      sp.edit().putLong(throttleKey, System.currentTimeMillis()).apply();
+      AlarmSpeakService.startSpeakOnly(ctx, text, lang);
+      JSObject r = new JSObject();
+      r.put("spoken", true);
+      call.resolve(r);
+    } catch (Exception e) {
+      call.reject(e.getMessage());
+    }
+  }
+
   // ---------------- helpers ----------------
 
   static SharedPreferences prefs(Context ctx) {
@@ -338,6 +390,8 @@ public class ExactAlarmPlugin extends Plugin {
                 .put("body", o.optString("body", ""))
                 .put("sound", o.optString("sound", "adhan.mp3"))
                 .put("time", o.optString("time", ""))
+                .put("speak", o.optString("speak", ""))
+                .put("lang", o.optString("lang", "bn"))
                 .toString());
         int flags = PendingIntent.FLAG_CANCEL_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {

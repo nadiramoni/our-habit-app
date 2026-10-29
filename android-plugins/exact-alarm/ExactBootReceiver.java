@@ -24,6 +24,17 @@ public class ExactBootReceiver extends BroadcastReceiver {
         return;
       }
       ExactAlarmPlugin.rearmInternal(context);
+      // v2.9: restart the chat-notification / reels-guard service too (it was
+      // running before the reboot → bring it back so chat notifications keep
+      // arriving like Messenger without opening the app)
+      try {
+        android.content.SharedPreferences sp =
+            context.getSharedPreferences(OhKeepAliveService.PREFS, android.content.Context.MODE_PRIVATE);
+        if (sp.getBoolean(OhKeepAliveService.KEY_ON, false)) {
+          OhKeepAliveService.start(context);
+        }
+      } catch (Exception ignored) {
+      }
     } catch (Exception ignored) {
     }
   }

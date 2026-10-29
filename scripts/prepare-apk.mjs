@@ -46,7 +46,8 @@ if (fs.existsSync(gsSrc)) {
   log("no google-services.json at repo root — skipping (cloud still works via JS SDK)");
 }
 
-// 2. copy native plugins (UsageTracker + AppPermissions + NearbySync)
+// 2. copy native plugins (UsageTracker + AppPermissions + NearbySync +
+//    ExactAlarm engine + GoogleAuth + KeepAlive chat service)
 const appPkgDir = path.join(ROOT, "android", "app", "src", "main", "java", "com", "ourhabit", "app");
 fs.mkdirSync(appPkgDir, { recursive: true });
 const PLUGINS = [
@@ -57,6 +58,17 @@ const PLUGINS = [
   "exact-alarm/ExactAlarmPlugin.java",
   "exact-alarm/AlarmFireReceiver.java",
   "exact-alarm/ExactBootReceiver.java",
+  // v2.9: TTS named alerts (the phone CALLS the user by name) — foreground
+  // service that speaks, then rings the real alarm sound
+  "exact-alarm/AlarmSpeakService.java",
+  // v2.9: NATIVE Google sign-in (fixes the white-screen login — no browser,
+  // no popup; Google Play account picker inside the app)
+  "google-auth/GoogleAuthPlugin.java",
+  // v2.9: background chat notifications (headless WebView on the same
+  // origin → Firestore listener → real notifications even app closed) +
+  // background Reels-limit guard
+  "keep-alive/OhKeepAliveService.java",
+  "keep-alive/ChatServicePlugin.java",
 ];
 for (const rel of PLUGINS) {
   fs.copyFileSync(path.join(ROOT, "android-plugins", rel), path.join(appPkgDir, path.basename(rel)));
@@ -78,6 +90,8 @@ const REG_CALLS = [
   "AppPermissionsPlugin.class",
   "NearbySyncPlugin.class",
   "ExactAlarmPlugin.class",
+  "GoogleAuthPlugin.class",
+  "ChatServicePlugin.class",
 ]
   .map((c) => `    registerPlugin(${c});`)
   .join("\n");
@@ -150,6 +164,11 @@ const PERMS = [
   '<uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />',
   // v2.8: re-arm the exact azan schedule after a phone reboot
   '<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />',
+  // v2.9: foreground services — AlarmSpeakService (TTS named alerts) and
+  // OhKeepAliveService (chat notifications + reels guard)
+  '<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />',
+  '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />',
+  '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />',
 ];
 let changed = false;
 for (const p of PERMS) {
@@ -176,6 +195,23 @@ if (!mf.includes("AlarmFireReceiver")) {
   mf = mf.replace(/<\/application>/, `    ${RX_FIRE}\n    ${RX_BOOT}\n  </application>`);
   changed = true;
 }
+
+// v2.9: foreground services — AlarmSpeakService (TTS voice alerts, speaks
+// the user's registered name) + OhKeepAliveService (chat notifications +
+// background reels guard). On Android 14+ every FGS must declare its type
+// (specialUse needs the PROPERTY_SPECIAL_USE_FGS_SUBTYPE explanation).
+const SVC_SPEAK = [
+  '<service android:name="com.ourhabit.app.AlarmSpeakService" android:exported="false" android:foregroundServiceType="mediaPlayback" />',
+].join("\n    ");
+const SVC_KEEP = [
+  '<service android:name="com.ourhabit.app.OhKeepAliveService" android:exported="false" android:foregroundServiceType="specialUse">',
+  '  <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Real-time chat message notifications and habit reminders via a persistent local listener" />',
+  '</service>',
+].join("\n    ");
+if (!mf.includes("AlarmSpeakService")) {
+  mf = mf.replace(/<\/application>/, `    ${SVC_SPEAK}\n    ${SVC_KEEP}\n  </application>`);
+  changed = true;
+}
 if (changed) {
   fs.writeFileSync(manifestPath, mf);
 }
@@ -187,7 +223,11 @@ if (allIn) {
   process.exit(1);
 }
 
-// 4.5. Google Play Services Nearby dependency (device-to-device note sync)
+// 4.5. Google Play Services dependencies
+//  - play-services-nearby: device-to-device note sync
+//  - play-services-auth (v2.9): NATIVE Google sign-in — the account picker
+//    sheet + idToken for signInWithCredential. This is the core of the
+//    login-white-screen fix (signInWithPopup can never work in a WebView).
 const gradlePath0 = path.join(ROOT, "android", "app", "build.gradle");
 let gradle0 = fs.readFileSync(gradlePath0, "utf8");
 if (!gradle0.includes("play-services-nearby")) {
@@ -197,6 +237,63 @@ if (!gradle0.includes("play-services-nearby")) {
   );
   fs.writeFileSync(gradlePath0, gradle0);
   log("play-services-nearby:19.3.0 added to app/build.gradle");
+}
+if (!gradle0.includes("play-services-auth")) {
+  gradle0 = fs.readFileSync(gradlePath0, "utf8");
+  gradle0 = gradle0.replace(
+    /dependencies\s*\{/,
+    "dependencies {\n    implementation 'com.google.android.gms:play-services-auth:21.1.1'\n    // v2.9: GoogleAuthPlugin's @ActivityCallback uses androidx.activity.result.ActivityResult\n    // (Capacitor holds it as implementation — NOT exposed to our module) → declare it ourselves\n    implementation 'androidx.activity:activity:1.9.3'"
+  );
+  fs.writeFileSync(gradlePath0, gradle0);
+  log("play-services-auth:21.1.1 + androidx.activity:1.9.3 added to app/build.gradle (native Google login)");
+}
+
+// 4.5b. v2.9 FIXED DEBUG KEYSTORE (Google Sign-In REQUIRES a stable SHA-1).
+// The GitHub runner generates a RANDOM debug.keystore on every build → the
+// APK's SHA-1 changes each run → Google rejects the idToken exchange with
+// DEVELOPER_ERROR (code 10). Fix: every build is signed with the SAME
+// committed keystore (android-keystore/ourhabit-debug.keystore) whose SHA-1
+// the owner registers ONCE in Firebase Console:
+//   SHA-1: 14:60:22:E8:17:39:C5:38:0E:6C:E6:A4:36:FC:1B:33:4E:BA:92:16
+// (A debug keystore for a sideloaded free app — the password is public and
+//  that is fine; Google only verifies the certificate fingerprint.)
+{
+  const ksSrc = path.join(ROOT, "android-keystore", "ourhabit-debug.keystore");
+  if (fs.existsSync(ksSrc)) {
+    let g = fs.readFileSync(gradlePath0, "utf8");
+    if (!g.includes("ourhabit-debug.keystore")) {
+      // insert signingConfigs + make the debug build type use it
+      const signCfg = [
+        "    signingConfigs {",
+        "        ourdebug {",
+        "            storeFile file('../../../android-keystore/ourhabit-debug.keystore')",
+        "            storePassword 'ourhabit2026'",
+        "            keyAlias 'ourhabit'",
+        "            keyPassword 'ourhabit2026'",
+        "        }",
+        "    }",
+      ].join("\n");
+      g = g.replace(/android\s*\{/, `android {\n${signCfg}`);
+      // the template has NO debug block (only release) → insert one that uses
+      // our stable keystore
+      if (/buildTypes\s*\{\s*debug/.test(g)) {
+        g = g.replace(
+          /buildTypes\s*\{\s*debug\s*\{/,
+          "buildTypes {\n        debug {\n            signingConfig signingConfigs.ourdebug"
+        );
+      } else {
+        g = g.replace(
+          /buildTypes\s*\{/,
+          "buildTypes {\n        debug {\n            signingConfig signingConfigs.ourdebug\n        }"
+        );
+      }
+      fs.writeFileSync(gradlePath0, g);
+      log("STABLE debug keystore wired (SHA-1 14:60:22:E8:...:92:16 → Google Sign-In works)");
+    }
+  } else {
+    console.error("[prepare-apk] ✗ android-keystore/ourhabit-debug.keystore MISSING — Google login needs the fixed signing key");
+    process.exit(1);
+  }
 }
 
 // 4.6. notification sounds → res/raw/ (scheduled alarms play these even when

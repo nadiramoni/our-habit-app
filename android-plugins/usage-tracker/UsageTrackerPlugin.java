@@ -196,4 +196,58 @@ public class UsageTrackerPlugin extends Plugin {
             AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), ctx.getPackageName());
         return mode == AppOpsManager.MODE_ALLOWED;
     }
+
+    /**
+     * v2.9: today's SHORTS/REELS minutes so far — public static so the
+     * background OhKeepAliveService can enforce the daily Reels limit EVEN
+     * WHILE THE APP IS CLOSED (owner: "রিলস দেখা বন্ধ করো — চোখের ক্ষতি
+     * হবে" warning must arrive while the user is doom-scrolling).
+     */
+    public static long todayReelsMinutes(Context ctx) {
+        try {
+            AppOpsManager appOps = (AppOpsManager) ctx.getSystemService(Context.APP_OPS_SERVICE);
+            if (appOps == null) return -1;
+            int mode = appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), ctx.getPackageName());
+            if (mode != AppOpsManager.MODE_ALLOWED) return -1;
+            UsageStatsManager usm = (UsageStatsManager) ctx.getSystemService(Context.USAGE_STATS_SERVICE);
+            if (usm == null) return -1;
+            Calendar cal = Calendar.getInstance();
+            cal.set(Calendar.HOUR_OF_DAY, 0);
+            cal.set(Calendar.MINUTE, 0);
+            cal.set(Calendar.SECOND, 0);
+            cal.set(Calendar.MILLISECOND, 0);
+            long start = cal.getTimeInMillis();
+            long end = System.currentTimeMillis();
+            UsageEvents events = usm.queryEvents(start, end);
+            UsageEvents.Event ev = new UsageEvents.Event();
+            Map<String, Long> open = new HashMap<>();
+            long totalMs = 0;
+            while (events.hasNextEvent()) {
+                events.getNextEvent(ev);
+                String pkg = ev.getPackageName();
+                if (!PKG_MAP.containsKey(pkg)) continue;
+                int type = ev.getEventType();
+                if (type == UsageEvents.Event.ACTIVITY_RESUMED) {
+                    boolean shorts = isShortsActivity(ev.getClassName());
+                    open.put(pkg + "|" + (shorts ? "shorts" : "full"), ev.getTimeStamp());
+                } else if (type == UsageEvents.Event.ACTIVITY_PAUSED) {
+                    boolean shorts = isShortsActivity(ev.getClassName());
+                    String key = pkg + "|" + (shorts ? "shorts" : "full");
+                    Long began = open.remove(key);
+                    if (began != null && shorts) {
+                        totalMs += Math.max(0, ev.getTimeStamp() - began);
+                    }
+                }
+            }
+            for (Map.Entry<String, Long> e : open.entrySet()) {
+                if (e.getKey().endsWith("|shorts")) {
+                    totalMs += Math.max(0, end - e.getValue());
+                }
+            }
+            return totalMs / 60000L;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
 }

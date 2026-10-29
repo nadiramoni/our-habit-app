@@ -14,17 +14,23 @@ import androidx.core.app.NotificationManagerCompat;
 import org.json.JSONObject;
 
 /**
- * AlarmFireReceiver — v2.8: fires when an EXACT alarm (azan / Fajr / meal /
- * sleep) goes off.
+ * AlarmFireReceiver — v2.8/v2.9: fires when an EXACT alarm (azan / Fajr /
+ * meal / water / sleep) goes off.
  *
- *  1. builds a MAX-priority notification on the alarm's own channel
- *     (azan sound + vibration, USAGE_ALARM stream)
- *  2. attaches a FULL-SCREEN intent → screen off/locked = the app LAUNCHES
- *     full-screen instantly (the WeMuslim-style azan view); phone in use =
- *     heads-up notification + sound
- *  3. saves the payload to SharedPreferences → the WebView reads it via
- *     ExactAlarmPlugin.consumeLaunch() and shows the full-screen azan UI
- *     with the real adhan audio.
+ *  v2.9 NAMED ALERTS (owner: "আমার নাম দিয়ে একটা রিংটোন ক্রিয়েট করবা —
+ *  আমাকে ডাকবে"): when the alarm payload carries `speak`, the receiver
+ *  starts AlarmSpeakService FIRST — the phone CALLS the user by their
+ *  registered full name through the TTS engine on the ALARM stream, and the
+ *  moment the voice finishes the real alarm notification fires with its own
+ *  channel sound (water music / meal music / chime). The experience:
+ *  the app speaks "আনোয়ারুল সন সাকিব, তোমার পানি খাওয়ার সময় হইছে…" and
+ *  THEN the alarm rings. Adhan alarms NEVER speak (owner: "আজানের ক্ষেত্রে
+ *  না ভাই — আজানটা আজানি দিবে").
+ *
+ *  Adhan path (no speak): MAX-priority notification on the azan channel
+ *  (azan sound + vibration, USAGE_ALARM stream) + FULL-SCREEN intent →
+ *  screen off/locked = the app LAUNCHES full-screen instantly (the
+ *  WeMuslim-style azan view); phone in use = heads-up notification + sound.
  */
 public class AlarmFireReceiver extends BroadcastReceiver {
 
@@ -42,6 +48,8 @@ public class AlarmFireReceiver extends BroadcastReceiver {
       String body = o.optString("body", "");
       String sound = o.optString("sound", "adhan.mp3");
       String time = o.optString("time", "");
+      String speak = o.optString("speak", "");
+      String lang = o.optString("lang", "bn");
 
       // 1) remember the launch payload (the app may cold-start from the
       //    full-screen intent — JS picks it up with consumeLaunch())
@@ -53,11 +61,18 @@ public class AlarmFireReceiver extends BroadcastReceiver {
       } catch (Exception ignored) {
       }
 
-      // 2) the channel (per-sound, vibrating, USAGE_ALARM loudness)
+      // 2) v2.9 NAMED ALERT — speak the user's name first, the alarm sound
+      //    follows right after the voice (sequenced inside AlarmSpeakService)
+      if (speak != null && !speak.trim().isEmpty()) {
+        AlarmSpeakService.startForAlarm(context, speak, lang, title, body, sound, key, time);
+        return;
+      }
+
+      // 3) the channel (per-sound, vibrating, USAGE_ALARM loudness)
       ExactAlarmPlugin.ensureChannel(context, sound);
       String channelId = ExactAlarmPlugin.channelIdFor(sound);
 
-      // 3) full-screen intent = open the app (azan view) directly when locked
+      // 4) full-screen intent = open the app (azan view) directly when locked
       PendingIntent fullScreen = ExactAlarmPlugin.launchPendingIntent(context, 2);
       PendingIntent content = ExactAlarmPlugin.launchPendingIntent(context, 3);
 
@@ -99,15 +114,6 @@ public class AlarmFireReceiver extends BroadcastReceiver {
           fullScreen.send();
         } catch (Exception ignored2) {
         }
-      }
-
-      // 4) dismiss any older alarm notifications so the shade stays clean
-      try {
-        NotificationManager realNm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-        if (realNm != null && Build.VERSION.SDK_INT >= 23) {
-          // nothing aggressive — newest is on top anyway
-        }
-      } catch (Exception ignored) {
       }
     } catch (Exception ignored) {
     }
