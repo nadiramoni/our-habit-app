@@ -160,7 +160,7 @@ public class AlarmSpeakService extends Service {
           onSpeakDone();
         }
       });
-      tts.speak(speak, TextToSpeech.QUEUE_FLUSH, new HashMap<>(), "ohAlert");
+      tts.speak(speak, TextToSpeech.QUEUE_FLUSH, null, "ohAlert");
       // if the engine never calls back (some OEMs), the voice still ends →
       // estimate the duration and continue
       long est = estimateSpeechMs(speak);
