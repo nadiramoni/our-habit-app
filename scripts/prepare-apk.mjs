@@ -114,6 +114,12 @@ const PERMS = [
   '<uses-permission android:name="android.app.usage.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />',
   '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
   '<uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />',
+  // v2.5 Fajr REAL FIX: on Android 12/13/14 SCHEDULE_EXACT_ALARM alone is NOT
+  // enough — Android 14 denies it until the user flips a hidden special access,
+  // and without it every alarm silently becomes INEXACT (Fajr late/skipped).
+  // USE_EXACT_ALARM is AUTO-GRANTED on Android 13+ for alarm-clock apps and
+  // makes exact alarms work with zero user steps (sideloaded APK — fine).
+  '<uses-permission android:name="android.permission.USE_EXACT_ALARM" />',
   '<uses-permission android:name="android.permission.VIBRATE" />',
   '<uses-permission android:name="android.permission.WAKE_LOCK" />',
   // battery: "Unrestricted" via the real system allow-dialog
@@ -122,11 +128,16 @@ const PERMS = [
   '<uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" tools:targetApi="s" />',
   '<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />',
   '<uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />',
-  // location is only needed for Bluetooth discovery on Android 11 and older —
-  // modern phones (12+) keep their App Info clean without it
-  '<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />',
+  // v2.4 FIX: AUTO PRAYER TIMES need location on EVERY Android version — the
+  // old maxSdkVersion=30 cap silently removed it on Android 12+ so the
+  // geolocation prompt never appeared (owner round-6 #4)
+  '<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />',
+  '<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />',
   '<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />',
   '<uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />',
+  // v2.4: full-screen alarm intent — azan/meal alarms may show over the
+  // lock screen when the exact-alarm notification arrives
+  '<uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />',
 ];
 let changed = false;
 for (const p of PERMS) {
@@ -170,6 +181,7 @@ fs.mkdirSync(rawDir, { recursive: true });
 const RAW_MAP = [
   ["public/adhan.mp3", "adhan.mp3", "REAL adhan for prayer reminders"],
   ["public/meal-alarm.mp3", "mealalarm.mp3", "owner's alarm-clock sound for meal alarms"],
+  ["public/meal-music1.mp3", "mealmusic1.mp3", "owner's 2nd music track — meal alarms play the two tracks RANDOMLY (v2.5)"],
   ["public/water-alarm.mp3", "wateralarm.mp3", "owner's music loop for water reminders"],
 ];
 for (const [srcRel, rawName, why] of RAW_MAP) {
@@ -207,6 +219,35 @@ if (!fs.existsSync(path.join(rawDir, "alarm.wav"))) {
   }
   fs.writeFileSync(path.join(rawDir, "alarm.wav"), buf);
   log("res/raw/alarm.wav generated (reminder/adhan notification sound)");
+}
+
+// 4.7 v2.4 APP ICON + SPLASH (owner round-6 #2: কভার ডিজাইন) — CRITICAL FIX:
+// `npx cap add android` writes the DEFAULT blue Capacitor launcher icon and
+// splash into res/, and until now NOTHING replaced them → every installed
+// build showed the wrong icon. The committed android-res/ tree (generated
+// once by scripts/make-icon-set.cjs from the owner's design) is now copied
+// OVER the template — launcher icon, adaptive icon, round icon, splash.
+const resSrc = path.join(ROOT, "android-res");
+const resDst = path.join(ROOT, "android", "app", "src", "main", "res");
+if (fs.existsSync(resSrc)) {
+  let iconCount = 0;
+  const copyTree = (from, to) => {
+    for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+      const srcP = path.join(from, entry.name);
+      const dstP = path.join(to, entry.name);
+      if (entry.isDirectory()) {
+        fs.mkdirSync(dstP, { recursive: true });
+        copyTree(srcP, dstP);
+      } else {
+        fs.copyFileSync(srcP, dstP);
+        iconCount++;
+      }
+    }
+  };
+  copyTree(resSrc, resDst);
+  log(`custom app icon + splash applied ✓ (${iconCount} files from android-res/ → res/)`);
+} else {
+  log("no android-res/ folder — skipping custom icons (DEFAULT capacitor icon would be used!)");
 }
 
 // 5. version stamp

@@ -1,6 +1,7 @@
 package com.ourhabit.app;
 
 import android.Manifest;
+import android.app.AlarmManager;
 import android.app.AppOpsManager;
 import android.app.NotificationManager;
 import android.content.Context;
@@ -47,6 +48,7 @@ public class AppPermissionsPlugin extends Plugin {
         r.put("notifications", notificationsEnabled(ctx) ? "granted" : "denied");
         r.put("battery", batteryIgnored(ctx) ? "granted" : "denied");
         r.put("usageAccess", usageAccessGranted(ctx) ? "granted" : "denied");
+        r.put("exactAlarm", exactAlarmGranted(ctx) ? "granted" : "denied");
         r.put("sdk", Build.VERSION.SDK_INT);
         call.resolve(r);
     }
@@ -181,6 +183,47 @@ public class AppPermissionsPlugin extends Plugin {
         }
     }
 
+    // ---------- v2.5: EXACT ALARM ("Alarms & reminders") — Fajr REAL fix ----------
+
+    /**
+     * Live status of SCHEDULE_EXACT_ALARM / USE_EXACT_ALARM. On Android 12+ this
+     * is a SPECIAL access the user must flip ("Alarms & reminders" in App info);
+     * without it exact alarms silently degrade to inexact windows.
+     */
+    @PluginMethod
+    public void exactAlarmStatus(PluginCall call) {
+        Context ctx = getContext();
+        JSObject r = new JSObject();
+        r.put("granted", exactAlarmGranted(ctx));
+        r.put("sdk", Build.VERSION.SDK_INT);
+        call.resolve(r);
+    }
+
+    /**
+     * Open the REAL system "Alarms & reminders" page for this app
+     * (ACTION_REQUEST_SCHEDULE_EXACT_ALARM). Fallback: App info page.
+     */
+    @PluginMethod
+    public void openExactAlarmSettings(PluginCall call) {
+        try {
+            Intent i = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM);
+            i.setData(Uri.parse("package:" + getContext().getPackageName()));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(i);
+            call.resolve();
+        } catch (Exception direct) {
+            try {
+                Intent info = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                info.setData(Uri.parse("package:" + getContext().getPackageName()));
+                info.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(info);
+                call.resolve();
+            } catch (Exception e) {
+                call.reject("exact_alarm_settings_failed", e);
+            }
+        }
+    }
+
     // ---------- helpers ----------
 
     private boolean notificationsEnabled(Context ctx) {
@@ -199,5 +242,14 @@ public class AppPermissionsPlugin extends Plugin {
         int mode = ops.checkOpNoThrow(
             AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), ctx.getPackageName());
         return mode == AppOpsManager.MODE_ALLOWED;
+    }
+
+    /** v2.5: exact-alarm special access (Android 12+; auto-granted on older). */
+    private boolean exactAlarmGranted(Context ctx) {
+        if (Build.VERSION.SDK_INT >= 31) {
+            AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
+            return am != null && am.canScheduleExactAlarms();
+        }
+        return true; // Android 11 and below: exact alarms always allowed
     }
 }

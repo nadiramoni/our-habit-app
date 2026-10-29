@@ -74,6 +74,7 @@ public class UsageTrackerPlugin extends Plugin {
         res.put("granted", granted);
 
         long fb = 0, ytShorts = 0, ytLong = 0, tiktok = 0, ig = 0, other = 0;
+        long shortsCount = 0, shortsYt = 0, shortsFb = 0, shortsIg = 0;
         if (granted) {
             UsageStatsManager usm =
                 (UsageStatsManager) ctx.getSystemService(Context.USAGE_STATS_SERVICE);
@@ -99,7 +100,18 @@ public class UsageTrackerPlugin extends Plugin {
                     int type = ev.getEventType();
                     if (type == UsageEvents.Event.ACTIVITY_RESUMED) {
                         String cls = ev.getClassName();
-                        String sessionKey = pkg + "|" + (isShortsActivity(cls) ? "shorts" : "full");
+                        boolean shorts = isShortsActivity(cls);
+                        // v2.4: EVERY resume of a shorts-style activity = one
+                        // short video/reel opened — REAL count from OS events,
+                        // no manual input, no estimation
+                        if (shorts) {
+                            shortsCount++;
+                            String bucket = PKG_MAP.get(pkg);
+                            if ("ytlong".equals(bucket)) shortsYt++;
+                            else if ("facebook".equals(bucket)) shortsFb++;
+                            else if ("instagram".equals(bucket)) shortsIg++;
+                        }
+                        String sessionKey = pkg + "|" + (shorts ? "shorts" : "full");
                         open.put(sessionKey, ev.getTimeStamp());
                     } else if (type == UsageEvents.Event.ACTIVITY_PAUSED) {
                         String cls = ev.getClassName();
@@ -129,6 +141,10 @@ public class UsageTrackerPlugin extends Plugin {
         res.put("tiktok", tiktok);
         res.put("instagram", ig);
         res.put("other", other);
+        res.put("shortsCount", shortsCount);
+        res.put("shortsYt", shortsYt);
+        res.put("shortsFb", shortsFb);
+        res.put("shortsIg", shortsIg);
         call.resolve(res);
     }
 
