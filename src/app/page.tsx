@@ -16,7 +16,7 @@ import PermissionSetupFlow, { PERM_FLOW_KEY } from "@/components/PermissionSetup
 import { AtGlobalScripts } from "@/components/AdsBanner";
 import { dayPoints, dhikrTotal, computeStreaks, dayCompletion } from "@/lib/logic";
 import { getLog, todayStr } from "@/lib/types";
-import { pushDay, ensureProfile, DaySummary } from "@/lib/cloud";
+import { pushDay, ensureProfile, fbIsBanned, fbSignOut, DaySummary } from "@/lib/cloud";
 import { APP_VERSION } from "@/lib/version";
 import { warmAudio, playChime } from "@/lib/audio";
 import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm, AlarmSyncResult, nativeScheduleExactAlarms, nativeCancelExactAlarms, nativeExactPending, nativeConsumeAlarmLaunch, ExactAlarmSpec } from "@/lib/native";
@@ -650,6 +650,47 @@ function Shell() {
     }, 3000); // let the permission flow + splash finish first
     return () => clearTimeout(id);
   }, [ready, resumeTick, updateSettings]);
+
+  // v3.2 CLOUD-BAN: the GitHub cloud admin panel (no server) sets
+  // usersIndex/{uid}.banned — the app checks it on boot, every 5 minutes and
+  // on every resume; a banned account is signed out and shown the ban message.
+  // Read errors (offline) NEVER lock anyone out — only a confirmed true acts.
+  useEffect(() => {
+    if (!ready) return;
+    const acc = state.account;
+    if (!acc) return;
+    let dead = false;
+    const run = async () => {
+      try {
+        const banned = await fbIsBanned(acc.uid);
+        if (banned && !dead) {
+          await fbSignOut();
+          if (!dead) {
+            setAccount(null);
+            try {
+              window.alert(t("errBanned"));
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+      } catch {
+        /* offline — next tick */
+      }
+    };
+    void run();
+    const iv = setInterval(run, 5 * 60 * 1000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") void run();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      dead = true;
+      clearInterval(iv);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, state.account?.uid]);
 
   // ensure the Firebase profile (invite code) exists once per signed-in user
   useEffect(() => {

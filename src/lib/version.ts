@@ -1,5 +1,16 @@
 // App version — bump this when you ship an update.
 // The admin panel's "latest version" is compared against this to trigger auto-update.
+// v3.2.0 — owner round-13 (2 requests in one): (1) APK BUILD FIXED — the two
+//           Java compile errors (duplicate throttleMs in ExactAlarmPlugin,
+//           wrong android.s.tts package in AlarmSpeakService) that broke the
+//           GitHub Actions build are gone — CI builds the APK again;
+//           (2) CLOUD ADMIN PANEL (NO PC!) — the GitHub-Pages panel now talks
+//           STRAIGHT to Firestore: login with your own email+password (first
+//           login claims admin with the PIN), see every account + 14-day
+//           reports, BAN/UNBAN via usersIndex.banned (the app checks it on
+//           boot + every 5 min + on resume), reset-password mails, ads +
+//           auto-update control — all from the phone, no server, forever.
+//           Provider (Google/Email) now recorded in usersIndex on every login.
 // v3.0.0 — owner round-12 (4 requests in one): (1) GOOGLE LOGIN HARDENED —
 //           web now falls back popup → FULL-PAGE redirect automatically
 //           (survives every mobile browser), unauthorized-domain is caught
@@ -70,4 +81,4 @@
 //           minutes + start sound, sleep tracker + bedtime alert, points moved
 //           to Settings profile (full name), YouTube Shorts vs Long split
 // v2.2.1 — REAL Adsterra banners + REAL adhan recording wired end-to-end
-export const APP_VERSION = "3.0.0";
+export const APP_VERSION = "3.2.0";

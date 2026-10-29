@@ -220,7 +220,9 @@ export async function fbGoogleSignIn(serverCfg?: Partial<ServerCfg> | null): Pro
     }
     if (u?.uid) {
       try {
-        await setDoc(doc(fsDb!, "usersIndex", u.uid), { name: u.displayName || gName || "", email: u.email || gEmail || "" }, { merge: true });
+        // v3.2: provider recorded → the CLOUD admin panel (GitHub Pages, no
+        // server) can show Google vs Email for every account.
+        await setDoc(doc(fsDb!, "usersIndex", u.uid), { name: u.displayName || gName || "", email: u.email || gEmail || "", provider: "google" }, { merge: true });
       } catch {
         /* profile write is best-effort */
       }
@@ -747,6 +749,26 @@ function makeCode(): string {
 }
 
 /**
+ * v3.2 CLOUD-BAN: reads usersIndex/{uid}.banned — a flag the CLOUD admin
+ * panel (GitHub Pages, no server, no admin-sdk-key) writes directly to
+ * Firestore. The app checks it on boot, every 5 minutes and on every resume;
+ * a banned account is signed out within minutes and sees the ban message.
+ * Offline / any read error → false (never lock someone out by mistake).
+ */
+export async function fbIsBanned(uid: string, serverCfg?: Partial<ServerCfg> | null): Promise<boolean> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return false;
+  try {
+    const { doc, getDoc } = await import("firebase/firestore");
+    const snap = await getDoc(doc(fsDb!, "usersIndex", uid));
+    if (!snap.exists()) return false;
+    return Boolean((snap.data() as { banned?: boolean }).banned);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Create (or refresh) the user's profile doc; returns the profile with a stable invite code.
  * Lives in usersIndex/{uid} — the owner's rules allow auth read/write/QUERY there
  * (profiles/* is blocked by their rules, verified via REST probes).
@@ -768,15 +790,17 @@ export async function ensureProfile(u: FbUser, serverCfg?: Partial<ServerCfg> | 
         friends: (p.friends as FbProfile["friends"]) || [],
       };
       // keep name/email/code fresh (merge — never lose friends/code)
+      // v3.2: provider self-heals on every login → the cloud admin panel
+      // can always show Google vs Email, even for pre-3.2 accounts.
       await setDoc(
         ref,
-        { name: profile.name, email: profile.email, inviteCode: profile.inviteCode },
+        { name: profile.name, email: profile.email, inviteCode: profile.inviteCode, provider: u.provider },
         { merge: true }
       );
       return profile;
     }
     const p: FbProfile = { uid: u.uid, name: u.name || "Friend", email: u.email, inviteCode: makeCode(), friends: [] };
-    await setDoc(ref, JSON.parse(JSON.stringify(p)));
+    await setDoc(ref, JSON.parse(JSON.stringify({ ...p, provider: u.provider })));
     return p;
   } catch {
     return null;
