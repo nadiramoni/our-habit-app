@@ -297,7 +297,7 @@ if (!gradle0.includes("play-services-auth")) {
     const signCfg = [
       "    signingConfigs {",
       "        ourdebug {",
-      "            storeFile file('../../../android-keystore/ourhabit-debug.keystore')",
+      "            storeFile file('../../android-keystore/ourhabit-debug.keystore')",
       "            storePassword 'ourhabit2026'",
       "            keyAlias 'ourhabit'",
       "            keyPassword 'ourhabit2026'",
