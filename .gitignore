@@ -52,3 +52,6 @@ prompt
 server.log
 # Skills directory
 /skills/
+# v3.0: Firebase Admin service-account key (NEVER commit/share this file!)
+admin-sdk-key.json
+*.firebase-admin-key*.json
