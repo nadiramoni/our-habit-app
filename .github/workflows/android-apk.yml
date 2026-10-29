@@ -1,15 +1,15 @@
 name: Build Android APK (free, on GitHub's servers)
 
 on:
-  workflow_dispatch: {} # "Run workflow" button
+  workflow_dispatch: {}
   push:
-    tags: ["v*"] # push a tag like v1.2.0 → also creates a GitHub Release
+    tags: ["v*"]
 
 jobs:
   apk:
     runs-on: ubuntu-latest
     env:
-      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }} # optional — enables publishing the APK to the public Releases repo
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,6 +44,22 @@ jobs:
 
       - name: Static export (out/)
         run: NEXT_EXPORT=1 npx next build
+
+      - name: Ensure debug keystore exists (auto-create if missing)
+        run: |
+          mkdir -p android-keystore
+          if [ ! -f android-keystore/ourhabit-debug.keystore ]; then
+            echo "⚠ Keystore not committed — generating a fresh one on the runner"
+            keytool -genkeypair -v \
+              -keystore android-keystore/ourhabit-debug.keystore \
+              -storepass ourhabit2026 -keypass ourhabit2026 \
+              -alias ourhabit -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=OurHabit, OU=App, O=OurHabit, L=Dhaka, ST=Dhaka, C=BD"
+            echo "✓ Fresh debug keystore generated"
+            keytool -list -v -keystore android-keystore/ourhabit-debug.keystore -storepass ourhabit2026 -alias ourhabit | grep -E "SHA1|SHA256"
+          else
+            echo "✓ Using committed debug keystore"
+          fi
 
       - name: Create Capacitor Android project + native plugin
         run: node scripts/prepare-apk.mjs
@@ -90,6 +106,6 @@ jobs:
           cp OurHabit-*.apk OurHabit-latest.apk
           gh release create "$TAG" --repo nadiramoni/our-habit-apk --latest \
             --title "Our Habit $TAG" \
-            --notes "📱 Our Habit — latest Android APK. Download → open → allow 'install unknown apps' → install. The app code stays private; this page only serves the APK." \
+            --notes "📱 Our Habit — latest Android APK." \
             OurHabit-latest.apk
           echo "✅ Published: https://github.com/nadiramoni/our-habit-apk/releases/latest"
