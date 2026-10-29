@@ -259,40 +259,67 @@ if (!gradle0.includes("play-services-auth")) {
 //  that is fine; Google only verifies the certificate fingerprint.)
 {
   const ksSrc = path.join(ROOT, "android-keystore", "ourhabit-debug.keystore");
-  if (fs.existsSync(ksSrc)) {
-    let g = fs.readFileSync(gradlePath0, "utf8");
-    if (!g.includes("ourhabit-debug.keystore")) {
-      // insert signingConfigs + make the debug build type use it
-      const signCfg = [
-        "    signingConfigs {",
-        "        ourdebug {",
-        "            storeFile file('../../../android-keystore/ourhabit-debug.keystore')",
-        "            storePassword 'ourhabit2026'",
-        "            keyAlias 'ourhabit'",
-        "            keyPassword 'ourhabit2026'",
-        "        }",
-        "    }",
-      ].join("\n");
-      g = g.replace(/android\s*\{/, `android {\n${signCfg}`);
-      // the template has NO debug block (only release) → insert one that uses
-      // our stable keystore
-      if (/buildTypes\s*\{\s*debug/.test(g)) {
-        g = g.replace(
-          /buildTypes\s*\{\s*debug\s*\{/,
-          "buildTypes {\n        debug {\n            signingConfig signingConfigs.ourdebug"
-        );
-      } else {
-        g = g.replace(
-          /buildTypes\s*\{/,
-          "buildTypes {\n        debug {\n            signingConfig signingConfigs.ourdebug\n        }"
-        );
-      }
-      fs.writeFileSync(gradlePath0, g);
-      log("STABLE debug keystore wired (SHA-1 14:60:22:E8:...:92:16 → Google Sign-In works)");
+  // v2.9.2 FIX: if the owner forgot to upload the keystore folder (very common
+  // — GitHub's web drag-drop sometimes skips binary files / empty-looking
+  // folders), DON'T fail the build. Generate a fresh keystore on the runner
+  // with keytool (Java is already installed by setup-java step). The APK will
+  // still build and install; only Google Sign-In's SHA-1 will differ from the
+  // one in Firebase Console — the owner can register the new SHA-1 (printed
+  // below) in Firebase Console → Settings → SHA-1 certificate fingerprints,
+  // OR re-upload the committed keystore file to make it stable forever.
+  if (!fs.existsSync(ksSrc)) {
+    console.warn("⚠ [prepare-apk] android-keystore/ourhabit-debug.keystore MISSING — generating a fresh one on the runner");
+    fs.mkdirSync(path.dirname(ksSrc), { recursive: true });
+    try {
+      execSync(
+        `keytool -genkeypair -v -keystore "${ksSrc}" ` +
+        `-storepass ourhabit2026 -keypass ourhabit2026 ` +
+        `-alias ourhabit -keyalg RSA -keysize 2048 -validity 10000 ` +
+        `-dname "CN=OurHabit, OU=App, O=OurHabit, L=Dhaka, ST=Dhaka, C=BD"`,
+        { stdio: "inherit" }
+      );
+      // print the new SHA-1 so the owner can register it once in Firebase
+      try {
+        const sha = execSync(
+          `keytool -list -v -keystore "${ksSrc}" -storepass ourhabit2026 -alias ourhabit`
+        ).toString();
+        const m = sha.match(/SHA1:\s*([0-9A-F:]+)/i);
+        if (m) console.warn("📌 New SHA-1 to register in Firebase Console → " + m[1]);
+      } catch (_) {}
+    } catch (e) {
+      console.error("[prepare-apk] ✗ keytool failed to generate keystore — is Java installed?");
+      process.exit(1);
     }
-  } else {
-    console.error("[prepare-apk] ✗ android-keystore/ourhabit-debug.keystore MISSING — Google login needs the fixed signing key");
-    process.exit(1);
+  }
+  let g = fs.readFileSync(gradlePath0, "utf8");
+  if (!g.includes("ourhabit-debug.keystore")) {
+    // insert signingConfigs + make the debug build type use it
+    const signCfg = [
+      "    signingConfigs {",
+      "        ourdebug {",
+      "            storeFile file('../../../android-keystore/ourhabit-debug.keystore')",
+      "            storePassword 'ourhabit2026'",
+      "            keyAlias 'ourhabit'",
+      "            keyPassword 'ourhabit2026'",
+      "        }",
+      "    }",
+    ].join("\n");
+    g = g.replace(/android\s*\{/, `android {\n${signCfg}`);
+    // the template has NO debug block (only release) → insert one that uses
+    // our stable keystore
+    if (/buildTypes\s*\{\s*debug/.test(g)) {
+      g = g.replace(
+        /buildTypes\s*\{\s*debug\s*\{/,
+        "buildTypes {\n        debug {\n            signingConfig signingConfigs.ourdebug"
+      );
+    } else {
+      g = g.replace(
+        /buildTypes\s*\{/,
+        "buildTypes {\n        debug {\n            signingConfig signingConfigs.ourdebug\n        }"
+      );
+    }
+    fs.writeFileSync(gradlePath0, g);
+    log("debug keystore wired → APK will be signed and installable");
   }
 }
 
