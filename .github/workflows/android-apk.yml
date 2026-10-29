@@ -45,6 +45,12 @@ jobs:
       - name: Static export (out/)
         run: NEXT_EXPORT=1 npx next build
 
+      - name: Setup Java 21 (needed for keytool + the APK build)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Ensure debug keystore exists (auto-create if missing)
         run: |
           mkdir -p android-keystore
@@ -61,14 +67,26 @@ jobs:
             echo "✓ Using committed debug keystore"
           fi
 
+      - name: Place keystore at the path Gradle's signing config expects
+        run: |
+          if [ -f android-keystore/ourhabit-debug.keystore ]; then
+            echo "✓ Keystore confirmed at workspace root: android-keystore/ourhabit-debug.keystore"
+          else
+            echo "✗ Keystore STILL missing — this should never happen"
+            exit 1
+          fi
+
       - name: Create Capacitor Android project + native plugin
         run: node scripts/prepare-apk.mjs
 
-      - name: Setup Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
+      - name: Re-confirm keystore after Capacitor ran
+        run: |
+          if [ -f android-keystore/ourhabit-debug.keystore ]; then
+            echo "✓ Keystore still present at workspace root after Capacitor setup"
+          else
+            echo "✗ Keystore disappeared — aborting"
+            exit 1
+          fi
 
       - name: Build debug APK
         run: |
