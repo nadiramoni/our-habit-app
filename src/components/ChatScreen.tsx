@@ -26,6 +26,7 @@ import { useServerCfg } from "@/lib/cfg";
 import { ChatMsg, FbProfile, chatQueueSize, fbSendChat, listenNotes, listenProfile, pairKeyOf, writeChatListenerState } from "@/lib/cloud";
 import { uid as newId } from "@/lib/types";
 import { nativeVibrate } from "@/lib/native";
+import { APP_VERSION } from "@/lib/version";
 
 export interface ChatTarget {
   uid: string;
@@ -347,6 +348,7 @@ export function ChatWatchdog() {
           lang: state.settings.language || "bn",
           reelsLimitMin: state.settings.reelsLimitMin || 0,
           reelsWarn: `${state.settings.name || ""}${t("speakReelsWarn")}`,
+          buildVersion: APP_VERSION, // v3.3: background listener fires update notifs against this
         });
       } catch {
         /* ignore */
