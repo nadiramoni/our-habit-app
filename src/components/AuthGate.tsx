@@ -13,13 +13,15 @@
  */
 
 import React, { useEffect, useState } from "react";
-import { useStore } from "@/lib/store";
+import { useStore, rememberAccountName } from "@/lib/store";
 import { useServerCfg } from "@/lib/cfg";
 import {
   fbCheckVerified,
   fbEmailSignIn,
   fbEmailSignUp,
   fbGoogleSignIn,
+  fbHandleRedirect,
+  fbSendPasswordReset,
   fbSendVerification,
   fbSignOut,
   fbUpdateProfileName,
@@ -44,7 +46,7 @@ export default function AuthGate({ children, forced = false }: { children: React
   const acc = state.account;
   const [skipped, setSkipped] = useState(false);
   const [hydrated, setHydrated] = useState(false);
-  const [mode, setMode] = useState<"auth" | "verify">("auth");
+  const [mode, setMode] = useState<"auth" | "verify" | "reset">("auth");
   const [isLogin, setIsLogin] = useState(false);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -65,6 +67,18 @@ export default function AuthGate({ children, forced = false }: { children: React
       setHydrated(true);
     }, 0);
     return () => clearTimeout(id);
+  }, []);
+
+  // v3.0: consume a signInWithRedirect round-trip (page reloaded after the
+  // Google page) — surfaces unauthorized-domain / banned errors loudly.
+  useEffect(() => {
+    let dead = false;
+    void fbHandleRedirect().then((e) => {
+      if (!dead && e) setErr(t(e));
+    });
+    return () => {
+      dead = true;
+    };
   }, []);
 
   // password users must verify → gate them (and un-gate when signed out)
@@ -95,8 +109,43 @@ export default function AuthGate({ children, forced = false }: { children: React
   const doGoogle = async () => {
     reset();
     setBusy(true);
-    await fbGoogleSignIn(cfg);
+    // v2.9: NATIVE account picker inside the APK (the white-screen
+    // signInWithPopup flow is gone). Errors are LOUD and specific now —
+    // the button can never hang on "..." again (25s hard timeout inside).
+    const res = await fbGoogleSignIn(cfg);
     setBusy(false);
+    if (!res.ok) {
+      if (res.error === "errCancelled") return; // user closed the picker
+      if (res.error === "errRedirecting") {
+        setInfo(t("errRedirecting"));
+        return; // page is navigating to Google — nothing else to do
+      }
+      if (
+        res.error === "errSha1" ||
+        res.error === "errTimeout" ||
+        res.error === "errNetwork" ||
+        res.error === "errDomain" ||
+        res.error === "errBanned"
+      ) {
+        setErr(t(res.error));
+      } else {
+        setErr(t(res.error?.split(":")[0] || "errGeneric"));
+      }
+    }
+  };
+
+  // v3.0: forgot-password flow — Firebase emails a secure reset link.
+  const sendReset = async () => {
+    reset();
+    if (!email.trim()) return setErr(t("errInvalidEmail"));
+    setBusy(true);
+    const res = await fbSendPasswordReset(email, cfg);
+    setBusy(false);
+    if (res.ok) {
+      setInfo(t("resetSent"));
+    } else {
+      setErr(t(res.error || "errGeneric"));
+    }
   };
 
   const submit = async () => {
@@ -112,11 +161,14 @@ export default function AuthGate({ children, forced = false }: { children: React
         setInfo(t("mailSent"));
         // v2.8: the REGISTERED full name is the app-wide name — mark it as
         // user-set so the Gmail/account name NEVER overwrites it later.
-        updateSettings({ name: full, nameSet: true });
-        // the auth listener may have fired before updateProfile landed — set the
-        // real name immediately so the app shows it (store syncs settings.name)
+        // v2.9: ALSO remember it per-account NOW (the auth listener may fire
+        // before updateSettings lands — no name can ever leak across accounts)
         const signed = res as { ok: boolean; error?: string; uid?: string };
-        if (signed.uid) setAccount({ uid: signed.uid, name: full, email: email.trim(), verified: false, provider: "password" });
+        if (signed.uid) {
+          rememberAccountName(signed.uid, full);
+          setAccount({ uid: signed.uid, name: full, email: email.trim(), verified: false, provider: "password" });
+        }
+        updateSettings({ name: full, nameSet: true });
       }
       setPass("");
     } else {
@@ -186,7 +238,6 @@ export default function AuthGate({ children, forced = false }: { children: React
           <div className="rounded-3xl bg-card border border-border shadow-lg p-5 animate-slide-up">
             <h2 className="text-lg font-bold text-center">{t("authWelcome")} 👋</h2>
             <p className="text-xs text-muted-foreground text-center mt-1 mb-4">{t("authSub")}</p>
-
             <button
               type="button"
               onClick={() => void doGoogle()}
@@ -242,7 +293,25 @@ export default function AuthGate({ children, forced = false }: { children: React
               />
             </div>
 
-            {err ? <p className="text-xs text-destructive mt-2.5 text-center">⚠️ {err}</p> : null}
+            {/* v3.0: forgot password — only meaningful on the login card */}
+            {isLogin ? (
+              <button
+                type="button"
+                onClick={() => {
+                  reset();
+                  setMode("reset");
+                }}
+                className="text-[11px] text-primary font-bold underline underline-offset-2 mt-2.5 float-right"
+              >
+                {t("forgotPass")}
+              </button>
+            ) : null}
+
+            {err ? (
+              <div className="mt-3 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-xs text-destructive leading-relaxed text-center animate-slide-up" role="alert">
+                ⚠️ {err}
+              </div>
+            ) : null}
             {info && !err ? <p className="text-xs text-primary mt-2.5 text-center">{info}</p> : null}
 
             <button
@@ -267,6 +336,47 @@ export default function AuthGate({ children, forced = false }: { children: React
                 {isLogin ? t("signupWord") : t("loginWord")}
               </button>
             </p>
+          </div>
+        ) : mode === "reset" ? (
+          /* ---- v3.0: forgot-password card ---- */
+          <div className="rounded-3xl bg-card border border-border shadow-lg p-6 text-center animate-slide-up">
+            <div className="text-5xl mb-3">🔑</div>
+            <h2 className="text-lg font-bold">{t("resetTitle")}</h2>
+            <p className="text-xs text-muted-foreground mt-2 mb-4 leading-relaxed">{t("resetSub")}</p>
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void sendReset()}
+              placeholder={t("emailLabel")}
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              className="w-full bg-muted rounded-xl px-4 py-3 text-sm border border-border outline-none focus:ring-2 focus:ring-ring/50"
+            />
+            {err ? (
+              <div className="mt-3 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-xs text-destructive leading-relaxed text-center animate-slide-up" role="alert">
+                ⚠️ {err}
+              </div>
+            ) : null}
+            {info && !err ? <p className="text-xs text-primary mt-3 leading-relaxed text-center">{info}</p> : null}
+            <button
+              type="button"
+              onClick={() => void sendReset()}
+              disabled={busy}
+              className="w-full rounded-2xl btn-hero text-primary-foreground font-bold text-sm py-3.5 min-h-[52px] mt-4 active:scale-[0.98] transition-transform disabled:opacity-60"
+            >
+              {busy ? "..." : t("resetBtn")}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                reset();
+                setMode("auth");
+              }}
+              className="text-xs text-muted-foreground underline underline-offset-2 py-2 mt-2"
+            >
+              {t("backToLogin")}
+            </button>
           </div>
         ) : (
           /* ---- email verification gate ---- */

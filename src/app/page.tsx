@@ -10,6 +10,7 @@ import FriendsTab from "@/components/FriendsTab";
 import SettingsTab from "@/components/SettingsTab";
 import AuthGate, { NameCapture } from "@/components/AuthGate";
 import AlarmOverlay, { ActiveAlarm } from "@/components/AlarmOverlay";
+import ChatScreen, { ChatWatchdog } from "@/components/ChatScreen";
 import AdminPanel from "@/components/AdminPanel";
 import PermissionSetupFlow, { PERM_FLOW_KEY } from "@/components/PermissionSetupFlow";
 import { AtGlobalScripts } from "@/components/AdsBanner";
@@ -300,6 +301,8 @@ function Shell() {
         state.settings.habitsAlarm,
         state.settings.mealPreAlert,
         state.settings.azanSound, // v2.8: azan recitation changes the alarm sound
+        state.settings.name,     // v2.9: the name-call text follows the name
+        state.settings.language, // v2.9: TTS language follows the app language
       ])
     : "";
 
@@ -348,24 +351,32 @@ function Shell() {
     const s = stateRef.current;
     const now = Date.now();
     const azanSound = s.settings.azanSound || "adhan.mp3";
+    // v2.9 NAMED ALERTS: the user's REGISTERED FULL NAME is spoken aloud by
+    // AlarmSpeakService at ring time — "আনোয়ারুল সন সাকিব, তোমার পানি খাওয়ার
+    // সময় হইছে…" (owner's exact request). Adhan alarms NEVER speak —
+    // "আজানের ক্ষেত্রে না ভাই, আজানটা আজানি দিবে".
+    const myName = (s.settings.name || "").trim();
+    const lang = s.settings.language || "bn";
+    const named = (suffix: string) => (myName ? `${myName}${suffix}` : "");
 
-    // ---------- v2.8 EXACT ALARMS (azan / Fajr / meals / sleep) ----------
-    // The owner's #1 complaint: "আজান টাইমের পরে দেয়" — the LocalNotifications
-    // plugin's alarms get deferred by aggressive OEM battery-killers. These
-    // now go through OUR ExactAlarmPlugin: AlarmManager.setAlarmClock() (the
-    // alarm-clock API OEMs never delay) + a full-screen-intent notification
-    // that LAUNCHES the azan view when the screen is off/locked. Armed for
-    // TODAY (remaining) + ALL of TOMORROW, re-synced on every open/resume,
-    // and re-armed by ExactBootReceiver after a reboot.
+    // ---------- v2.8/v2.9 EXACT ALARMS (azan / Fajr / meals / water / sleep) ----------
     const exact: ExactAlarmSpec[] = [];
     const days = [todayStr(), addDays(todayStr(), 1)];
-    const pushExact = (key: string, time: string, title: string, body: string, sound: string) => {
+    const pushExact = (
+      key: string,
+      time: string,
+      title: string,
+      body: string,
+      sound: string,
+      speak = ""
+    ) => {
       if (!/^\d{1,2}:\d{2}$/.test(time)) return;
       for (const d of days) {
         const at = dateAtHM(d, time);
-        if (at > now + 30000) exact.push({ id: `${key}@${d}`, at, key, time, title, body, sound });
+        if (at > now + 30000) exact.push({ id: `${key}@${d}`, at, key, time, title, body, sound, speak, lang });
       }
     };
+    // azan + Fajr: the adhan itself, never a voice call (owner's rule)
     if (s.settings.fajrAlarm?.on)
       pushExact("fajr", s.settings.fajrAlarm.time, `🕌 ${t("fajrAlarm")}`, t("fajrAlarmMsg"), azanSound);
     (["fajr", "dhuhr", "asr", "maghrib", "isha"] as const).forEach((pk) => {
@@ -379,26 +390,37 @@ function Shell() {
           azanSound
         );
     });
+    // meals: the phone CALLS the user by name, then the owner's music rings
     (["breakfast", "lunch", "dinner"] as const).forEach((mk) => {
       const c = s.settings.mealAlarms?.[mk];
       if (c?.on) {
-        // v2.5: RANDOM music — the owner's two tracks alternate (একটার পর একটা).
-        // Re-synced on every app open / settings change → real variety daily.
-        pushExact(`meal_${mk}`, c.time, `🍽 ${t(`meal_${mk}`)}`, t("mealAlarmMsg"), randomMealMusic());
-        // v2.4: 15-min EARLY heads-up (owner: নির্ধারিত সময়ের আগেই জানাবে)
+        // v2.5: RANDOM music — the owner's two tracks alternate. Re-synced on
+        // every app open / settings change → real variety daily.
+        pushExact(
+          `meal_${mk}`,
+          c.time,
+          `🍽 ${t(`meal_${mk}`)}`,
+          t("mealAlarmMsg"),
+          randomMealMusic(),
+          myName ? `${myName}, ${t(`meal_${mk}`)} ${t("speakMeal")}` : ""
+        );
+        // v2.4: 15-min EARLY heads-up — spoken with the name
         if (s.settings.mealPreAlert !== false)
-          pushExact(`mealpre_${mk}`, shiftTime(c.time, -15), `🍽 ${t(`meal_${mk}`)}`, t("mealPreMsg"), "alarm.wav");
+          pushExact(
+            `mealpre_${mk}`,
+            shiftTime(c.time, -15),
+            `🍽 ${t(`meal_${mk}`)}`,
+            t("mealPreMsg"),
+            "alarm.wav",
+            myName ? `${myName}, ${t(`meal_${mk}`)} ${t("speakMealPre15")}` : ""
+          );
       }
     });
+    // sleep: spoken name-call + soft chime
     if (s.settings.sleepAlarm?.on)
-      pushExact("sleep", s.settings.sleepAlarm.time, `😴 ${t("sleep")}`, t("sleepAlarmMsg"), "alarm.wav");
-
-    // ---------- REGULAR alarms (water Done/Snooze buttons / nudges) stay
-    // on LocalNotifications (recurring + action buttons work there) ----------
-    const list: NativeAlarm[] = [];
-    // v2.4 WATER ALARM — interval-based, EVERY DAY, with ✓ Drink / 💤 Later
-    // buttons (owner showed the My Habito reference). Recurring exact alarms:
-    // they ring even when the app is closed.
+      pushExact("sleep", s.settings.sleepAlarm.time, `😴 ${t("sleep")}`, t("sleepAlarmMsg"), "alarm.wav", named(t("speakSleep")));
+    // v2.9 WATER — moved to the exact engine so it rings ON TIME and SPEAKS
+    // the user's name first (owner: "পানি খাওয়ার রিমাইন্ডার হলে আমাকে ডাকবে")
     const wa = s.settings.waterAlarm?.on
       ? s.settings.waterAlarm
       : s.settings.hourlyWater
@@ -406,15 +428,33 @@ function Shell() {
         : null;
     if (wa?.on) {
       for (const wt of waterAlarmTimes(wa)) {
-        list.push({ id: `water_${wt}`, time: wt, title: `💧 ${t("appName")}`, body: t("waterAlarmBody"), sound: "wateralarm.mp3" });
+        pushExact(
+          `water_${wt}`,
+          wt,
+          `💧 ${t("appName")}`,
+          t("waterAlarmBody"),
+          "wateralarm.mp3",
+          named(t("speakWater"))
+        );
       }
     }
+
+    // ---------- REGULAR alarms (nudges / ayat / checkin) stay on
+    // LocalNotifications — recurring with action buttons ----------
+    const list: NativeAlarm[] = [];
     if (s.settings.ayatNotif?.on)
       list.push({ id: "ayat", time: s.settings.ayatNotif.time, title: t("ayatNotifTitle"), body: t("dailyReminder") });
     if (s.settings.checkinTime) list.push({ id: "checkin", time: s.settings.checkinTime, title: `🌙 ${t("appName")}`, body: t("checkinMsg") });
-    // v2.4: daily Our Habit Reminder (owner: প্রতিদিন একটা করে অ্যালার্ট)
+    // v2.4: daily Our Habit Reminder — now also SPEAKS the name (v2.9)
     if (s.settings.habitsAlarm?.on) {
-      list.push({ id: "habits", time: s.settings.habitsAlarm.time, title: `🕌 ${t("appName")}`, body: t("habitsAlarmMsg") });
+      pushExact(
+        "habits",
+        s.settings.habitsAlarm.time,
+        `🕌 ${t("appName")}`,
+        t("habitsAlarmMsg"),
+        "alarm.wav",
+        named(t("speakHabits"))
+      );
       // v2.5 APP-OPEN NUDGES — real notifications even when the app is closed.
       list.push({ id: "nudge_morning", time: "10:00", title: `👋 ${t("appName")}`, body: t("nudgeBody") });
       list.push({ id: "nudge_afternoon", time: "16:00", title: `👋 ${t("appName")}`, body: t("nudgeBody") });
@@ -703,12 +743,16 @@ function Shell() {
           </main>
           <BottomNav tab={tab} setTab={setTab} />
           <AlarmOverlay alarm={alarm} onDismiss={dismissAlarm} />
+          {/* v2.9: messenger-style chat (opens from Friends/Notes via
+              openChat) + the background chat/reels watchdog engine */}
+          <ChatScreen />
           <AtGlobalScripts />
           {adminOpen ? <AdminPanel onClose={() => setAdminOpen(false)} /> : null}
         </div>
       </AuthGate>
       <PermFlowHost />
       <NameCapture />
+      <ChatWatchdog />
     </>
   );
 }

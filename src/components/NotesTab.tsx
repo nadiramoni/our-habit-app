@@ -19,6 +19,7 @@ import { useServerCfg } from "@/lib/cfg";
 import { Card, SectionTitle, Seg } from "@/components/ui-bits";
 import { SharedNoteItem } from "@/lib/types";
 import { FbProfile, fbPutNote, listenNotes, listenProfile, pairKeyOf } from "@/lib/cloud";
+import { openChat } from "@/components/ChatScreen";
 import {
   addLocalNote,
   applyPartnerPayload,
@@ -461,11 +462,16 @@ function SharedNotes() {
   }, [pKey]);
 
   // auto-sync loop: flush on online / every 30s + Firestore realtime listener
+  // v2.9: chat messages (kind:"chat") are EXCLUDED — they live in the
+  // messenger-style ChatScreen, never in the shared-notes list
   useEffect(() => {
     if (!pKey) return;
     return startAutoSync(pKey, {
       listen: (cb) => {
-        const un = listenNotes(pKey, (items: SharedNoteItem[]) => cb(items as never[]), cfg);
+        const un = listenNotes(pKey, (items: SharedNoteItem[]) => {
+          const notesOnly = (items as unknown as { kind?: string }[]).filter((m) => m.kind !== "chat");
+          cb(notesOnly as never[]);
+        }, cfg);
         return un || (() => undefined);
       },
     });
@@ -565,6 +571,19 @@ function SharedNotes() {
 
           {/* Nearby direct transfer (works with NO internet on both sides) */}
           {partner ? <NearbyPanel pairKey={pKey} meUid={me!.uid} meName={myName} /> : null}
+
+          {/* v2.9: messenger-style chat with the selected partner (owner:
+              "নামে ক্লিক করলে কে কী লিখল দেখব — ছবি-টবি পাঠানো যাবে,
+              নোটিফিকেশন আসবে") */}
+          {partner ? (
+            <button
+              type="button"
+              onClick={() => openChat(partner.uid, partner.name)}
+              className="w-full mb-3 rounded-2xl bg-primary/15 border border-primary/30 text-primary text-sm font-bold py-3 min-h-[48px] active:scale-[0.98] transition-transform flex items-center justify-center gap-2"
+            >
+              💬 {t("chatOpen")} — {partner.name?.split(" ")[0]}
+            </button>
+          ) : null}
 
           {/* input row */}
           <div className="flex gap-2 mb-3">

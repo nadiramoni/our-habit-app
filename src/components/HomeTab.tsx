@@ -225,7 +225,10 @@ function Header({ onSecret }: { onSecret?: () => void }) {
   const h = new Date().getHours();
   const greet =
     h < 12 ? t("greet_morning") : h < 16 ? t("greet_afternoon") : h < 19 ? t("greet_evening") : t("greet_night");
-  const name = state.account?.name || state.settings.name || "";
+  // v3.0: the REGISTERED full name (first+last from signup) ALWAYS wins —
+  // owner: "আনোয়ার হোসেন সাকিব দিলাম → সেই পুরো নামেই ডাকবে; অন্য ফোনে
+  // তাহমিদ জামিল হলে সেই নামে ডাকবে" (per-account name, never the Gmail one).
+  const name = (state.settings.name || state.account?.name || "").trim();
   const dateLabel = useMemo(() => {
     try {
       const d = new Date();

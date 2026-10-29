@@ -241,6 +241,18 @@ export default function SettingsTab() {
             ⎋ {t("signOut")}
           </button>
         ) : null}
+
+        {/* v2.9: messenger-like chat notifications (background service) */}
+        {acc ? (
+          <div className="mt-3">
+            <ToggleRow
+              label={`💬 ${t("chatNotifOn")}`}
+              sub={t("chatNotifSub")}
+              checked={s.chatNotif !== false}
+              onChange={(v) => updateSettings({ chatNotif: v })}
+            />
+          </div>
+        ) : null}
       </Card>
 
       {/* ---------- Language & Theme ---------- */}

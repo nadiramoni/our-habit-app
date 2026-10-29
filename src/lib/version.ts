@@ -1,30 +1,29 @@
 // App version — bump this when you ship an update.
 // The admin panel's "latest version" is compared against this to trigger auto-update.
-// v2.8.0 — owner round-10 (4 screenshots + voice): (1) ADS ON EVERY PAGE —
-//           Home 3 + Stats/Notes/Friends/Settings 2 each + every detail page
-//           1 bottom banner (owner: "প্রত্যেকটা পেজে যেখানে যেখানে অ্যাড
-//           বসানো যায়"); (2) USAGE ACCESS ROOT-CAUSE FIX — the manifest
-//           requested a WRONG permission string (android.app.usage.… instead
-//           of android.permission.PACKAGE_USAGE_STATS) so Our Habit never
-//           appeared in the Android Usage Access list at all — fixed in
-//           prepare-apk + committed manifest; (3) WORLDWIDE AUTO TIMEZONE —
-//           GPS → IP-geolocation fallback, re-detects on timezone change
-//           (travel), Settings shows location + timezone card with refresh;
-//           (4) AZAN AT THE EXACT TIME + FULL-SCREEN — new native
-//           ExactAlarmPlugin: AlarmManager.setAlarmClock (OEMs never defer
-//           it) + full-screen-intent notification (screen off/locked → the
-//           app LAUNCHES into the WeMuslim-style azan view: mosque dome sky,
-//           glass clock, live next-prayer countdown) + ExactBootReceiver
-//           re-arms after reboot + 5 bundled azan recitations with an
-//           in-app picker (▶ 8s preview) — the chosen azan plays in the
-//           native alarm channel AND the overlay; (5) REGISTERED NAME — the
-//           first+last name from registration is now the single source of
-//           truth everywhere (header, profile, shared notes, share footer);
-//           the Gmail display name can NEVER overwrite it; one-time name
-//           capture after Google sign-in + ✏️ name editor in Settings;
-//           (6) HOME LAYOUT — compact month calendar (small rings, no
-//           per-day weekday label) + every habit is now ONE thin long row
-//           in the owner's order: নামাজ → পানি → ঘুম → বাকিগুলো
+// v3.0.0 — owner round-12 (4 requests in one): (1) GOOGLE LOGIN HARDENED —
+//           web now falls back popup → FULL-PAGE redirect automatically
+//           (survives every mobile browser), unauthorized-domain is caught
+//           and shown as a CLEAR Bengali step-by-step fix (Firebase Console →
+//           Authentication → Authorized domains — the #1 cause of "Google
+//           লগইনে সমস্যা" on the preview website); APK keeps the native account
+//           picker (needs the one-time SHA-1 registration); (2) NAME FIX —
+//           the greeting now uses the REGISTERED full name first
+//           (settings.name BEFORE account.name — the Gmail display name can
+//           never win); signup first+last, per-account names (v2.9) and the
+//           ✏️ নাম বদলাও editor all flow into greeting + TTS + chat + share;
+//           (3) FORGOT PASSWORD — "পাসওয়ার্ড ভুলে গেছো?" on the login card →
+//           Firebase emails a secure reset link → user clicks it and sets a
+//           new password (works for every email account, zero setup);
+//           (4) ADMIN CONTROL ROOM — localhost/admin website + Firebase
+//           Admin SDK: see EVERY account (who used Google, who used email),
+//           each user's REAL 14-day status (নামাজ/পানি/রিলস/যিকির/ঘুম/
+//           স্ট্রিক), change anyone's password, send reset mails, BAN /
+//           UNBAN / DELETE accounts, and control ALL ads (Adsterra 6 zones +
+//           AdMob + auto-update) — saves go live to every install in ≤5 min.
+//           Needs one-time admin-sdk-key.json (guide: ADMIN-GUIDE-bn.md).
+//           Banned users see "অ্যাকাউন্ট ব্যান করা হয়েছে" on sign-in.
+// v2.9.0 — owner round-11: login white-screen root cause + per-account names + named TTS alerts + messenger chat + reels guard
+// v2.8.0 — owner round-10: ads everywhere + usage-access root cause + worldwide tz + EXACT azan + registered name + thin home rows
 // v2.7.0 — owner's video round 9: BANNER ENGINE v3 — LEARNED rotation (each zone keeps
 //           a per-device fail score in localStorage; dead zones sink to the
 //           end of the ladder automatically, live zones win every slot), ONE
@@ -71,4 +70,4 @@
 //           minutes + start sound, sleep tracker + bedtime alert, points moved
 //           to Settings profile (full name), YouTube Shorts vs Long split
 // v2.2.1 — REAL Adsterra banners + REAL adhan recording wired end-to-end
-export const APP_VERSION = "2.8.0";
+export const APP_VERSION = "3.0.0";

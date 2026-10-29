@@ -21,6 +21,51 @@ import { waterAlarmTimes, WaterAlarmCfg } from "./types";
 
 const KEY = "ourhabit_v1";
 
+// ---------- v2.9: PER-ACCOUNT NAMES (owner: "নাদিরা মনি লগ আউট করে আগের ----------
+// ---------- জিমেইলে ঢুকলেও নাম নাদিরা মনি-ই থাকে") -------------------------
+// The old code kept ONE global settings.name/nameSet for the whole device —
+// after switching accounts the PREVIOUS account's name stuck forever. Names
+// now live in a per-UID map; switching accounts loads THAT account's
+// registered name, and signing out clears the display name completely.
+const NAMES_KEY = "oh_names";
+
+interface NameEntry {
+  name: string;
+  nameSet?: boolean;
+}
+
+function loadNames(): Record<string, NameEntry> {
+  try {
+    return JSON.parse(localStorage.getItem(NAMES_KEY) || "{}") as Record<string, NameEntry>;
+  } catch {
+    return {};
+  }
+}
+
+function persistName(uid: string, patch: Partial<NameEntry>): void {
+  try {
+    const names = loadNames();
+    const cur = names[uid] || {};
+    names[uid] = {
+      name: patch.name !== undefined ? patch.name : cur.name || "",
+      nameSet: patch.nameSet !== undefined ? patch.nameSet : cur.nameSet,
+    };
+    localStorage.setItem(NAMES_KEY, JSON.stringify(names));
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * v2.9: remember a name for a uid RIGHT NOW (no React state race) — used by
+ * the sign-UP flow: updateSettings({name}) runs before the auth listener has
+ * put the account into state, which would skip the per-uid persist above.
+ */
+export function rememberAccountName(uid: string, name: string, nameSet = true): void {
+  if (!uid || !name) return;
+  persistName(uid, { name, nameSet });
+}
+
 // ---------- v2.8 FIX: the reminder engine's fired-flag store ----------
 // (was a useRef INSIDE the provider while checkReminders runs at MODULE
 // scope → ReferenceError every 20s tick — the in-app reminder engine silently
@@ -55,7 +100,8 @@ interface Ctx {
   // notifications
   notifPerm: string;
   askNotifPerm: () => Promise<void>;
-  fireNotif: (title: string, body: string) => void;
+  /** v2.9: sound = optional raw resource (APK) — plays on the alarm channel */
+  fireNotif: (title: string, body: string, sound?: string) => void;
 }
 
 const StoreCtx = createContext<Ctx | null>(null);
@@ -158,13 +204,28 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             }
           : null;
         setState((s) => {
-          // v2.8 NAME FIX (owner: "ওর জিমেইলের নামটা থাকবে না"): the
-          // REGISTERED name (settings.name) ALWAYS wins — the Google/Gmail
-          // account display name only fills an EMPTY name, never overwrites.
-          // Registration (email first/last) and the profile name editor set
-          // settings.name; that name flows to every display + share.
-          const name = s.settings.name || acc?.name || "";
-          return { ...s, account: acc, settings: { ...s.settings, name } };
+          // v2.9 ACCOUNT-SWITCH FIX: names are PER-ACCOUNT now. Signing out
+          // clears the display name; signing in loads THIS account's own
+          // registered name — the previous account's name can NEVER stick
+          // (owner: "জিমেইল ঐটাই থাকে কিন্তু নামটা নাদিরা মনি থাকে").
+          if (!acc) {
+            return { ...s, account: null, settings: { ...s.settings, name: "", nameSet: false } };
+          }
+          // same account re-event: the registered name (settings.name) wins
+          // — the Gmail display name only ever fills an EMPTY name
+          if (s.account?.uid === acc.uid) {
+            const name = s.settings.name || acc.name || "";
+            return { ...s, account: acc, settings: { ...s.settings, name } };
+          }
+          // ACCOUNT SWITCHED → load THIS account's saved name (or the account
+          // name as a prefill; NameCapture asks once, then it is saved per-uid)
+          const entry = loadNames()[acc.uid];
+          const name = entry?.name || acc.name || "";
+          return {
+            ...s,
+            account: acc,
+            settings: { ...s.settings, name, nameSet: Boolean(entry?.nameSet) },
+          };
         });
       });
     });
@@ -190,7 +251,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const t = useMemo(() => makeT(state.settings.language), [state.settings.language]);
 
   const updateSettings = useCallback((patch: Partial<AppSettings>) => {
-    setState((s) => ({ ...s, settings: { ...s.settings, ...patch } }));
+    setState((s) => {
+      // v2.9: name/nameSet changes persist into the PER-ACCOUNT map — every
+      // account keeps its own registered name on this device forever
+      if ((patch.name !== undefined || patch.nameSet !== undefined) && s.account?.uid) {
+        persistName(s.account.uid, patch as Partial<NameEntry>);
+      }
+      return { ...s, settings: { ...s.settings, ...patch } };
+    });
   }, []);
 
   const updateLog = useCallback((date: string, patch: Partial<DayLog> | ((l: DayLog) => Partial<DayLog>)) => {

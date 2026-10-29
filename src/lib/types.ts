@@ -87,6 +87,9 @@ export interface AppSettings {
   // single source of truth for every name display + share — the Google/Gmail
   // account name never overwrites it (owner: "ওর জিমেইলের নামটা থাকবে না")
   nameSet?: boolean;
+  // v2.9: messenger-like chat notifications — the background service keeps
+  // listening even when the app is closed (Settings toggle)
+  chatNotif?: boolean;
 }
 
 // ---------- Server config (secret admin panel) ----------

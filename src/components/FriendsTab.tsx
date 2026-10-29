@@ -11,8 +11,9 @@ import { useStore } from "@/lib/store";
 import { useServerCfg } from "@/lib/cfg";
 import { Card, SectionTitle, Bar, Chip } from "@/components/ui-bits";
 import { PRAYER_KEYS, REEL_APPS, emptyReels, getLog } from "@/lib/types";
-import { DaySummary, FbProfile, addFriendByCode, listenDay, listenProfile, removeFriend } from "@/lib/cloud";
+import { DaySummary, FbProfile, addFriendByCode, listenDay, listenProfile, removeFriend, pairKeyOf } from "@/lib/cloud";
 import AdsBanner from "@/components/AdsBanner";
+import { openChat, chatUnreadCount } from "@/components/ChatScreen";
 
 function DetailRow({ label, value, pct, tone }: { label: string; value: string; pct?: number; tone?: "good" | "bad" }) {
   return (
@@ -31,14 +32,25 @@ function PartnerCard({ p, meUid, onRemoved }: { p: FbProfile; meUid: string; onR
   const { cfg } = useServerCfg();
   const [open, setOpen] = useState(false);
   const [day, setDay] = useState<DaySummary | null>(null);
+  const [, setChatTick] = useState(0);
   const today = new Date().toISOString().slice(0, 10);
+  const pairKey = pairKeyOf(meUid, p.uid);
 
   useEffect(() => {
     const un = listenDay(p.uid, today, (d) => setDay(d), cfg);
     return () => {
       if (un) un();
     };
-  }, [p.uid, today]);
+  }, [p.uid, today, cfg]);
+
+  // refresh the unread badge whenever a chat message lands
+  useEffect(() => {
+    const onMsg = () => setChatTick((n) => n + 1);
+    window.addEventListener("oh:chatmsg", onMsg);
+    return () => window.removeEventListener("oh:chatmsg", onMsg);
+  }, []);
+
+  const unread = chatUnreadCount(pairKey);
 
   const reels = { ...emptyReels(), ...((day?.reels as Record<string, number>) || {}) };
   const prayers = day?.prayers || {};
@@ -48,13 +60,30 @@ function PartnerCard({ p, meUid, onRemoved }: { p: FbProfile; meUid: string; onR
   return (
     <Card className="mb-3">
       <div className="flex items-center gap-3 mb-2">
-        <div className="w-11 h-11 rounded-full bg-primary/15 border border-primary/25 flex items-center justify-center text-lg font-bold text-primary shrink-0">
+        <button
+          type="button"
+          onClick={() => openChat(p.uid, p.name)}
+          className="relative w-11 h-11 rounded-full bg-primary/15 border border-primary/25 flex items-center justify-center text-lg font-bold text-primary shrink-0 active:scale-95 transition-transform"
+          aria-label={t("chatOpen")}
+        >
           {(p.name || "?").slice(0, 1).toUpperCase()}
-        </div>
-        <div className="min-w-0 flex-1">
+          {unread ? (
+            <span className="absolute -top-1 -right-1 w-4.5 h-4.5 min-w-[18px] h-[18px] rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center px-1">
+              ●
+            </span>
+          ) : null}
+        </button>
+        <button type="button" onClick={() => openChat(p.uid, p.name)} className="min-w-0 flex-1 text-left">
           <div className="text-sm font-bold truncate">{p.name}</div>
           <div className="text-[11px] text-muted-foreground truncate">{p.email}</div>
-        </div>
+        </button>
+        <button
+          type="button"
+          onClick={() => openChat(p.uid, p.name)}
+          className="rounded-xl bg-primary/15 border border-primary/30 text-primary text-xs font-bold px-3 py-2 min-h-[38px] shrink-0 active:scale-95 transition-transform"
+        >
+          💬 {t("chatOpen")}
+        </button>
         <button
           type="button"
           onClick={() => {

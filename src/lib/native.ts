@@ -576,6 +576,12 @@ export interface ExactAlarmSpec {
   title: string;
   body: string;
   sound: string; // res/raw file, e.g. "adhan.mp3"
+  /** v2.9: the sentence SPOKEN at ring time with the user's registered name
+   * ("আনোয়ারুল সন সাকিব, তোমার পানি খাওয়ার সময় হইছে…") — empty for adhan
+   * (owner: "আজানের ক্ষেত্রে না ভাই"). */
+  speak?: string;
+  /** TTS language for the spoken sentence ("bn" | "en"). */
+  lang?: string;
 }
 
 function exactPlugin(): AnyRec | null {
@@ -586,7 +592,8 @@ function exactPlugin(): AnyRec | null {
   }
 }
 
-/** Schedule EXACT alarm-clock alarms (azan / Fajr / meals / sleep). APK only. */
+/** Schedule EXACT alarm-clock alarms (azan / Fajr / meals / water / sleep) —
+ *  v2.9: each alarm may carry a spoken name-call (`speak` + `lang`). APK only. */
 export async function nativeScheduleExactAlarms(alarms: ExactAlarmSpec[]): Promise<{ scheduled: number }> {
   if (!isNative()) return { scheduled: 0 };
   const p = exactPlugin();
@@ -601,6 +608,8 @@ export async function nativeScheduleExactAlarms(alarms: ExactAlarmSpec[]): Promi
         title: a.title,
         body: a.body,
         sound: a.sound,
+        speak: a.speak || "",
+        lang: a.lang || "bn",
       })),
     });
     return { scheduled: Number(res?.scheduled) || 0 };
@@ -670,6 +679,98 @@ export async function nativeOpenFullScreenSettings(): Promise<boolean> {
   try {
     await p.openFullScreenSettings();
     return true;
+  } catch {
+    return false;
+  }
+}
+
+// ==================== v2.9: NAMED VOICE ALERTS (TTS) ====================
+// Owner: "আমার নাম আনোয়ারুল সন সাকিব — আমাকে ডাকবে: আনোয়ারুল সন সাকিব,
+// তোমার পানি খাওয়ার সময় হইছে, পানি খাও"। ExactAlarmSpec.speak carries the
+// personalized sentence; at ring time AlarmSpeakService SPEAKS it on the
+// ALARM stream first, then the alarm sound follows.
+
+/**
+ * v2.9: never let the UI hang again — every auth promise is raced against a
+ * hard timeout (see cloud.ts). This native wrapper SPEAKS an alert right now
+ * (throttled per key) — used by the Reels-limit warning while the app is
+ * open (the background guard covers app-closed).
+ */
+export async function nativeSpeakOnce(key: string, text: string, lang = "bn", throttleMin = 30): Promise<boolean> {
+  if (!isNative()) return false;
+  const p = exactPlugin();
+  if (!p?.speakOnce) return false;
+  try {
+    const r = await p.speakOnce({ key, text, lang, throttleMin });
+    return Boolean(r?.spoken);
+  } catch {
+    return false;
+  }
+}
+
+// ==================== v2.9: CHAT NOTIFICATION SERVICE ====================
+// The OhKeepAliveService (headless WebView + Firestore listener + reels
+// guard) — started on sign-in, stopped on sign-out / settings toggle.
+
+function chatPlugin(): AnyRec | null {
+  try {
+    return (window as AnyRec)?.Capacitor?.Plugins?.ChatService ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function nativeChatServiceStart(): Promise<boolean> {
+  if (!isNative()) return false;
+  const p = chatPlugin();
+  if (!p?.start) return false;
+  try {
+    await p.start();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function nativeChatServiceStop(): Promise<void> {
+  const p = chatPlugin();
+  if (!p?.stop) return;
+  try {
+    await p.stop();
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Mute chat notifications while the app is in the FOREGROUND (no doubles). */
+export async function nativeChatServiceSetMuted(muted: boolean): Promise<void> {
+  const p = chatPlugin();
+  if (!p?.setMuted) return;
+  try {
+    await p.setMuted({ muted });
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Push the daily Reels limit + spoken warning to the background guard. */
+export async function nativeSetReelsLimit(limitMin: number, warnText: string, lang: string): Promise<void> {
+  const p = chatPlugin();
+  if (!p?.setReelsLimit) return;
+  try {
+    await p.setReelsLimit({ limitMin, warnText, lang });
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function nativeChatServiceRunning(): Promise<boolean> {
+  if (!isNative()) return false;
+  const p = chatPlugin();
+  if (!p?.status) return false;
+  try {
+    const r = await p.status();
+    return Boolean(r?.running);
   } catch {
     return false;
   }

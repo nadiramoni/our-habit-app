@@ -1,3 +1,4 @@
+ 
 "use client";
 
 /**
@@ -10,6 +11,24 @@
  *
  * Everything degrades gracefully: no config → every function is a no-op,
  * app keeps working exactly as before (offline-first, server pairing).
+ *
+ * v2.9 LOGIN ROOT-CAUSE FIXES (owner: "সাদা হয়ে যায় — লগইন/সাইন আপ কোনোটাই
+ * কাজ করতেছে না"):
+ *   • AUTH PERSISTENCE = localStorage (browserLocalPersistence). The SDK's
+ *     DEFAULT IndexedDB persistence can HANG forever inside the Android
+ *     WebView (its auth IndexedDB open never completes on some OEM WebViews)
+ *     → every sign-in call waited on that dead promise → the button stayed
+ *     "..." forever. localStorage is synchronous and 100% WebView-safe —
+ *     AND it is shared with the OhKeepAliveService headless WebView (same
+ *     origin), which is how background chat notifications restore the
+ *     session.
+ *   • Google sign-in = NATIVE account picker (GoogleAuthPlugin) inside the
+ *     APK → idToken → signInWithCredential. The old signInWithPopup opened
+ *     the system browser (Firefox) at a blank firebaseapp.com page and the
+ *     promise never resolved (the white-screen bug).
+ *   • EVERY auth call is wrapped in a 25s TIMEOUT — the UI can NEVER get
+ *     stuck on "..." again; a loud Bengali error with the raw Firebase code
+ *     is shown instead.
  */
 
 import { AppState, ServerCfg, SharedNoteItem } from "./types";
@@ -17,8 +36,9 @@ import { BAKED_FIREBASE } from "./firebase-baked";
 
 type AnyRec = Record<string, unknown>;
 
-let fbApp: AnyRec | null = null;
-let fsDb: AnyRec | null = null;
+let fbApp: any = null;
+let fsDb: any = null;
+let fbAuth: any = null;
 let initErr = "";
 
 export interface FbStatus {
@@ -73,36 +93,204 @@ export async function ensureFirebase(serverCfg?: Partial<ServerCfg> | null): Pro
   }
 }
 
+/**
+ * v2.9: the SHARED auth instance — initialized with localStorage-based
+ * persistence (browserLocalPersistence), NOT the SDK default IndexedDB.
+ * • fixes the WebView hang ("..." forever) on realme/Oppo/vivo WebViews
+ * • the OhKeepAliveService headless WebView loads chat-listener.html on the
+ *   SAME https://localhost origin → reads the SAME localStorage key → the
+ *   session is restored there for background chat notifications.
+ * Never throws: falls back to getAuth() when initializeAuth is unavailable.
+ */
+async function getFbAuth(): Promise<any> {
+  const st = await ensureFirebase();
+  if (!st.configured || !fbApp) throw new Error("not_configured");
+  if (fbAuth) return fbAuth;
+  const authMod: any = await import("firebase/auth");
+  try {
+    fbAuth = authMod.initializeAuth(fbApp, {
+      persistence: [authMod.browserLocalPersistence, authMod.browserSessionPersistence],
+    });
+  } catch {
+    fbAuth = authMod.getAuth(fbApp);
+  }
+  return fbAuth;
+}
+
+/**
+ * v2.9: never let the UI hang again — every auth promise is raced against a
+ * hard timeout. The white-screen bug left the sign-in button on "..."
+ * forever because the underlying promise never settled.
+ */
+function withTimeout<T>(p: Promise<T>, ms = 25000, label = "timeout"): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(label)), ms)),
+  ]);
+}
+
 export function fbConfigured(serverCfg?: Partial<ServerCfg> | null): boolean {
   return Boolean(currentFbRaw(serverCfg));
 }
 
 // ---------- Auth (Google sign-in for personal backup) ----------
 
-export async function fbGoogleSignIn(serverCfg?: Partial<ServerCfg> | null): Promise<{ name: string; email: string } | null> {
+/** web client id (client_type 3 of google-services.json — stable). */
+const GOOGLE_WEB_CLIENT_ID = "570611135763-otc19ruqa5vs6dbl44982559iqhpp8de.apps.googleusercontent.com";
+
+export interface GoogleSignInResult {
+  ok: boolean;
+  name?: string;
+  email?: string;
+  /** raw machine code — AuthGate maps it to a clear Bengali message */
+  error?: string;
+}
+
+/**
+ * v2.9 GOOGLE SIGN-IN — two REAL paths, zero popups:
+ *  • APK  → GoogleAuthPlugin.signIn() (native account picker sheet slides up
+ *           INSIDE the app, Play Services returns a real idToken) →
+ *           signInWithCredential(GoogleAuthProvider.credential(idToken)).
+ *           No browser, no redirect, no white screen — works on every phone.
+ *  • Web  → signInWithPopup as before (browsers handle popups fine).
+ */
+export async function fbGoogleSignIn(serverCfg?: Partial<ServerCfg> | null): Promise<GoogleSignInResult> {
   const st = await ensureFirebase(serverCfg);
-  if (!st.configured) return null;
+  if (!st.configured) return { ok: false, error: "errNetwork" };
   try {
-    const [{ getAuth, GoogleAuthProvider, signInWithPopup }, { doc, setDoc }] = await Promise.all([
+    let idToken: string | null = null;
+    let gName = "";
+    let gEmail = "";
+
+    const isNative =
+      typeof window !== "undefined" &&
+      Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } })?.Capacitor?.isNativePlatform?.());
+
+    if (isNative) {
+      // ---- NATIVE: the real account picker ----
+      const gplugin: any = (window as unknown as { Capacitor?: { Plugins?: Record<string, any> } })?.Capacitor?.Plugins?.GoogleAuth;
+      if (!gplugin?.signIn) return { ok: false, error: "errNativePlugin" };
+      try {
+        const res = (await withTimeout(gplugin.signIn({ webClientId: GOOGLE_WEB_CLIENT_ID }), 60000, "timeout")) as {
+          idToken?: string; email?: string; name?: string;
+        };
+        idToken = res?.idToken || null;
+        gName = res?.name || "";
+        gEmail = res?.email || "";
+      } catch (e) {
+        const msg = String((e as { code?: string })?.code || (e as { message?: string })?.message || e || "");
+        if (msg.includes("cancelled")) return { ok: false, error: "errCancelled" };
+        if (msg.includes("google_10") || msg.includes("DEVELOPER_ERROR")) return { ok: false, error: "errSha1" };
+        if (msg.includes("timeout")) return { ok: false, error: "errTimeout" };
+        return { ok: false, error: `errGoogle:${msg.slice(0, 60)}` };
+      }
+      if (!idToken) return { ok: false, error: "errNoToken" };
+    }
+
+    const [{ GoogleAuthProvider, signInWithCredential, signInWithPopup, signInWithRedirect }, { doc, setDoc }] = await Promise.all([
       import("firebase/auth"),
       import("firebase/firestore"),
     ]);
-    const auth = getAuth(fbApp!);
-    const res = await signInWithPopup(auth, new GoogleAuthProvider());
-    const u = res.user;
-    if (u?.uid) {
-      await setDoc(doc(fsDb!, "usersIndex", u.uid), { name: u.displayName || "", email: u.email || "" }, { merge: true });
+    const auth = await getFbAuth();
+
+    let u: any = null;
+    if (idToken) {
+      const cred = GoogleAuthProvider.credential(idToken);
+      const res = await withTimeout(signInWithCredential(auth, cred), 25000, "timeout");
+      u = res?.user ?? null;
+    } else {
+      // ---- WEB: popup first; if the popup is blocked or the browser kills
+      // it, fall back to a FULL-PAGE redirect (survives every mobile
+      // browser). unauthorized-domain is surfaced separately because a
+      // redirect can NEVER fix that — the owner must whitelist the domain.
+      try {
+        const res = await withTimeout(signInWithPopup(auth, new GoogleAuthProvider()), 60000, "timeout");
+        u = res?.user ?? null;
+      } catch (popErr) {
+        const pc = String((popErr as { code?: string })?.code || "");
+        if (pc.includes("unauthorized-domain")) return { ok: false, error: "errDomain" };
+        if (pc.includes("user-disabled")) return { ok: false, error: "errBanned" };
+        if (pc.includes("cancelled") || pc.includes("closed-by-user")) return { ok: false, error: "errCancelled" };
+        if (pc.includes("timeout")) return { ok: false, error: "errTimeout" };
+        // popup blocked / operation-not-supported → redirect flow: the page
+        // navigates away; on return the auth listener picks the user up.
+        await withTimeout(signInWithRedirect(auth, new GoogleAuthProvider()), 15000, "timeout");
+        return { ok: false, error: "errRedirecting" };
+      }
     }
-    return { name: u.displayName || "", email: u.email || "" };
-  } catch {
-    return null;
+    if (u?.uid) {
+      try {
+        await setDoc(doc(fsDb!, "usersIndex", u.uid), { name: u.displayName || gName || "", email: u.email || gEmail || "" }, { merge: true });
+      } catch {
+        /* profile write is best-effort */
+      }
+      return { ok: true, name: u.displayName || gName || "", email: u.email || gEmail || "" };
+    }
+    return { ok: false, error: "errNoUser" };
+  } catch (e) {
+    const code = String((e as { code?: string })?.code || (e as Error)?.message || e || "");
+    if (code.includes("unauthorized-domain")) return { ok: false, error: "errDomain" };
+    if (code.includes("user-disabled")) return { ok: false, error: "errBanned" };
+    if (code.includes("popup")) return { ok: false, error: "errPopupBlocked" };
+    if (code.includes("timeout")) return { ok: false, error: "errTimeout" };
+    return { ok: false, error: `errGoogle:${code.slice(0, 60)}` };
   }
 }
 
+/**
+ * v3.0: after a signInWithRedirect round-trip the page reloads — call this
+ * ONCE on boot. It consumes the redirect result (user already restored by
+ * the auth listener) and surfaces any redirect error loud and clear.
+ */
+export async function fbHandleRedirect(): Promise<string | null> {
+  try {
+    const { getRedirectResult } = await import("firebase/auth");
+    const auth = await getFbAuth();
+    await withTimeout(getRedirectResult(auth), 20000, "timeout");
+    return null;
+  } catch (e) {
+    const code = String((e as { code?: string })?.code || "");
+    if (code.includes("unauthorized-domain")) return "errDomain";
+    if (code.includes("user-disabled")) return "errBanned";
+    return null; // silent — the auth listener still handles the success path
+  }
+}
+
+/**
+ * v3.0 FORGOT PASSWORD: Firebase emails the user a secure reset LINK —
+ * they click it in their inbox and set a new password themselves. Works
+ * for any registered email; never reveals whether the account exists.
+ */
+export async function fbSendPasswordReset(email: string, serverCfg?: Partial<ServerCfg> | null): Promise<{ ok: boolean; error?: string }> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return { ok: false, error: "errNetwork" };
+  try {
+    const { sendPasswordResetEmail } = await import("firebase/auth");
+    const auth = await getFbAuth();
+    await withTimeout(sendPasswordResetEmail(auth, email.trim()), 25000, "timeout");
+    return { ok: true };
+  } catch (e) {
+    const code = String((e as { code?: string })?.code || e || "");
+    if (code.includes("invalid-email")) return { ok: false, error: "errInvalidEmail" };
+    if (code.includes("user-not-found")) return { ok: false, error: "resetNoUser" };
+    if (code.includes("too-many-requests")) return { ok: false, error: "errTooMany" };
+    if (code.includes("network") || code.includes("timeout")) return { ok: false, error: "errNetwork" };
+    return { ok: false, error: "errGeneric" };
+  }
+}
+
+/** Sign out of BOTH Firebase and the native Google client (fresh account
+ *  picker next time — the owner switches accounts). */
 export async function fbSignOut(): Promise<void> {
   try {
-    const { getAuth, signOut } = await import("firebase/auth");
-    await signOut(getAuth(fbApp!));
+    const { signOut } = await import("firebase/auth");
+    await withTimeout(signOut(await getFbAuth()), 10000, "timeout").catch(() => undefined);
+  } catch {
+    /* ignore */
+  }
+  try {
+    const gp: any = (window as unknown as { Capacitor?: { Plugins?: Record<string, any> } })?.Capacitor?.Plugins?.GoogleAuth;
+    if (gp?.signOut) await gp.signOut().catch(() => undefined);
   } catch {
     /* ignore */
   }
@@ -262,6 +450,65 @@ export function pairKeyOf(a: string, b: string): string {
   return [a, b].sort().join("|");
 }
 
+// ==================== v2.9: MESSENGER-STYLE CHAT (Share Notes) ====================
+// Owner: "মেসেঞ্জারের মত চ্যাট — নামে ক্লিক করলে কে কী লিখল দেখব, ছবি পাঠানো
+// যাবে, মেসেজ দিলে নোটিফিকেশন আসবে"।
+// Storage reuses the ALREADY-ALLOWED pairs/{pairKey}/notes collection (the
+// owner's Firestore rules permit it — verified via REST probes) with
+// kind:"chat" docs. The notes UI filters them OUT; the chat UI shows ONLY
+// them. No rule change, no server, real-time via the existing listener.
+export interface ChatMsg {
+  id: string;
+  kind: "chat";
+  from: string; // sender uid
+  fromName: string; // sender's REGISTERED name
+  text?: string;
+  image?: string; // compressed dataURL (≤ ~700KB — Firestore doc limit safety)
+  createdAt: number;
+}
+
+/** Send a chat message (text and/or photo) to a paired friend. */
+export async function fbSendChat(
+  pairKey: string,
+  msg: ChatMsg,
+  serverCfg?: Partial<ServerCfg> | null
+): Promise<boolean> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return false;
+  try {
+    const { doc, setDoc } = await import("firebase/firestore");
+    await setDoc(
+      doc(fsDb!, "pairs", pairKey, "notes", msg.id),
+      JSON.parse(JSON.stringify(msg)),
+      { merge: true }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The state the background OhKeepAliveService listener page needs — the MAIN
+ * app writes it to localStorage (same https://localhost origin → the headless
+ * WebView reads it): firebase config + signed-in uid + every pair to listen
+ * to + the reels-limit warning text (spoken by the background guard).
+ */
+export function writeChatListenerState(data: {
+  cfg: AnyRec | null;
+  myUid: string;
+  pairs: { key: string; name: string }[];
+  lang: string;
+  reelsLimitMin: number;
+  reelsWarn: string;
+}): void {
+  try {
+    localStorage.setItem("oh_chat_state", JSON.stringify(data));
+  } catch {
+    /* ignore */
+  }
+}
+
 /**
  * Raw note writer for the offline queue engine (note-sync.ts).
  * setDoc with the SAME note id + merge → retries can never create duplicates.
@@ -368,6 +615,7 @@ function mapAuthErr(e: unknown): string {
   const code = String((e as { code?: string })?.code || e || "");
   if (code.includes("email-already-in-use")) return "errEmailInUse";
   if (code.includes("invalid-credential") || code.includes("wrong-password") || code.includes("user-not-found")) return "errWrongPass";
+  if (code.includes("user-disabled")) return "errBanned"; // v3.0: admin banned this account
   if (code.includes("weak-password")) return "errWeakPass";
   if (code.includes("invalid-email")) return "errInvalidEmail";
   if (code.includes("too-many-requests")) return "errTooMany";
@@ -379,12 +627,12 @@ export async function fbEmailSignUp(email: string, password: string, name: strin
   const st = await ensureFirebase(serverCfg);
   if (!st.configured) return { ok: false, error: "errNetwork" };
   try {
-    const { getAuth, createUserWithEmailAndPassword, updateProfile, sendEmailVerification } = await import("firebase/auth");
-    const auth = getAuth(fbApp!);
-    const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+    const { createUserWithEmailAndPassword, updateProfile, sendEmailVerification } = await import("firebase/auth");
+    const auth = await getFbAuth();
+    const cred = await withTimeout(createUserWithEmailAndPassword(auth, email.trim(), password), 25000, "timeout");
     pendingDisplayName = name;
-    if (name) await updateProfile(cred.user, { displayName: name });
-    try { await sendEmailVerification(cred.user); } catch { /* quota */ }
+    if (name) await withTimeout(updateProfile(cred.user, { displayName: name }), 15000, "timeout").catch(() => undefined);
+    try { await withTimeout(sendEmailVerification(cred.user), 15000, "timeout"); } catch { /* quota */ }
     return { ok: true, uid: cred.user.uid };
   } catch (e) {
     console.error("fbAuthErr(signUp)", e);
@@ -396,8 +644,9 @@ export async function fbEmailSignIn(email: string, password: string, serverCfg?:
   const st = await ensureFirebase(serverCfg);
   if (!st.configured) return { ok: false, error: "errNetwork" };
   try {
-    const { getAuth, signInWithEmailAndPassword } = await import("firebase/auth");
-    await signInWithEmailAndPassword(getAuth(fbApp!), email.trim(), password);
+    const { signInWithEmailAndPassword } = await import("firebase/auth");
+    const auth = await getFbAuth();
+    await withTimeout(signInWithEmailAndPassword(auth, email.trim(), password), 25000, "timeout");
     return { ok: true };
   } catch (e) {
     return { ok: false, error: mapAuthErr(e) };
@@ -406,10 +655,11 @@ export async function fbEmailSignIn(email: string, password: string, serverCfg?:
 
 export async function fbSendVerification(): Promise<boolean> {
   try {
-    const { getAuth, sendEmailVerification } = await import("firebase/auth");
-    const u = getAuth(fbApp!).currentUser;
+    const { sendEmailVerification } = await import("firebase/auth");
+    const auth = await getFbAuth();
+    const u = auth.currentUser;
     if (!u) return false;
-    await sendEmailVerification(u);
+    await withTimeout(sendEmailVerification(u), 15000, "timeout");
     return true;
   } catch {
     return false;
@@ -418,10 +668,10 @@ export async function fbSendVerification(): Promise<boolean> {
 
 export async function fbCheckVerified(): Promise<boolean> {
   try {
-    const { getAuth } = await import("firebase/auth");
-    const u = getAuth(fbApp!).currentUser;
+    const auth = await getFbAuth();
+    const u = auth.currentUser;
     if (!u) return false;
-    await u.reload();
+    await withTimeout(u.reload(), 15000, "timeout");
     return Boolean(u.emailVerified);
   } catch {
     return false;
@@ -433,22 +683,22 @@ export function fbListenAuth(cb: (u: FbUser | null) => void, serverCfg?: Partial
   let un: (() => void) | null = null;
   let cancelled = false;
   ensureFirebase(serverCfg)
-    .then((st) => {
+    .then(async (st) => {
       if (!st.configured || cancelled) return;
-      import("firebase/auth").then(({ getAuth, onAuthStateChanged }) => {
-        if (cancelled) return;
-        un = onAuthStateChanged(getAuth(fbApp!), (u) => {
-          if (!u) {
-            pendingDisplayName = "";
-            return cb(null);
-          }
-          cb({
-            uid: u.uid,
-            name: u.displayName || pendingDisplayName || (u.email ? u.email.split("@")[0] : ""),
-            email: u.email || "",
-            emailVerified: u.emailVerified,
-            provider: u.providerData[0]?.providerId === "google.com" ? "google" : "password",
-          });
+      const { onAuthStateChanged } = await import("firebase/auth");
+      const auth = await getFbAuth();
+      if (cancelled) return;
+      un = onAuthStateChanged(auth, (u: any) => {
+        if (!u) {
+          pendingDisplayName = "";
+          return cb(null);
+        }
+        cb({
+          uid: u.uid,
+          name: u.displayName || pendingDisplayName || (u.email ? u.email.split("@")[0] : ""),
+          email: u.email || "",
+          emailVerified: u.emailVerified,
+          provider: u.providerData?.[0]?.providerId === "google.com" ? "google" : "password",
         });
       });
     })
