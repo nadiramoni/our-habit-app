@@ -580,9 +580,17 @@ export function writeChatListenerState(data: {
   lang: string;
   reelsLimitMin: number;
   reelsWarn: string;
+  /** v3.3: this APK's build version (e.g. "2.9.1") — the background listener
+   * compares it against app/meta.latestVersion to fire update notifications. */
+  buildVersion?: string;
 }): void {
   try {
     localStorage.setItem("oh_chat_state", JSON.stringify(data));
+    // v3.3: also stash the version standalone so the listener finds it even
+    // before the main app writes oh_chat_state (cold start after install).
+    if (data.buildVersion) {
+      try { localStorage.setItem("oh_app_version", data.buildVersion); } catch { /* ignore */ }
+    }
   } catch {
     /* ignore */
   }
