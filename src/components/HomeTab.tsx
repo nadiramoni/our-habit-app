@@ -20,8 +20,8 @@ import {
 import { dayPoints, fetchPrayerTimes, reminderOfTheDay, dhikrTotal, computeStreaks, MAX_POINTS } from "@/lib/logic";
 import AdsBanner from "@/components/AdsBanner";
 import { isNative, nativeGetVideoUsage, nativeOpenUsageAccess, nativeVibrate, nativeEnsureNotifPermission, nativeConfirmNotification, nativeRequestNotifications, nativeOpenNotificationSettings, UsageResult } from "@/lib/native";
-import { playAdd, playAlarmOn, playChime, playFanfare, playMinus, playStart, playTick } from "@/lib/audio";
-import { glassesOf, waterAlarmTimes, WaterAlarmCfg, shiftTime } from "@/lib/types";
+import { playAdd, playAlarmOn, playChime, playFanfare, playMinus, playStart, playTick, previewSound } from "@/lib/audio";
+import { glassesOf, waterAlarmTimes, WaterAlarmCfg, shiftTime, AZAN_SOUNDS } from "@/lib/types";
 
 // ---------- v2.4: alarm ON/OFF confirmation popup (owner round-6 #3) ----------
 // "অ্যালার্ম চালু করলে সাথে সাথে একটি পপ-আপ: আপনার অ্যালার্মটি সফলভাবে চালু
@@ -396,12 +396,8 @@ function MonthCard() {
     });
   };
 
-  const wd = (d: string) => {
-    const [y, m, dd] = d.split("-").map(Number);
-    return new Intl.DateTimeFormat(state.settings.language === "bn" ? "bn-BD" : "en-GB", { weekday: "narrow" }).format(
-      new Date(y, m - 1, dd)
-    );
-  };
+  // (v2.8: the per-day weekday label was removed — the compact calendar no
+  //  longer needs the `wd` helper)
 
   const weekdayLabels = useMemo(() => {
     // one fixed reference week starting on a Saturday (2026-10-24 = শনিবার)
@@ -469,16 +465,18 @@ function MonthCard() {
       </div>
 
       {/* weekday row */}
-      <div className="grid grid-cols-7 gap-1 mb-1">
+      <div className="grid grid-cols-7 gap-[3px] mb-1">
         {weekdayLabels.map((w, i) => (
-          <div key={i} className="text-center text-[9px] font-bold text-muted-foreground uppercase">
+          <div key={i} className="text-center text-[8px] font-bold text-muted-foreground uppercase">
             {w}
           </div>
         ))}
       </div>
 
-      {/* day grid */}
-      <div className="grid grid-cols-7 gap-1">
+      {/* day grid — v2.8 COMPACT (owner: "ক্যালেন্ডারটা আরো ছোট করবা"): tiny
+          rings, no per-day weekday label, tight gaps — the whole month now
+          fits in a slim band instead of a long block */}
+      <div className="grid grid-cols-7 gap-[3px]">
         {cells.map((d, i) => {
           if (!d) return <div key={`e${i}`} />;
           const future = d > today;
@@ -494,16 +492,13 @@ function MonthCard() {
               type="button"
               disabled={future}
               onClick={() => setSel(d)}
-              className={`flex flex-col items-center gap-0.5 rounded-xl py-1 transition-all ${
+              className={`flex flex-col items-center justify-center rounded-lg py-0.5 transition-all ${
                 future ? "opacity-30" : "active:scale-95"
               } ${isSel ? "bg-primary/15 ring-1 ring-primary/50" : ""}`}
             >
-              <Ring pct={pct} size={34} stroke={3.5}>
-                <span className={`text-[10px] font-bold leading-none ${isToday ? "text-primary" : ""}`}>{dayNum}</span>
+              <Ring pct={pct} size={25} stroke={2.5}>
+                <span className={`text-[9px] font-bold leading-none ${isToday ? "text-primary" : ""}`}>{dayNum}</span>
               </Ring>
-              <span className={`text-[8px] leading-none ${isToday ? "text-primary font-bold" : "text-muted-foreground"}`}>
-                {wd(d)}
-              </span>
             </button>
           );
         })}
@@ -516,18 +511,18 @@ function MonthCard() {
             setSel(today);
             setView(cur);
           }}
-          className="mt-2 text-[11px] font-semibold text-primary bg-primary/10 border border-primary/25 rounded-full px-3 py-1.5 min-h-[32px]"
+          className="mt-2 text-[10px] font-semibold text-primary bg-primary/10 border border-primary/25 rounded-full px-2.5 py-1 min-h-[28px]"
         >
           ↩ {t("goToday")}
         </button>
       ) : null}
 
-      {/* ---------- selected day's full record ---------- */}
-      <div className="mt-3 pt-3 border-t border-border">
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <div className="text-sm font-bold">{selDateLabel}</div>
+      {/* ---------- selected day's full record (v2.8 compact rows) ---------- */}
+      <div className="mt-2.5 pt-2.5 border-t border-border">
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <div className="text-[13px] font-bold">{selDateLabel}</div>
           {selLog ? (
-            <span className="text-[11px] font-bold text-primary bg-primary/10 border border-primary/25 rounded-full px-2.5 py-1 shrink-0">
+            <span className="text-[10px] font-bold text-primary bg-primary/10 border border-primary/25 rounded-full px-2 py-0.5 shrink-0">
               ⚡ {selPts} {t("pointShort")}
             </span>
           ) : null}
@@ -541,7 +536,7 @@ function MonthCard() {
         ) : (
           <div className="flex flex-col gap-1.5">
             {/* prayers */}
-            <div className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+            <div className="flex items-center gap-2 rounded-lg bg-secondary/50 px-2.5 py-1.5">
               {doneRow(Object.values(selLog.prayers).filter(Boolean).length === 5)}
               <span className="text-xs font-medium flex-1">🕌 {t("prayers")}</span>
               <span className="text-[11px] font-bold">
@@ -549,7 +544,7 @@ function MonthCard() {
               </span>
             </div>
             {/* water */}
-            <div className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+            <div className="flex items-center gap-2 rounded-lg bg-secondary/50 px-2.5 py-1.5">
               {doneRow(selLog.waterMl >= goal)}
               <span className="text-xs font-medium flex-1">💧 {t("water")}</span>
               <span className="text-[11px] font-bold">
@@ -558,13 +553,13 @@ function MonthCard() {
               </span>
             </div>
             {/* prayer water */}
-            <div className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+            <div className="flex items-center gap-2 rounded-lg bg-secondary/50 px-2.5 py-1.5">
               {doneRow(selLog.prayerWater.filter(Boolean).length === 5)}
               <span className="text-xs font-medium flex-1">🥛 {t("prayerWater")}</span>
               <span className="text-[11px] font-bold">{selLog.prayerWater.filter(Boolean).length}/5</span>
             </div>
             {/* reels */}
-            <div className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+            <div className="flex items-center gap-2 rounded-lg bg-secondary/50 px-2.5 py-1.5">
               {doneRow(selLog.reelsMin !== null && selLog.reelsMin === 0)}
               <span className="text-xs font-medium flex-1">🎬 {t("reels")}</span>
               <span className={`text-[11px] font-bold ${selLog.reelsMin ? "text-destructive" : "text-primary"}`}>
@@ -572,24 +567,24 @@ function MonthCard() {
               </span>
             </div>
             {/* dhikr */}
-            <div className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+            <div className="flex items-center gap-2 rounded-lg bg-secondary/50 px-2.5 py-1.5">
               {doneRow(dhikrTotal(selLog) >= 100)}
               <span className="text-xs font-medium flex-1">📿 {t("dhikr")}</span>
               <span className="text-[11px] font-bold">{dhikrTotal(selLog)}</span>
             </div>
             {/* meditation / focus */}
-            <div className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+            <div className="flex items-center gap-2 rounded-lg bg-secondary/50 px-2.5 py-1.5">
               {doneRow(selLog.meditationMin >= 10)}
               <span className="text-xs font-medium flex-1">🧘 {t("meditation")}</span>
               <span className="text-[11px] font-bold">{hmFmt(selLog.meditationMin)}</span>
             </div>
-            <div className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+            <div className="flex items-center gap-2 rounded-lg bg-secondary/50 px-2.5 py-1.5">
               {doneRow(selLog.focusMin >= 25)}
               <span className="text-xs font-medium flex-1">🎯 {t("focus")}</span>
               <span className="text-[11px] font-bold">{hmFmt(selLog.focusMin)}</span>
             </div>
             {/* sleep */}
-            <div className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+            <div className="flex items-center gap-2 rounded-lg bg-secondary/50 px-2.5 py-1.5">
               {doneRow(Boolean(selLog.sleepBed && selLog.sleepWake))}
               <span className="text-xs font-medium flex-1">😴 {t("sleep")}</span>
               <span className="text-[11px] font-bold">
@@ -598,7 +593,7 @@ function MonthCard() {
             </div>
             {/* custom habits — done AND not-done both listed (owner: no habit মার্কিং) */}
             {customList.map((h) => (
-              <div key={h.id} className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+              <div key={h.id} className="flex items-center gap-2 rounded-lg bg-secondary/50 px-2.5 py-1.5">
                 {doneRow(Boolean(selLog.customDone?.[h.id]))}
                 <span className="text-xs font-medium flex-1 truncate">
                   {h.icon} {h.name}
@@ -610,7 +605,7 @@ function MonthCard() {
             ))}
             {/* note */}
             {selLog.note.trim() ? (
-              <div className="rounded-xl bg-secondary/50 px-3 py-2">
+              <div className="rounded-lg bg-secondary/50 px-2.5 py-1.5">
                 <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">📝 {t("note")}</div>
                 <p className="text-xs leading-relaxed whitespace-pre-wrap break-words">{selLog.note}</p>
               </div>
@@ -1555,6 +1550,73 @@ function MealsCard() {
   );
 }
 
+// ---------- v2.8: AZAN SOUND PICKER (আজানের ধ্বনি) ----------
+// Owner: "আরো নিজের থেকে অনেকগুলা মিউজিক অ্যাড করাও — যাতে এখানে সবকিছু থাকে"।
+// 5 REAL adhan recitations are bundled in the APK (the owner's own + 4
+// more). ▶ previews 8 seconds instantly; tapping a row picks it for every
+// azan + Fajr alarm (native alarm channel + the in-app full-screen azan).
+function AzanSoundCard() {
+  const { state, updateSettings, t } = useStore();
+  const chosen = state.settings.azanSound || "adhan.mp3";
+  const [playing, setPlaying] = useState<string>("");
+
+  const preview = (file: string) => {
+    if (playing === file) {
+      setPlaying("");
+      return; // tap again = stop
+    }
+    setPlaying(file);
+    void previewSound(file, 8);
+    setTimeout(() => setPlaying((p) => (p === file ? "" : p)), 8200);
+  };
+
+  return (
+    <Card className="mb-4 border-primary/25 bg-gradient-to-br from-primary/5 to-transparent">
+      <SectionTitle title={`🎵 ${t("azanSoundTitle")}`} sub={t("azanSoundSub")} />
+      <div className="flex flex-col gap-1.5">
+        {AZAN_SOUNDS.map((a, i) => {
+          const isOn = chosen === a.file;
+          const label = state.settings.language === "bn" ? a.labelBn : a.labelEn;
+          return (
+            <div
+              key={a.file}
+              className={`flex items-center gap-2.5 rounded-xl border px-3 py-2 transition-all ${
+                isOn ? "border-primary/45 bg-primary/10" : "border-border bg-secondary/40"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => updateSettings({ azanSound: a.file })}
+                className="flex-1 flex items-center gap-2.5 min-w-0 text-left active:scale-[0.99] transition-transform"
+              >
+                <span
+                  className={`w-8 h-8 rounded-full flex items-center justify-center text-[13px] font-extrabold shrink-0 ${
+                    isOn ? "bg-primary text-primary-foreground" : "bg-secondary border border-border"
+                  }`}
+                >
+                  {isOn ? "✓" : i + 1}
+                </span>
+                <span className={`text-sm font-semibold truncate ${isOn ? "text-primary" : ""}`}>{label}</span>
+              </button>
+              <button
+                type="button"
+                aria-label={`${t("azanPreview")} ${label}`}
+                onClick={() => preview(a.file)}
+                className={`w-9 h-9 rounded-full flex items-center justify-center text-sm shrink-0 active:scale-90 transition-transform ${
+                  playing === a.file ? "bg-primary text-primary-foreground animate-pulse" : "bg-secondary border border-border"
+                }`}
+              >
+                {playing === a.file ? "⏹" : "▶"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">📢 {t("azanSoundNote")}</p>
+    </Card>
+  );
+}
+
 // ---------- All alarms & reminders (detail page) ----------
 function AlarmsCard() {
   const { state, updateSettings, t } = useStore();
@@ -1615,6 +1677,11 @@ function AlarmsCard() {
           </div>
         </div>
       </Card>
+
+      {/* ---------- v2.8: AZAN SOUND PICKER (owner: "নিজে থেকে অনেকগুলা
+          মিউজিক অ্যাড করাও — যাতে এখানে সবকিছু থাকে") — 5 real recitations,
+          tap ▶ to hear an 8-second preview, tap a row to choose ---------- */}
+      <AzanSoundCard />
 
       <Card className="mb-4">
         <SectionTitle
@@ -1890,6 +1957,11 @@ const TINT: Record<DetailKey, string> = {
   newhabit: "from-primary/15 to-transparent border-primary/25",
 };
 
+// ---------- v2.8: THIN ONE-PER-ROW HABIT LINES (owner round-10) ----------
+// "নামাজটা একটা ছোট চিকন লম্বা সাইজের রাখবা... নামাজের নিচে পানি, পানির
+// নিচে ঘুম — একটা লেআউটের ভিতরে, একটা সাইজে একটাই থাকবে, আরো চিকন হবে"
+// Every habit is now ONE full-width slim bar: icon · name · live value ·
+// thin progress line at the bottom · ✓/› — one below another, সুন্দর ও compact।
 function HabitTile({
   icon,
   titleKey,
@@ -1909,28 +1981,33 @@ function HabitTile({
 }) {
   const { t } = useStore();
   const done = typeof pct === "number" && pct >= 1;
+  const partial = typeof pct === "number" && pct > 0 && pct < 1;
   return (
     <button
       type="button"
       onClick={() => onOpen(titleKey)}
-      className={`habit-tile tile-in text-left rounded-2xl border bg-gradient-to-br ${TINT[tint as DetailKey] || tint} p-3.5 flex flex-col gap-2 min-h-[118px] transition-transform ${done ? "tile-done" : ""}`}
+      className={`habit-row tile-in relative w-full text-left rounded-2xl border bg-gradient-to-r ${TINT[tint as DetailKey] || tint} px-3 flex items-center gap-3 min-h-[56px] overflow-hidden transition-transform active:scale-[0.98] ${done ? "tile-done" : ""}`}
     >
-      <div className="flex items-start justify-between">
-        <span className="tile-ico w-9 h-9 rounded-xl bg-background/80 dark:bg-background/60 border border-border flex items-center justify-center text-lg shadow-sm">
-          {icon}
-        </span>
-        {done ? (
-          <span className="tile-check w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[11px] font-bold shadow">✓</span>
-        ) : (
-          <span className="text-muted-foreground/70 text-base leading-none mt-1">›</span>
-        )}
+      <span className="tile-ico w-10 h-10 rounded-xl bg-background/80 dark:bg-background/60 border border-border flex items-center justify-center text-lg shadow-sm shrink-0">
+        {icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px] font-extrabold leading-tight">{t(DETAIL_I18N[titleKey as DetailKey])}</div>
+        {sub ? <div className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">{sub}</div> : null}
       </div>
-      <div>
-        <div className="text-[11px] font-semibold text-muted-foreground leading-tight uppercase tracking-wide">{t(DETAIL_I18N[titleKey as DetailKey])}</div>
-        <div className="text-[17px] font-extrabold leading-tight mt-0.5">{value}</div>
-        {sub ? <div className="text-[10px] text-muted-foreground truncate mt-0.5">{sub}</div> : null}
+      <div className="text-right shrink-0 max-w-[42%]">
+        <div className="text-[15px] font-extrabold leading-tight truncate">{value}</div>
+        {partial ? <div className="text-[9px] text-muted-foreground">{Math.round((pct || 0) * 100)}%</div> : null}
       </div>
-      {typeof pct === "number" ? <Bar pct={pct} className="h-1.5" /> : null}
+      {done ? (
+        <span className="tile-check w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[12px] font-bold shadow shrink-0">✓</span>
+      ) : (
+        <span className="text-muted-foreground/70 text-lg leading-none shrink-0">›</span>
+      )}
+      {/* thin progress line along the bottom of the bar */}
+      {typeof pct === "number" ? (
+        <span className="absolute bottom-0 left-0 h-[3px] bg-primary/80 rounded-r-full transition-all" style={{ width: `${Math.round(Math.min(1, pct) * 100)}%` }} />
+      ) : null}
     </button>
   );
 }
@@ -1951,8 +2028,9 @@ function HabitGrid({ onOpen }: { onOpen: (k: DetailKey) => void }) {
     else playMinus();
   };
 
+  // v2.8 ORDER (owner: "নামাজের নিচে পানি, পানির নিচে ঘুম") — one slim line each
   return (
-    <div className="grid grid-cols-2 gap-2.5 mb-4">
+    <div className="flex flex-col gap-2 mb-4">
       <HabitTile
         icon="🕌"
         titleKey="prayers"
@@ -1972,10 +2050,20 @@ function HabitGrid({ onOpen }: { onOpen: (k: DetailKey) => void }) {
         onOpen={onOpen}
       />
       <HabitTile
+        icon="😴"
+        titleKey="sleep"
+        value={log.sleepBed && log.sleepWake ? `${log.sleepBed} → ${log.sleepWake}` : "—"}
+        sub={t("sleepSub")}
+        pct={log.sleepBed && log.sleepWake ? 1 : 0}
+        tint="sleep"
+        onOpen={onOpen}
+      />
+      <HabitTile
         icon="🎬"
         titleKey="reels"
         value={reelsTotal === 0 && log.reelsMin !== null ? `🔥 ${t("reelsFreeToday").split("!")[0]}` : `${reelsTotal} ${t("min")}`}
         sub={t("tapForDetails")}
+        pct={reelsTotal === 0 && log.reelsMin !== null ? 1 : 0}
         tint="reels"
         onOpen={onOpen}
       />
@@ -1984,6 +2072,7 @@ function HabitGrid({ onOpen }: { onOpen: (k: DetailKey) => void }) {
         titleKey="dhikr"
         value={`${dhikrTotal(log)}`}
         sub={t("dhikrTodayTotal")}
+        pct={dhikrTotal(log) >= 100 ? 1 : dhikrTotal(log) / 100}
         tint="dhikr"
         onOpen={onOpen}
       />
@@ -1992,6 +2081,7 @@ function HabitGrid({ onOpen }: { onOpen: (k: DetailKey) => void }) {
         titleKey="meditation"
         value={`${log.meditationMin} ${t("min")}`}
         sub={t("meditationSub")}
+        pct={log.meditationMin >= 10 ? 1 : log.meditationMin / 10}
         tint="meditation"
         onOpen={onOpen}
       />
@@ -2000,19 +2090,13 @@ function HabitGrid({ onOpen }: { onOpen: (k: DetailKey) => void }) {
         titleKey="focus"
         value={`${log.focusMin} ${t("min")}`}
         sub={t("focusSub")}
+        pct={log.focusMin >= 25 ? 1 : log.focusMin / 25}
         tint="focus"
         onOpen={onOpen}
       />
-      <HabitTile
-        icon="😴"
-        titleKey="sleep"
-        value={log.sleepBed && log.sleepWake ? `${log.sleepBed} → ${log.sleepWake}` : "—"}
-        sub={t("sleepSub")}
-        tint="sleep"
-        onOpen={onOpen}
-      />
 
-      {/* ---- v2.5: user-created habits (নতুন হ্যাবিট) — one tap = done today ---- */}
+      {/* ---- v2.5: user-created habits (নতুন হ্যাবিট) — now slim rows,
+          one tap = done today ---- */}
       {customList.map((h) => {
         const on = Boolean(log.customDone?.[h.id]);
         return (
@@ -2020,40 +2104,40 @@ function HabitGrid({ onOpen }: { onOpen: (k: DetailKey) => void }) {
             key={h.id}
             type="button"
             onClick={() => toggleCustom(h.id, on)}
-            className={`habit-tile tile-in text-left rounded-2xl border bg-gradient-to-br ${
-              on ? "from-primary/25 to-transparent border-primary/40 tile-done" : "from-slate-500/15 to-transparent border-slate-500/25"
-            } p-3.5 flex flex-col gap-2 min-h-[118px] transition-transform active:scale-[0.97]`}
+            className={`habit-row tile-in relative w-full text-left rounded-2xl border px-3 flex items-center gap-3 min-h-[56px] overflow-hidden transition-transform active:scale-[0.98] ${
+              on
+                ? "border-primary/40 bg-gradient-to-r from-primary/25 to-transparent tile-done"
+                : "border-slate-500/25 bg-gradient-to-r from-slate-500/15 to-transparent"
+            }`}
           >
-            <div className="flex items-start justify-between">
-              <span className="tile-ico w-9 h-9 rounded-xl bg-background/80 dark:bg-background/60 border border-border flex items-center justify-center text-lg shadow-sm">
-                {h.icon}
-              </span>
-              {on ? (
-                <span className="tile-check w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[11px] font-bold shadow">✓</span>
-              ) : (
-                <span className="w-6 h-6 rounded-full border-2 border-dashed border-muted-foreground/40 text-muted-foreground/60 flex items-center justify-center text-[11px] font-bold">+</span>
-              )}
+            <span className="tile-ico w-10 h-10 rounded-xl bg-background/80 dark:bg-background/60 border border-border flex items-center justify-center text-lg shadow-sm shrink-0">
+              {h.icon}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-extrabold leading-tight truncate">{h.name}</div>
+              <div className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">{on ? t("doneToday") : t("notDone")}</div>
             </div>
-            <div>
-              <div className="text-[11px] font-semibold text-muted-foreground leading-tight uppercase tracking-wide">{t("newHabit")}</div>
-              <div className="text-[15px] font-extrabold leading-tight mt-0.5 break-words line-clamp-2">{h.name}</div>
-              <div className="text-[10px] text-muted-foreground mt-0.5">{on ? t("doneToday") : t("notDone")}</div>
-            </div>
+            {on ? (
+              <span className="tile-check w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[12px] font-bold shadow shrink-0">✓</span>
+            ) : (
+              <span className="w-7 h-7 rounded-full border-2 border-dashed border-muted-foreground/40 text-muted-foreground/60 flex items-center justify-center text-[12px] font-bold shrink-0">+</span>
+            )}
           </button>
         );
       })}
 
-      {/* ---- v2.5: ADD-NEW-HABIT tile (owner: ঘুমের পাশে Add অপশন) ---- */}
+      {/* ---- v2.5: ADD-NEW-HABIT (owner: ঘুমের পাশে Add অপশন) — slim row ---- */}
       <button
         type="button"
         onClick={() => onOpen("newhabit")}
-        className="habit-tile tile-in rounded-2xl border-2 border-dashed border-primary/40 bg-primary/5 p-3.5 flex flex-col items-center justify-center gap-2 min-h-[118px] text-center transition-transform active:scale-[0.97]"
+        className="habit-row tile-in w-full rounded-2xl border-2 border-dashed border-primary/40 bg-primary/5 px-3 flex items-center gap-3 min-h-[56px] text-left transition-transform active:scale-[0.98]"
       >
-        <span className="w-11 h-11 rounded-2xl bg-primary/15 border border-primary/30 flex items-center justify-center text-2xl text-primary font-bold shadow-sm">＋</span>
-        <div>
-          <div className="text-sm font-extrabold text-primary">{t("newHabit")}</div>
-          <div className="text-[10px] text-muted-foreground mt-0.5">{t("newHabitSub")}</div>
+        <span className="w-10 h-10 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center text-xl text-primary font-bold shadow-sm shrink-0">＋</span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-extrabold text-primary">{t("newHabit")}</div>
+          <div className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">{t("newHabitSub")}</div>
         </div>
+        <span className="text-primary/70 text-lg leading-none shrink-0">›</span>
       </button>
     </div>
   );
@@ -2303,6 +2387,11 @@ function DetailPage({ k, onClose }: { k: DetailKey; onClose: () => void }) {
         {k === "meals" ? <MealsCard /> : null}
         {k === "alarms" ? <AlarmsCard /> : null}
         {k === "newhabit" ? <NewHabitCard /> : null}
+        {/* v2.8: ads on every page (owner: "প্রত্যেকটা পেজে যেখানে যেখানে
+            অ্যাড বসানো যায়") — the detail pages carry a bottom banner too */}
+        <div className="mt-3">
+          <AdsBanner variant="b" />
+        </div>
       </div>
     </div>,
     document.body
@@ -2338,11 +2427,12 @@ export default function HomeTab({ onSecret }: { onSecret?: () => void }) {
         <h2 className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">{t("todayCard")}</h2>
       </div>
       <HabitGrid onOpen={setDetail} />
+      <AdsBanner variant="b" />
       <PrayerWaterStrip />
       <AlarmsLayer onOpen={setDetail} />
-      {/* v2.6: exactly 3 banner slots (owner: "অ্যাডস ৩ জায়গায়") — top
-          compact 320×50 (line above), mid + bottom 468×60, all baked-in zones */}
-      <AdsBanner variant="b" />
+      {/* v2.8: ads on EVERY page (owner round-10 #1) — Home keeps its 3 slots
+          (top compact / mid / bottom), Stats/Notes/Friends/Settings get 2 each,
+          and every detail page gets a bottom banner */}
       <div className="mb-2">
         <AdsBanner variant="b" />
       </div>

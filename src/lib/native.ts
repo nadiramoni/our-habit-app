@@ -559,6 +559,122 @@ function hashCode(s: string): number {
   return h;
 }
 
+// ==================== v2.8: EXACT ALARM ENGINE (the azan REAL fix) ====================
+// Owner: "আজান যে টাইম সেট করি, ঐটা পরে দিয়ে দেয় — ওই টাইমেই দিতে হবে,
+// অবশ্যই ফুল স্ক্রিনে আসবে"। The LocalNotifications plugin uses
+// setExactAndAllowWhileIdle which aggressive OEM battery-killers (realme/
+// Oppo/Vivo) still defer by minutes. Our own ExactAlarmPlugin uses
+// AlarmManager.setAlarmClock() — the alarm-clock API OEMs never delay — plus
+// a full-screen intent notification that LAUNCHES the azan view when the
+// screen is off/locked. Re-armed after reboot by ExactBootReceiver.
+
+export interface ExactAlarmSpec {
+  id: string; // unique, e.g. "adhan_dhuhr@2026-10-29"
+  at: number; // epoch ms — MUST be a local datetime built with dateAtHM()
+  key: string; // alarm kind, e.g. "adhan_dhuhr" (routes the overlay)
+  time: string; // "HH:MM" display
+  title: string;
+  body: string;
+  sound: string; // res/raw file, e.g. "adhan.mp3"
+}
+
+function exactPlugin(): AnyRec | null {
+  try {
+    return (window as AnyRec)?.Capacitor?.Plugins?.ExactAlarm ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Schedule EXACT alarm-clock alarms (azan / Fajr / meals / sleep). APK only. */
+export async function nativeScheduleExactAlarms(alarms: ExactAlarmSpec[]): Promise<{ scheduled: number }> {
+  if (!isNative()) return { scheduled: 0 };
+  const p = exactPlugin();
+  if (!p) return { scheduled: 0 };
+  try {
+    const res = await p.schedule({
+      alarms: alarms.map((a) => ({
+        id: a.id,
+        at: a.at,
+        key: a.key,
+        time: a.time,
+        title: a.title,
+        body: a.body,
+        sound: a.sound,
+      })),
+    });
+    return { scheduled: Number(res?.scheduled) || 0 };
+  } catch {
+    return { scheduled: 0 };
+  }
+}
+
+export async function nativeCancelExactAlarms(): Promise<void> {
+  const p = exactPlugin();
+  if (!p) return;
+  try {
+    await p.cancelAll();
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function nativeExactPending(): Promise<{ count: number; nextAt: number; nextTitle: string }> {
+  const p = exactPlugin();
+  if (!p) return { count: 0, nextAt: 0, nextTitle: "" };
+  try {
+    const r = await p.pending();
+    return { count: Number(r?.count) || 0, nextAt: Number(r?.nextAt) || 0, nextTitle: String(r?.nextTitle || "") };
+  } catch {
+    return { count: 0, nextAt: 0, nextTitle: "" };
+  }
+}
+
+/** The alarm that launched the app (full-screen intent / notification tap) —
+ *  consumed ONCE: shows the full-screen azan overlay + plays the real adhan. */
+export async function nativeConsumeAlarmLaunch(): Promise<ExactAlarmSpec | null> {
+  if (!isNative()) return null;
+  const p = exactPlugin();
+  if (!p) return null;
+  try {
+    const r = await p.consumeLaunch();
+    if (!r?.has) return null;
+    return {
+      id: `launch_${r.key}_${r.time}`,
+      at: Date.now(),
+      key: String(r.key || ""),
+      time: String(r.time || ""),
+      title: String(r.title || ""),
+      body: String(r.body || ""),
+      sound: String(r.sound || "adhan.mp3"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function nativeAlarmEngineStatus(): Promise<{ exactAlarm: boolean; fullScreen: boolean } | null> {
+  const p = exactPlugin();
+  if (!p || !isNative()) return null;
+  try {
+    const r = await p.status();
+    return { exactAlarm: Boolean(r?.exactAlarm), fullScreen: Boolean(r?.fullScreen) };
+  } catch {
+    return null;
+  }
+}
+
+export async function nativeOpenFullScreenSettings(): Promise<boolean> {
+  const p = exactPlugin();
+  if (!p) return false;
+  try {
+    await p.openFullScreenSettings();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Haptic feedback — real device vibration (round-5: tasbih = vibration, no sound). */
 export async function nativeVibrate(ms = 20): Promise<void> {
   try {

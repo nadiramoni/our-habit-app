@@ -108,6 +108,32 @@ export async function fbSignOut(): Promise<void> {
   }
 }
 
+/**
+ * v2.8: set the user's REGISTERED full name everywhere (owner: the Gmail
+ * account name must NOT be what people see — the registered first+last
+ * name must). Updates the Firebase Auth displayName + the usersIndex
+ * profile doc so friends/shared notes show the right name on every device.
+ */
+export async function fbUpdateProfileName(fullName: string): Promise<boolean> {
+  const clean = (fullName || "").trim();
+  if (!clean) return false;
+  try {
+    const [{ getAuth, updateProfile }, { doc, setDoc }] = await Promise.all([
+      import("firebase/auth"),
+      import("firebase/firestore"),
+    ]);
+    const u = getAuth(fbApp!).currentUser;
+    if (u) {
+      await updateProfile(u, { displayName: clean });
+      await setDoc(doc(fsDb!, "usersIndex", u.uid), { name: clean }, { merge: true });
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export async function fbCurrentUser(): Promise<{ name: string; email: string } | null> {
   try {
     const { getAuth } = await import("firebase/auth");

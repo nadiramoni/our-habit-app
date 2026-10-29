@@ -21,6 +21,17 @@ import { waterAlarmTimes, WaterAlarmCfg } from "./types";
 
 const KEY = "ourhabit_v1";
 
+// ---------- v2.8 FIX: the reminder engine's fired-flag store ----------
+// (was a useRef INSIDE the provider while checkReminders runs at MODULE
+// scope → ReferenceError every 20s tick — the in-app reminder engine silently
+// died. Now one module-level store, loaded once, used by both.)
+const firedRef: { current: Record<string, boolean> } = { current: {} };
+try {
+  firedRef.current = JSON.parse(localStorage.getItem("ourhabit_fired") || "{}") as Record<string, boolean>;
+} catch {
+  firedRef.current = {};
+}
+
 interface Ctx {
   state: AppState;
   ready: boolean;
@@ -147,9 +158,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             }
           : null;
         setState((s) => {
-          // auto-name: the account's name IS the app name (owner request —
-          // registration first/last name fills the home greeting automatically)
-          const name = acc?.name ? acc.name : s.settings.name;
+          // v2.8 NAME FIX (owner: "ওর জিমেইলের নামটা থাকবে না"): the
+          // REGISTERED name (settings.name) ALWAYS wins — the Google/Gmail
+          // account display name only fills an EMPTY name, never overwrites.
+          // Registration (email first/last) and the profile name editor set
+          // settings.name; that name flows to every display + share.
+          const name = s.settings.name || acc?.name || "";
           return { ...s, account: acc, settings: { ...s.settings, name } };
         });
       });
@@ -160,13 +174,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     };
   }, [ready]);
 
-  // auto-name: whatever identity exists (registration first/last name, Google
-  // profile) IS the app name — no manual name entry anywhere (owner request)
-  useEffect(() => {
-    const n = state.account?.name;
-    if (!n) return;
-    setState((s) => (s.settings.name === n ? s : { ...s, settings: { ...s.settings, name: n } }));
-  }, [state.account?.name]);
+  // v2.8: the old effect here FORCIBLY copied account.name (the Gmail
+  // display name) into settings.name on every auth event — that is exactly
+  // the bug the owner reported ("ওর জিমেইলের নামটা থাকবে না"). It is now
+  // REMOVED: settings.name (the registered full name) is the single source
+  // of truth, and only fills FROM the account when still empty (see the
+  // listener above).
 
   // theme
   useEffect(() => {
@@ -263,7 +276,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const firedRef = useRef<Record<string, boolean>>({});
+  // v2.8: fired-flag store moved to module scope (see top) — the reminder
+  // engine reads/writes it directly, no provider-local copy needed
 
   const fireNotif = useCallback((title: string, body: string, sound?: string) => {
     // APK: the web Notification API is dead inside a WebView — route through
@@ -295,7 +309,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // load fired flags
+  // v2.8: fired flags are loaded once at module scope
   useEffect(() => {
     try {
       firedRef.current = JSON.parse(localStorage.getItem("ourhabit_fired") || "{}");

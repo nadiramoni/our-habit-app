@@ -114,7 +114,16 @@ export function warmAudio() {
 // trick: on the first user gesture we play+pause each element at volume 0 so
 // later programmatic play() calls are allowed by the WebView.
 
-const MEDIA_FILES = ["/meal-alarm.mp3", "/meal-music1.mp3", "/adhan.mp3", "/water-alarm.mp3"];
+const MEDIA_FILES = [
+  "/meal-alarm.mp3",
+  "/meal-music1.mp3",
+  "/adhan.mp3",
+  "/azan2.mp3", // v2.8: the 4 extra azan tracks (picker: আজানের ধ্বনি)
+  "/azan3.mp3",
+  "/azan4.mp3",
+  "/azan5.mp3",
+  "/water-alarm.mp3",
+];
 const mediaEls: HTMLAudioElement[] = [];
 let mediaUnlocked = false;
 
@@ -175,6 +184,27 @@ export function startMealMusic(): () => void {
   }
 }
 
+/** v2.8: Play the CHOSEN azan recitation (settings.azanSound) — loops
+ *  until dismissed so a long adhan keeps going. Falls back to the default
+ *  recording, then to the synthesized music box. Returns stop. */
+export function startAzan(soundFile: string): () => void {
+  stopMedia();
+  const file = soundFile && MEDIA_FILES.some((f) => f === `/${soundFile}`) ? `/${soundFile}` : "/adhan.mp3";
+  const el = ensureMediaEls().find((a) => a.src.endsWith(file));
+  if (!el) return startAlarmMusic();
+  try {
+    el.loop = true; // keep the azan going until the user stops it
+    el.volume = 1;
+    const p = el.play();
+    if (p && typeof p.catch === "function") p.catch(() => startAlarmMusic());
+    return () => {
+      try { el.pause(); el.currentTime = 0; el.loop = false; } catch { /* ignore */ }
+    };
+  } catch {
+    return startAlarmMusic();
+  }
+}
+
 /** Play the REAL adhan recording once (in-app azan overlay). Returns stop. */
 export function startAdhan(): () => void {
   stopMedia();
@@ -190,6 +220,34 @@ export function startAdhan(): () => void {
     };
   } catch {
     return startAlarmMusic();
+  }
+}
+
+/** v2.8: short PREVIEW of an azan track (the picker's ▶ button) — 8 seconds. */
+export function previewSound(soundFile: string, seconds = 8): () => void {
+  stopMedia();
+  const file = soundFile.startsWith("/") ? soundFile : `/${soundFile}`;
+  let el = ensureMediaEls().find((a) => a.src.endsWith(file));
+  if (!el) {
+    try {
+      el = new Audio(file);
+      el.preload = "auto";
+      mediaEls.push(el);
+    } catch {
+      return () => undefined;
+    }
+  }
+  const stopAt = () => {
+    try { el?.pause(); if (el) el.currentTime = 0; } catch { /* ignore */ }
+  };
+  try {
+    el.volume = 1;
+    const p = el.play();
+    if (p && typeof p.catch === "function") p.catch(() => undefined);
+    setTimeout(stopAt, seconds * 1000);
+    return stopAt;
+  } catch {
+    return () => undefined;
   }
 }
 

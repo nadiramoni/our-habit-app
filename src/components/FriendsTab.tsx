@@ -12,6 +12,7 @@ import { useServerCfg } from "@/lib/cfg";
 import { Card, SectionTitle, Bar, Chip } from "@/components/ui-bits";
 import { PRAYER_KEYS, REEL_APPS, emptyReels, getLog } from "@/lib/types";
 import { DaySummary, FbProfile, addFriendByCode, listenDay, listenProfile, removeFriend } from "@/lib/cloud";
+import AdsBanner from "@/components/AdsBanner";
 
 function DetailRow({ label, value, pct, tone }: { label: string; value: string; pct?: number; tone?: "good" | "bad" }) {
   return (
@@ -156,6 +157,8 @@ export default function FriendsTab() {
     return (
       <div>
         <h1 className="text-xl font-bold mb-3">👥 {t("nav_friends")}</h1>
+        {/* v2.8: ads on every page */}
+        <AdsBanner variant="a" />
         <Card className="border-primary/30 bg-gradient-to-br from-primary/10 to-transparent">
           <div className="text-center py-3">
             <div className="text-4xl mb-2">🔐</div>
@@ -171,6 +174,8 @@ export default function FriendsTab() {
             <p className="text-[10px] text-muted-foreground mt-2">{t("loginCtaSub")}</p>
           </div>
         </Card>
+        {/* v2.8: ads on every page */}
+        <AdsBanner variant="b" />
       </div>
     );
   }
@@ -195,6 +200,9 @@ export default function FriendsTab() {
     <div>
       <h1 className="text-xl font-bold mb-1">👥 {t("nav_friends")}</h1>
       <p className="text-xs text-muted-foreground mb-3">{t("friendsSub")}</p>
+
+      {/* v2.8: ads on every page */}
+      <AdsBanner variant="a" />
 
       <Card className="mb-4 border-primary/30 bg-gradient-to-br from-primary/10 to-transparent">
         <SectionTitle title={t("myCode")} />
@@ -265,6 +273,8 @@ export default function FriendsTab() {
           </p>
         </Card>
       )}
+      {/* v2.8: ads on every page */}
+      <AdsBanner variant="b" />
     </div>
   );
 }

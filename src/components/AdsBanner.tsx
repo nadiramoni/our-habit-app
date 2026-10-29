@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useServerCfg } from "@/lib/cfg";
 import { useStore } from "@/lib/store";
-import { AdZone, ZONE_LADDER } from "@/lib/ad-zones";
+import { AdZone, ZONE_BASE, buildLadder, recordZoneFail, recordZoneWin } from "@/lib/ad-zones";
 
 /**
  * Extract the Adsterra key AND declared banner size from either a raw 32-hex
@@ -96,7 +96,8 @@ function useZoneScript(url: string | null, zoneKey: string) {
  *  • /ad.html self-checks for a REAL render (iframe with visible size) over a
  *    ~87s phase ladder and postMessages the verdict
  *  • final-fail → parent remounts with a cache-bust; every 2nd cycle rotates
- *    to the next baked zone (no-fill on one zone → the others try)
+ *    to the next zone (v2.7: sorted by each zone's learned fail count —
+ *    dead zones sink, live zones win)
  *  • after 6 cycles the remount ladder slows to every 5 minutes
  *  • every verdict beacons to window.__atHealth → admin panel truth display
  */
@@ -110,7 +111,11 @@ function AdFrame({ ladder }: { ladder: AdZone[] }) {
   const cyclesRef = useRef(0);
   const doneRef = useRef(false);
 
-  const active = ladder[zoneIdx % ladder.length];
+  // v2.7 learned rotation: the walk order itself is re-sorted by each zone's
+  // persistent fail count, so stepping forward always lands on the least
+  // failed zone first.
+  const ordered = buildLadder(ladder);
+  const active = ordered[zoneIdx % ordered.length];
 
   // fit to container width (never collapse on 0-width measurement)
   useEffect(() => {
@@ -143,12 +148,14 @@ function AdFrame({ ladder }: { ladder: AdZone[] }) {
       if (d.ok) {
         doneRef.current = true;
         setReady(true);
+        recordZoneWin(active.key);
         beaconHealth(active.key, true, "frame");
       } else if (d.phase === 99) {
         // full ladder failed in this document → cache-busted remount (+rotation)
         if (doneRef.current) return;
         failsRef.current += 1;
         cyclesRef.current += 1;
+        recordZoneFail(active.key);
         beaconHealth(active.key, false, "frame");
         setReady(false);
         if (failsRef.current % 2 === 0) setZoneIdx((i) => i + 1); // rotate zone
@@ -257,19 +264,25 @@ export function SmartlinkButton({ className = "" }: { className?: string }) {
 }
 
 /**
- * The app's banner ad — v2.6: 100% baked-in (src/lib/ad-zones.ts), no manual
- * config. Renders in exactly 3 places (Home top / mid / bottom):
+ * The app's banner ad — v2.7: 100% baked-in zones (src/lib/ad-zones.ts) plus
+ * the owner's optional ONE-TIME zone upgrade (admin panel → Firestore
+ * cfg.at.bannerUpgrade) which leads every ladder while it fills. Renders in
+ * exactly 3 places (Home top / mid / bottom):
  *   variant "a" → compact 320×50 first (header stays slim)
  *   variant "b" → the main 468×60 first
+ * Rotation is learned per device: zones that never render sink to the end.
  * The master toggle (admin panel) is the only kill-switch left.
  */
 export default function AdsBanner({ variant = "b" }: { compact?: boolean; variant?: "a" | "b" }) {
   const { cfg, loaded } = useServerCfg();
+  const up = cfg.at?.bannerUpgrade;
+  const upgradeZone =
+    loaded && cfg.adsEnabled && up?.on ? extractAdsterra(up.code || "") : null;
   if (!loaded || !cfg.adsEnabled) return null;
   return (
     <div role="complementary" aria-label="Advertisement" className="rounded-xl border border-border bg-card/60 overflow-hidden">
       <div className="py-1 flex justify-center">
-        <AdFrame key={variant} ladder={ZONE_LADDER[variant]} />
+        <AdFrame key={variant} ladder={buildLadder(ZONE_BASE[variant], upgradeZone)} />
       </div>
     </div>
   );

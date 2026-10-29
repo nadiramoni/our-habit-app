@@ -44,6 +44,7 @@ import {
   nearbyStopAll,
 } from "@/lib/nearby";
 import { nativeShareText, nativeVibrate } from "@/lib/native";
+import AdsBanner from "@/components/AdsBanner";
 
 // ---------- v2.4: beautiful share format (owner round-6 #6) ----------
 // Title FIRST, a clear separator, then the body — plus a soft footer.
@@ -63,10 +64,14 @@ function formatNoteShare(title: string, body: string, footer: string): string {
 }
 
 function useShareNote() {
-  const { t } = useStore();
+  const { t, state } = useStore();
   const [busy, setBusy] = useState(false);
   const share = async (title: string, body: string) => {
-    const text = formatNoteShare(title, body, t("shareViaApp"));
+    // v2.8: the share footer carries the REGISTERED full name (owner: "ওর
+    // জিমেইলের নামটা থাকবে না") — settings.name is the registered name.
+    const myName = (state.settings.name || "").trim();
+    const footer = myName ? `— ${myName} · ${t("shareViaApp")}` : t("shareViaApp");
+    const text = formatNoteShare(title, body, footer);
     if (!text) return;
     setBusy(true);
     void nativeVibrate(20);
@@ -486,7 +491,9 @@ function SharedNotes() {
     );
   }
 
-  const myName = (me?.name || acc.name || "Me").split(" ")[0];
+  // v2.8: the REGISTERED name (settings.name) wins over the Firestore/Google
+  // account name — owner: "ওর জিমেইলের নামটা থাকবে না"
+  const myName = (state.settings.name || me?.name || acc.name || "Me").split(" ")[0];
 
   const add = () => {
     const v = text.trim();
@@ -694,6 +701,8 @@ export default function NotesTab() {
   return (
     <div>
       <h1 className="text-xl font-bold mb-3">📝 {t("notesTitle")}</h1>
+      {/* v2.8: ads on every page */}
+      <AdsBanner variant="a" />
       <Seg<SubTab>
         value={tab}
         onChange={setTab}
@@ -704,6 +713,8 @@ export default function NotesTab() {
         className="mb-4"
       />
       {tab === "personal" ? <PersonalNotes /> : <SharedNotes />}
+      {/* v2.8: ads on every page */}
+      <AdsBanner variant="b" />
     </div>
   );
 }

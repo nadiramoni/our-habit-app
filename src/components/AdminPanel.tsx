@@ -418,17 +418,32 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
         <Card className="mb-4">
           <SectionTitle title={`💰 ${t("adsSection")}`} sub={t("adsSub")} />
 
-          {/* v2.6: BANNERS ARE AUTO — the owner asked to CLOSE the manual
+          {/* v2.7: BANNERS ARE AUTO — the owner asked to CLOSE the manual
               banner config ("ম্যানুয়াল অ্যাডস টোটালি ক্লোজ করো, তুমি নিজে
               করতেছো"). His 3 banner zones are now BAKED into the app itself
               (src/lib/ad-zones.ts) and render in exactly 3 places on Home.
-              Nothing to paste, nothing to break. */}
+              v2.7 adds: learned rotation (dead zones sink automatically) +
+              ONE optional fresh-zone upgrade row + the Social Bar restore
+              guide (the working Social Bar code was wiped by the old save
+              bug — one paste brings the PROVEN format back). */}
           <div className="rounded-xl border border-primary/40 bg-primary/10 p-3 mb-3">
             <div className="text-sm font-bold text-primary mb-1">📐 ব্যানার অ্যাড — অটো চালু ✅</div>
             <p className="text-[11px] text-muted-foreground leading-relaxed">
-              হোম স্ক্রিনের <b>৩টি জায়গায়</b> ব্যানার অ্যাড অটো চলে — তোমার ৩টি Adsterra ব্যানার জোন অ্যাপের ভেতরে বেক করা। কোনো কোড পেস্ট করার দরকার নেই। একটি জোনে বিজ্ঞাপন না থাকলে অ্যাপ নিজেই অন্য জোনে চলে যায়। নিচের 🩺 Health-এ সবুজ দেখালেই বিজ্ঞাপন চলছে বুঝবে।
+              হোম স্ক্রিনের <b>৩টি জায়গায়</b> ব্যানার অ্যাড অটো চলে — তোমার Adsterra ব্যানার জোনগুলো অ্যাপের ভেতরে বেক করা, আর অ্যাপ প্রতিটা ফোনে <b>শিখে</b> নেয় কোন জোনে বিজ্ঞাপন আসে — যে জোন ফাঁকা, সেটা নিজে থেকেই বাদ পড়ে। নিচের 🩺 Health-এ সবুজ দেখালেই বিজ্ঞাপন চলছে বুঝবে।
             </p>
           </div>
+
+          {/* v2.7 URGENT: the Social Bar code was wiped by the old admin save
+              bug — this was the owner's ONLY format proven to fill. One paste
+              from GET CODE brings it back on every device. */}
+          {!draft.at.socialBar.code.trim() ? (
+            <div className="rounded-xl border border-amber-500/60 bg-amber-500/10 p-3 mb-3">
+              <div className="text-sm font-bold text-amber-400 mb-1">⚠️ জরুরি — Social Bar কোড একবার বসাও (২ মিনিট)</div>
+              <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                তোমার Adsterra ড্যাশবোর্ডে <b>Social Bar</b> জোনটার পাশে <b>GET CODE</b> চাপো → পুরো কোড কপি করো → নিচের <b>📊 Social Bar</b> ঘরে পেস্ট করো → <b>💾 Save</b>। এটাই সেই ফরম্যাট যেটা আগে তোমার ফোনে নিশ্চিতভাবে চলেছিল। একবার বসালেই সব ফোনে চলবে — আর কোনো কিছু করতে হবে না।
+              </p>
+            </div>
+          ) : null}
 
           <ToggleRow label={t("admMaster")} checked={draft.adsEnabled} onChange={(v) => setDraft({ ...draft, adsEnabled: v })} />
 
@@ -439,8 +454,14 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
             <div className="border-t border-border pt-3 mt-3">
               <div className="text-sm font-bold">🧱 {t("admAt")}</div>
               <div className="text-[11px] text-muted-foreground mb-2">
-                📐 Banner 320×50 / 468×60 / 728×90 — <b>অটো (অ্যাপে বেক করা)</b>, এখানে কিছু করার নেই। নিচের বাকি ফরম্যাটগুলোর কোড Adsterra ড্যাশবোর্ড থেকে GET CODE করে পেস্ট করো।
+                📐 Banner 320×50 / 468×60 / 728×90 — <b>অটো (অ্যাপে বেক করা)</b>। ড্যাশবোর্ডে নতুন banner জোন বানিয়ে থাকলে নিচের <b>⬆️ ব্যানার আপগ্রেড</b>-এ তার GET CODE একবার পেস্ট করো — সেটাই সবার আগে চলবে। বাকি ফরম্যাটগুলোর কোড GET CODE করে পেস্ট করো।
               </div>
+              <AtZoneRow
+                label={`⬆️ ব্যানার আপগ্রেড (একবারই লাগবে)`}
+                hint="নতুন/Active banner জোনের GET CODE → পেস্ট করো। খালি রাখলে অ্যাপে বেক করা জোনগুলোই চলে।"
+                zone={draft.at.bannerUpgrade || { on: false, code: "" }}
+                onChange={(z) => setAt({ bannerUpgrade: z })}
+              />
               <AtZoneRow label={`🧩 ${t("atNativeBanner")}`} hint={t("atNativeBannerHint")} zone={draft.at.nativeBanner} onChange={(z) => setAt({ nativeBanner: z })} />
               <AtZoneRow label={`📊 ${t("atSocialBar")}`} hint={t("atSocialBarHint")} zone={draft.at.socialBar} onChange={(z) => setAt({ socialBar: z })} />
               <AtZoneRow label={`⚠️ ${t("atPopunder")}`} hint={t("atPopunderHint")} zone={draft.at.popunder} onChange={(z) => setAt({ popunder: z })} />

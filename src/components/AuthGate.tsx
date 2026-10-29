@@ -22,6 +22,7 @@ import {
   fbGoogleSignIn,
   fbSendVerification,
   fbSignOut,
+  fbUpdateProfileName,
 } from "@/lib/cloud";
 
 const SKIP_KEY = "ourhabit_skipauth";
@@ -38,7 +39,7 @@ function GoogleG() {
 }
 
 export default function AuthGate({ children, forced = false }: { children: React.ReactNode; forced?: boolean }) {
-  const { state, setAccount, t, closeAuth } = useStore();
+  const { state, setAccount, updateSettings, t, closeAuth } = useStore();
   const { cfg } = useServerCfg();
   const acc = state.account;
   const [skipped, setSkipped] = useState(false);
@@ -109,9 +110,13 @@ export default function AuthGate({ children, forced = false }: { children: React
     if (res.ok) {
       if (!isLogin) {
         setInfo(t("mailSent"));
+        // v2.8: the REGISTERED full name is the app-wide name — mark it as
+        // user-set so the Gmail/account name NEVER overwrites it later.
+        updateSettings({ name: full, nameSet: true });
         // the auth listener may have fired before updateProfile landed — set the
         // real name immediately so the app shows it (store syncs settings.name)
-        if (res.uid) setAccount({ uid: res.uid, name: full, email: email.trim(), verified: false, provider: "password" });
+        const signed = res as { ok: boolean; error?: string; uid?: string };
+        if (signed.uid) setAccount({ uid: signed.uid, name: full, email: email.trim(), verified: false, provider: "password" });
       }
       setPass("");
     } else {
@@ -307,6 +312,106 @@ export default function AuthGate({ children, forced = false }: { children: React
             {t("skipNow")}
           </button>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+// ==================== v2.8: NAME CAPTURE (the registered full name) ====================
+// Owner: "যখন শেয়ার করে যায়, যে ফুল নাম (ফার্স্ট + লাস্ট নাম) দিয়ে রেজিস্টার
+// করে সেটাই থাকবে — ওর জিমেইলের নামটা থাকবে না"। After signing in (any
+// method), ONE friendly step asks for the first + last name. That name is
+// saved as the app-wide name (settings.name + nameSet) AND pushed to
+// Firebase (displayName + usersIndex) so friends and shared notes see the
+// REGISTERED name on every device — never the Gmail display name.
+export function NameCapture() {
+  const { state, updateSettings, setAccount, t } = useStore();
+  const acc = state.account;
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  // prefill from whatever name we already have (Google name split, etc.)
+  const [first, setFirst] = useState("");
+  const [last, setLast] = useState("");
+
+  useEffect(() => {
+    if (!acc) return;
+    if (state.settings.nameSet) return; // already registered — never ask again
+    // deferred (async) so the compiler never sees setState inside the effect
+    // body — prefill + open after the splash settles
+    const id = setTimeout(() => {
+      const cur = (state.settings.name || acc.name || "").trim();
+      const parts = cur.split(/\s+/).filter(Boolean);
+      setFirst(parts[0] || "");
+      setLast(parts.length > 1 ? parts.slice(1).join(" ") : "");
+      setOpen(true);
+    }, 900);
+    return () => clearTimeout(id);
+  }, [acc?.uid, state.settings.nameSet]);
+
+  if (!acc || !open || state.settings.nameSet) return null;
+
+  const save = async () => {
+    const full = `${first.trim()}${last.trim() ? ` ${last.trim()}` : ""}`;
+    if (!first.trim()) return;
+    setBusy(true);
+    updateSettings({ name: full, nameSet: true });
+    setAccount({ ...acc, name: full });
+    await fbUpdateProfileName(full); // Firebase displayName + usersIndex
+    setBusy(false);
+    setOpen(false);
+  };
+
+  const skip = () => {
+    // keep whatever name exists — but never nag again
+    updateSettings({ nameSet: true });
+    setOpen(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[85] bg-background/95 backdrop-blur-sm flex items-end sm:items-center justify-center">
+      <div className="w-full max-w-md bg-card border border-border rounded-t-3xl sm:rounded-3xl p-5 animate-slide-up shadow-2xl">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-12 h-12 rounded-2xl bg-primary/15 border border-primary/30 flex items-center justify-center text-2xl shrink-0">🤝</div>
+          <div>
+            <h3 className="text-base font-bold">{t("yourNameQ")}</h3>
+            <p className="text-[11px] text-muted-foreground leading-snug">{t("yourNameSub")}</p>
+          </div>
+        </div>
+        <div className="flex gap-2.5 mb-3">
+          <input
+            value={first}
+            onChange={(e) => setFirst(e.target.value)}
+            placeholder={t("firstName")}
+            autoComplete="given-name"
+            className="w-full bg-muted rounded-xl px-4 py-3 text-sm border border-border outline-none focus:ring-2 focus:ring-ring/50"
+          />
+          <input
+            value={last}
+            onChange={(e) => setLast(e.target.value)}
+            placeholder={t("lastName")}
+            autoComplete="family-name"
+            className="w-full bg-muted rounded-xl px-4 py-3 text-sm border border-border outline-none focus:ring-2 focus:ring-ring/50"
+          />
+        </div>
+        <p className="text-[10px] text-muted-foreground mb-3 leading-relaxed">{t("yourNameNote")}</p>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={busy || !first.trim()}
+            className="flex-1 rounded-2xl btn-hero text-primary-foreground font-bold text-sm py-3 min-h-[48px] disabled:opacity-50 active:scale-[0.98] transition-transform"
+          >
+            {busy ? "..." : t("saveBtn")}
+          </button>
+          <button
+            type="button"
+            onClick={skip}
+            className="rounded-2xl bg-secondary text-sm py-3 px-4 min-h-[48px]"
+          >
+            {t("later")}
+          </button>
+        </div>
       </div>
     </div>
   );

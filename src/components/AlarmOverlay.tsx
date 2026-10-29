@@ -1,85 +1,162 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
-import { startAlarmMusic, startMealMusic, startAdhan, stopAlarmMusic } from "@/lib/audio";
+import { startAlarmMusic, startMealMusic, startAzan, stopAlarmMusic } from "@/lib/audio";
+import { PRAYER_KEYS } from "@/lib/types";
 
 export interface ActiveAlarm {
   key: string;
   title: string;
   body: string;
   sound: boolean;
+  /** v2.8: the alarm's own "HH:MM" (from the exact-alarm engine) — shown as
+   *  the BIG clock in the azan view, like the reference (WeMuslim) app. */
+  time?: string;
+}
+
+/** HH:MM → 12h display like "11:40 AM" */
+function fmt12(hhmm: string): string {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || "");
+  if (!m) return hhmm || "";
+  let h = Number(m[1]);
+  const ap = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${h}:${m[2]} ${ap}`;
 }
 
 /**
- * Beautiful night-sky mosque illustration (pure SVG — crisp on every screen,
- * zero image assets). Dome + minarets + crescent + twinkling stars over a
- * deep gradient — the owner's round-6 #4: "আজানের স্ক্রিনে মসজিদভিত্তিক
- * সুন্দর ভিজ্যুয়াল দেখাবে"।
+ * v2.8 AZAN BACKGROUND — the reference app's look (owner's screenshot):
+ * a bright blue sky with soft clouds and sun glow over a white mosque dome
+ * with tall minarets (pure SVG — crisp on every screen, zero image files).
  */
-function MosqueArt() {
+function AzanSkyArt() {
   return (
-    <svg viewBox="0 0 320 210" className="w-full h-auto" role="img" aria-label="Mosque at night">
+    <svg viewBox="0 0 360 640" preserveAspectRatio="xMidYMid slice" className="absolute inset-0 w-full h-full" role="img" aria-label="Mosque dome under a blue sky">
       <defs>
-        <linearGradient id="oh-sky" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#0b2545" />
-          <stop offset="60%" stopColor="#134074" />
-          <stop offset="100%" stopColor="#1c5d63" />
+        <linearGradient id="az-sky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#63a8f0" />
+          <stop offset="45%" stopColor="#9cc9f5" />
+          <stop offset="78%" stopColor="#cfe8fb" />
+          <stop offset="100%" stopColor="#eaf6ff" />
         </linearGradient>
-        <linearGradient id="oh-dome" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#2ea36f" />
-          <stop offset="100%" stopColor="#0d5c40" />
-        </linearGradient>
-        <radialGradient id="oh-moon" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stopColor="#fff7d6" />
-          <stop offset="100%" stopColor="#ffe9a3" />
+        <radialGradient id="az-sun" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor="#fffbe8" />
+          <stop offset="100%" stopColor="#ffe9a3" stopOpacity="0" />
         </radialGradient>
+        <linearGradient id="az-dome" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#ffffff" />
+          <stop offset="100%" stopColor="#d8ecdc" />
+        </linearGradient>
+        <linearGradient id="az-hall" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#f2f7f3" />
+          <stop offset="100%" stopColor="#c9dfd0" />
+        </linearGradient>
       </defs>
-      <rect width="320" height="210" rx="24" fill="url(#oh-sky)" />
-      {/* stars */}
-      {[
-        [36, 34], [70, 22], [122, 40], [178, 24], [232, 38], [272, 20], [296, 52], [58, 58], [200, 58], [258, 66],
-      ].map(([x, y], i) => (
-        <circle key={i} cx={x} cy={y} r={i % 3 === 0 ? 2.2 : 1.4} fill="#fff" className="azan-star" style={{ animationDelay: `${i * 0.35}s` }} />
-      ))}
-      {/* crescent moon */}
-      <g transform="translate(258 46)">
-        <circle r="16" fill="url(#oh-moon)" />
-        <circle cx="7" cy="-4" r="14" fill="#0b2545" />
+      <rect width="360" height="640" fill="url(#az-sky)" />
+      {/* sun glow */}
+      <circle cx="296" cy="96" r="84" fill="url(#az-sun)" />
+      <circle cx="296" cy="96" r="22" fill="#fff7d6" />
+      {/* soft clouds */}
+      <g fill="#ffffff" opacity="0.85">
+        <ellipse cx="70" cy="110" rx="46" ry="14" />
+        <ellipse cx="104" cy="100" rx="30" ry="11" />
+        <ellipse cx="250" cy="180" rx="54" ry="15" />
+        <ellipse cx="286" cy="170" rx="32" ry="11" />
+        <ellipse cx="60" cy="260" rx="40" ry="12" opacity="0.7" />
+      </g>
+      {/* birds */}
+      <g stroke="#3f5f80" strokeWidth="2.4" fill="none" strokeLinecap="round" opacity="0.8">
+        <path d="M128 150 q8 -8 16 0 q8 -8 16 0" />
+        <path d="M180 128 q6 -6 12 0 q6 -6 12 0" />
       </g>
       {/* ground */}
-      <rect x="0" y="176" width="320" height="34" fill="#081f18" opacity="0.9" />
-      {/* side minarets */}
-      <g fill="url(#oh-dome)">
-        <rect x="58" y="92" width="10" height="86" rx="4" />
-        <circle cx="63" cy="88" r="8" />
-        <circle cx="63" cy="76" r="2.6" fill="#ffe9a3" />
-        <rect x="252" y="92" width="10" height="86" rx="4" />
-        <circle cx="257" cy="88" r="8" />
-        <circle cx="257" cy="76" r="2.6" fill="#ffe9a3" />
+      <rect x="0" y="520" width="360" height="120" fill="#bcd9c0" />
+      <rect x="0" y="520" width="360" height="14" fill="#a5ccab" />
+      {/* left minaret */}
+      <g>
+        <rect x="52" y="300" width="22" height="230" rx="8" fill="url(#az-hall)" />
+        <rect x="46" y="286" width="34" height="16" rx="6" fill="url(#az-hall)" />
+        <path d="M63 236 c11 0 17 9 18 22 h-36 c1 -13 7 -22 18 -22 z" fill="url(#az-dome)" />
+        <path d="M63 230 l2.6 7 h-5.2 z" fill="#d9b64e" />
+        <rect x="58" y="360" width="10" height="26" rx="5" fill="#7fa8c9" opacity="0.75" />
+        <rect x="58" y="430" width="10" height="26" rx="5" fill="#7fa8c9" opacity="0.75" />
+      </g>
+      {/* right minaret */}
+      <g>
+        <rect x="286" y="300" width="22" height="230" rx="8" fill="url(#az-hall)" />
+        <rect x="280" y="286" width="34" height="16" rx="6" fill="url(#az-hall)" />
+        <path d="M297 236 c11 0 17 9 18 22 h-36 c1 -13 7 -22 18 -22 z" fill="url(#az-dome)" />
+        <path d="M297 230 l2.6 7 h-5.2 z" fill="#d9b64e" />
+        <rect x="292" y="360" width="10" height="26" rx="5" fill="#7fa8c9" opacity="0.75" />
+        <rect x="292" y="430" width="10" height="26" rx="5" fill="#7fa8c9" opacity="0.75" />
       </g>
       {/* main hall */}
-      <rect x="86" y="126" width="148" height="52" rx="6" fill="#0d5c40" />
-      {/* door + windows */}
-      <path d="M150 178 v-26 a10 10 0 0 1 20 0 v26 z" fill="#081f18" />
-      <rect x="104" y="148" width="16" height="22" rx="8" fill="#081f18" />
-      <rect x="200" y="148" width="16" height="22" rx="8" fill="#081f18" />
-      {/* central dome */}
-      <path d="M160 66 c22 0 34 16 38 34 c-24 8 -52 8 -76 0 c4 -18 16 -34 38 -34 z" fill="url(#oh-dome)" />
-      <path d="M160 60 l3 8 h-6 z" fill="#ffe9a3" />
-      <circle cx="160" cy="58" r="3" fill="#ffe9a3" />
+      <rect x="86" y="430" width="188" height="100" rx="12" fill="url(#az-hall)" />
+      {/* arcade */}
+      <g fill="#9db8a6" opacity="0.65">
+        {[100, 140, 180, 220, 258].map((x) => (
+          <path key={x} d={`M${x} 470 v40 a12 12 0 0 0 24 0 v-40 z`} />
+        ))}
+      </g>
       {/* small domes */}
-      <path d="M104 116 c8 0 12 7 13 14 c-9 3 -17 3 -26 0 c1 -7 5 -14 13 -14 z" fill="url(#oh-dome)" />
-      <path d="M216 116 c8 0 12 7 13 14 c-9 3 -17 3 -26 0 c1 -7 5 -14 13 -14 z" fill="url(#oh-dome)" />
+      <path d="M116 404 c14 0 21 12 22 26 h-44 c1 -14 8 -26 22 -26 z" fill="url(#az-dome)" />
+      <path d="M244 404 c14 0 21 12 22 26 h-44 c1 -14 8 -26 22 -26 z" fill="url(#az-dome)" />
+      {/* the GREAT dome (Prophet's Mosque style) */}
+      <path d="M180 268 c34 4 58 30 62 68 h-124 c4 -38 28 -64 62 -68 z" fill="url(#az-dome)" />
+      <ellipse cx="180" cy="336" rx="62" ry="9" fill="#e8f2ea" />
+      <path d="M180 258 l4 10 h-8 z" fill="#d9b64e" />
+      <circle cx="180" cy="254" r="3.4" fill="#d9b64e" />
+      {/* crescent finial */}
+      <g transform="translate(180 240)">
+        <path d="M5 0 a5 5 0 1 1 -4 -8 a6.5 6.5 0 1 0 4 8 z" fill="#d9b64e" />
+      </g>
+      {/* green accent band */}
+      <rect x="86" y="424" width="188" height="8" rx="4" fill="#2ea36f" opacity="0.8" />
     </svg>
   );
 }
 
-/** Full-screen alarm overlay — meals, Fajr, adhan. Azan gets the mosque view. */
+/** Live countdown to the next prayer — the reference app's ticking timer. */
+function useNextPrayerCountdown() {
+  const { state } = useStore();
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(iv);
+  }, []);
+  const prayerTimes = state.settings.prayerTimes;
+  return useMemo(() => {
+    if (!prayerTimes) return null;
+    const now = new Date();
+    const cur = now.getHours() * 60 + now.getMinutes();
+    let bestKey: (typeof PRAYER_KEYS)[number] | null = null;
+    let bestMin = Infinity;
+    for (const k of PRAYER_KEYS) {
+      const m = /^(\d{1,2}):(\d{2})$/.exec(prayerTimes[k] || "");
+      if (!m) continue;
+      const t = Number(m[1]) * 60 + Number(m[2]);
+      if (t > cur && t < bestMin) {
+        bestMin = t;
+        bestKey = k;
+      }
+    }
+    if (!bestKey) return null; // all passed today — Fajr is tomorrow
+    const left = bestMin * 60 - (cur * 60 + now.getSeconds());
+    const h = String(Math.floor(left / 3600)).padStart(2, "0");
+    const m = String(Math.floor((left % 3600) / 60)).padStart(2, "0");
+    const s = String(left % 60).padStart(2, "0");
+    return { key: bestKey, clock: `${h} : ${m} : ${s}` };
+  }, [prayerTimes, tick]);
+}
+
+/** Full-screen alarm overlay — meals, Fajr, adhan. v2.8: azan gets the
+ *  reference-app full-screen view (mosque dome + glass clock + countdown). */
 export default function AlarmOverlay({ alarm, onDismiss }: { alarm: ActiveAlarm | null; onDismiss: (snooze: boolean) => void }) {
-  const { t } = useStore();
+  const { t, state } = useStore();
   const stopRef = useRef<(() => void) | null>(null);
   const dismissRef = useRef(onDismiss);
+  const countdown = useNextPrayerCountdown();
   useEffect(() => {
     dismissRef.current = onDismiss;
   }, [onDismiss]);
@@ -87,14 +164,13 @@ export default function AlarmOverlay({ alarm, onDismiss }: { alarm: ActiveAlarm 
   useEffect(() => {
     if (alarm?.sound) {
       try {
-        // v2.6: REAL owner files — meals play a RANDOM one of the 2 music
-        // tracks (র্যান্ডম মিউজিক, একটার পর একটা), azan plays the real adhan
-        // recording; everything else keeps the synthesized music box.
+        // v2.8: azan plays the CHOSEN recitation (picker: আজানের ধ্বনি),
+        // meals play a RANDOM one of the 2 music tracks, others the music box.
         const key = alarm.key || "";
         const isMeal = key.startsWith("meal_") && !key.startsWith("mealpre_");
         const isAzan = key === "fajr" || key.startsWith("adhan_");
         if (isMeal) stopRef.current = startMealMusic();
-        else if (isAzan) stopRef.current = startAdhan();
+        else if (isAzan) stopRef.current = startAzan(state.settings.azanSound || "adhan.mp3");
         else stopRef.current = startAlarmMusic();
       } catch {
         /* audio blocked until user interacts */
@@ -143,37 +219,84 @@ export default function AlarmOverlay({ alarm, onDismiss }: { alarm: ActiveAlarm 
     onDismiss(snooze);
   };
 
-  // v2.4 AZAN VIEW: mosque illustration + "আজানের সময় হয়েছে" + prayer name
+  // ============ v2.8 AZAN VIEW — the reference app's full-screen design ============
+  // bright sky + mosque dome art fills the screen; a glassmorphism circle
+  // holds the prayer name + BIG time; the next prayer ticks live below it.
   if (isAzan) {
-    const prayerName = alarm.key === "fajr" ? t("fajrAlarm") : alarm.title.split("—").pop()?.trim() || "";
+    const prayerKey = alarm.key === "fajr" ? "fajr" : (alarm.key.split("_")[1] as (typeof PRAYER_KEYS)[number]);
+    const prayerName = prayerKey ? t(`prayer_${prayerKey}`) : alarm.title.split("—").pop()?.trim() || t("fajrAlarm");
+    const bigTime = alarm.time ? fmt12(alarm.time) : "";
     return (
-      <div className="fixed inset-0 z-[100] overflow-y-auto" style={{ background: "linear-gradient(180deg,#081a33 0%,#0d2b4d 45%,#123c4f 100%)" }}>
-        <div className="min-h-full flex flex-col items-center justify-center gap-5 p-6 text-center">
-          <div className="relative w-full max-w-[340px]">
-            <div className="absolute inset-0 azan-glow rounded-[28px]" style={{ background: "radial-gradient(circle at 50% 42%, rgba(46,163,111,0.35), transparent 65%)" }} />
-            <div className="relative rounded-[28px] overflow-hidden border border-primary/30 shadow-2xl">
-              <MosqueArt />
+      <div className="fixed inset-0 z-[100] overflow-hidden select-none" style={{ background: "#7db8ef" }}>
+        <AzanSkyArt />
+        {/* dark scrim for legibility */}
+        <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(8,30,60,0.18) 0%, rgba(8,30,60,0) 40%, rgba(6,40,28,0.42) 100%)" }} />
+
+        {/* close (top-right, like the reference) */}
+        <button
+          type="button"
+          aria-label={t("dismiss")}
+          onClick={() => dismiss(false)}
+          className="absolute top-4 right-4 w-11 h-11 rounded-full bg-black/25 text-white text-lg font-bold flex items-center justify-center backdrop-blur border border-white/25 active:scale-95 transition-transform"
+        >
+          ✕
+        </button>
+
+        <div className="relative h-full flex flex-col items-center justify-center gap-6 px-6 text-center">
+          {/* glass clock circle */}
+          <div className="relative flex items-center justify-center">
+            <div
+              className="azan-glass w-[252px] h-[252px] rounded-full flex flex-col items-center justify-center border-white/40 border"
+              style={{
+                background: "rgba(10, 28, 48, 0.42)",
+                backdropFilter: "blur(10px)",
+                WebkitBackdropFilter: "blur(10px)",
+                boxShadow: "0 18px 60px rgba(6, 30, 60, 0.45)",
+              }}
+            >
+              <div className="text-[11px] font-bold uppercase tracking-[0.3em] text-emerald-200 mb-1.5">
+                {isFajr ? `🌅 ${prayerName}` : `🕌 ${prayerName}`}
+              </div>
+              <div className="text-white leading-none">
+                {bigTime ? (
+                  <span className="text-[54px] font-extrabold tracking-tight drop-shadow-lg">{bigTime.split(" ")[0]}</span>
+                ) : null}
+                {bigTime.includes(" ") ? (
+                  <span className="text-lg font-bold ml-1.5 align-top opacity-90">{bigTime.split(" ")[1]}</span>
+                ) : null}
+              </div>
+              <div className="mt-2.5 text-[12px] font-semibold text-emerald-100/95 animate-pulse tracking-wide">
+                📢 {t("azanOverlayTitle")}
+              </div>
             </div>
           </div>
+
           <div className="text-white">
-            <div className="text-[11px] font-bold uppercase tracking-[0.25em] text-emerald-300 mb-2">🕌 {t("azanOverlayTitle")}</div>
-            <h2 className="text-3xl font-extrabold leading-tight drop-shadow">{prayerName}</h2>
-            <p className="text-sm text-emerald-100/90 mt-2 leading-relaxed max-w-[300px] mx-auto">
+            <p className="text-[15px] font-semibold leading-relaxed max-w-[320px] mx-auto drop-shadow">
               {isFajr ? t("azanOverlayFajr") : t("azanOverlaySub")}
             </p>
+            {countdown ? (
+              <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-black/30 border border-white/25 px-4 py-2 backdrop-blur">
+                <span className="text-[11px] font-semibold text-emerald-200 uppercase tracking-wider">{t("nextPrayerLabel")}</span>
+                <span className="text-[13px] font-extrabold text-white">{t(`prayer_${countdown.key}`)}</span>
+                <span className="text-[13px] font-extrabold text-emerald-300 font-mono tracking-wider">{countdown.clock}</span>
+              </div>
+            ) : null}
           </div>
-          <div className="flex flex-col gap-2 w-full max-w-xs">
+
+          <div className="flex flex-col gap-2.5 w-full max-w-xs mt-1">
             <button
               type="button"
               onClick={() => dismiss(false)}
-              className="w-full rounded-2xl bg-primary text-primary-foreground text-base font-bold py-3.5 min-h-[52px] shadow-lg"
+              className="w-full rounded-2xl bg-emerald-600 text-white text-base font-bold py-3.5 min-h-[52px] shadow-lg shadow-emerald-900/40 active:scale-[0.98] transition-transform"
+              style={{ background: "linear-gradient(135deg,#12b76a,#0e9355)" }}
             >
               ✓ {t("dismiss")}
             </button>
             <button
               type="button"
               onClick={() => dismiss(true)}
-              className="w-full rounded-2xl bg-white/10 text-white text-sm font-medium py-3 min-h-[48px] border border-white/20"
+              className="w-full rounded-2xl bg-white/15 text-white text-sm font-medium py-3 min-h-[48px] border border-white/25 backdrop-blur active:scale-[0.98] transition-transform"
             >
               💤 {t("snooze")}
             </button>
@@ -195,6 +318,7 @@ export default function AlarmOverlay({ alarm, onDismiss }: { alarm: ActiveAlarm 
       <div>
         <div className="text-xs font-semibold text-primary uppercase tracking-widest mb-1">{t("alarmRang")}</div>
         <h2 className="text-2xl font-extrabold">{alarm.title}</h2>
+        {alarm.time ? <div className="text-3xl font-extrabold text-primary mt-1">{fmt12(alarm.time)}</div> : null}
         <p className="text-sm text-muted-foreground mt-1">{alarm.body}</p>
       </div>
       <div className="flex flex-col gap-2 w-full max-w-xs">

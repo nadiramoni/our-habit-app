@@ -77,10 +77,16 @@ export interface AppSettings {
   reelsLimitMin: number; // daily Reels limit — crossing it fires a tracking notification (0 = off)
   prayerTimes: Record<PrayerKey, string> | null;
   prayerTimesDate: string | null;
-  location: { lat: number; lng: number; label: string } | null;
+  location: { lat: number; lng: number; label: string; tz?: string } | null;
   // v2.5: নামাজের রিমাইন্ডার অটো সেট — once true, adhan alarm times ALWAYS
   // follow the location's prayer times (on/off states stay user-controlled)
   adhanAutoSet?: boolean;
+  // v2.8: the chosen azan recitation (see AZAN_SOUNDS) — default "adhan.mp3"
+  azanSound?: string;
+  // v2.8: the name the user REGISTERED with (first + last). This is the
+  // single source of truth for every name display + share — the Google/Gmail
+  // account name never overwrites it (owner: "ওর জিমেইলের নামটা থাকবে না")
+  nameSet?: boolean;
 }
 
 // ---------- Server config (secret admin panel) ----------
@@ -114,6 +120,7 @@ export interface AtCfg {
   socialBar: AtZone; // floating bar — highest CPM on mobile
   popunder: AtZone; // DEFAULT OFF (owner's choice, one toggle away)
   smartlink: AtZone; // direct link → "support developer" button
+  bannerUpgrade?: AtZone; // v2.7: ONE fresh banner GET CODE — leads every baked ladder
 }
 
 export interface FirebaseCfg {
@@ -183,6 +190,9 @@ export function mergeServerCfg(saved: Partial<ServerCfg> | null | undefined): Se
       socialBar: { ...at.socialBar, ...(saved.at?.socialBar || {}) },
       popunder: { ...at.popunder, ...(saved.at?.popunder || {}) },
       smartlink: { ...at.smartlink, ...(saved.at?.smartlink || {}) },
+      ...(saved.at?.bannerUpgrade
+        ? { bannerUpgrade: { on: true, code: "", ...(saved.at.bannerUpgrade || {}) } }
+        : {}),
     },
     firebase: { ...base.firebase, ...(saved.firebase || {}) },
   };
@@ -390,6 +400,24 @@ const pad = (n: number) => String(n).padStart(2, "0");
 export function dateStr(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
+
+/** v2.8: epoch-ms timestamp of "HH:MM" on a given date string (local time). */
+export function dateAtHM(date: string, hhmm: string): number {
+  const [y, m, d] = date.split("-").map(Number);
+  const [h, min] = hhmm.split(":").map(Number);
+  return new Date(y, (m || 1) - 1, d || 1, h || 0, min || 0, 0, 0).getTime();
+}
+
+/** v2.8: the 5 bundled azan recitations (res/raw + public/) — the in-app
+ * picker (আজানের ধ্বনি) writes one of these file keys into settings.azanSound.
+ * adhan.mp3 = the owner's own recording (আজান ১, the default). */
+export const AZAN_SOUNDS: { file: string; labelBn: string; labelEn: string }[] = [
+  { file: "adhan.mp3", labelBn: "আজান ১ (আমার রেকর্ডিং)", labelEn: "Azan 1 (mine)" },
+  { file: "azan2.mp3", labelBn: "আজান ২", labelEn: "Azan 2" },
+  { file: "azan3.mp3", labelBn: "আজান ৩", labelEn: "Azan 3" },
+  { file: "azan4.mp3", labelBn: "আজান ৪", labelEn: "Azan 4" },
+  { file: "azan5.mp3", labelBn: "আজান ৫", labelEn: "Azan 5" },
+];
 
 export function todayStr(): string {
   return dateStr(new Date());

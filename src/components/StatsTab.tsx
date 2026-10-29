@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { Bar, Card, Ring, SectionTitle } from "@/components/ui-bits";
+import AdsBanner from "@/components/AdsBanner";
 import { addDays, getLog } from "@/lib/types";
 import {
   BADGES,
@@ -406,6 +407,9 @@ export default function StatsTab() {
   return (
     <div>
       <h1 className="text-xl font-bold mb-3">📊 {t("nav_stats")}</h1>
+      {/* v2.8: ads on EVERY page (owner: "প্রত্যেকটা পেজে যেখানে যেখানে অ্যাড
+          বসানো যায় ঐখানে অ্যাডস বসাই দিবা") */}
+      <AdsBanner variant="a" />
       <LevelCard />
       <TodayRing />
       <WeeklyBars />
@@ -413,7 +417,7 @@ export default function StatsTab() {
       <Badges />
       <HabitProgress />
       <CalendarCard />
-      {/* v2.6: banners live ONLY on Home (owner: exactly 3 places) */}
+      <AdsBanner variant="b" />
     </div>
   );
 }

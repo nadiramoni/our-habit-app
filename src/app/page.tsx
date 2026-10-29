@@ -8,7 +8,7 @@ import NotesTab from "@/components/NotesTab";
 import StatsTab from "@/components/StatsTab";
 import FriendsTab from "@/components/FriendsTab";
 import SettingsTab from "@/components/SettingsTab";
-import AuthGate from "@/components/AuthGate";
+import AuthGate, { NameCapture } from "@/components/AuthGate";
 import AlarmOverlay, { ActiveAlarm } from "@/components/AlarmOverlay";
 import AdminPanel from "@/components/AdminPanel";
 import PermissionSetupFlow, { PERM_FLOW_KEY } from "@/components/PermissionSetupFlow";
@@ -18,8 +18,8 @@ import { getLog, todayStr } from "@/lib/types";
 import { pushDay, ensureProfile, DaySummary } from "@/lib/cloud";
 import { APP_VERSION } from "@/lib/version";
 import { warmAudio, playChime } from "@/lib/audio";
-import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm, AlarmSyncResult } from "@/lib/native";
-import { waterAlarmTimes, shiftTime, randomMealMusic, PRAYER_KEYS } from "@/lib/types";
+import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm, AlarmSyncResult, nativeScheduleExactAlarms, nativeCancelExactAlarms, nativeExactPending, nativeConsumeAlarmLaunch, ExactAlarmSpec } from "@/lib/native";
+import { waterAlarmTimes, shiftTime, randomMealMusic, PRAYER_KEYS, dateAtHM, addDays } from "@/lib/types";
 
 type Tab = "home" | "notes" | "stats" | "friends" | "settings";
 
@@ -299,6 +299,7 @@ function Shell() {
         state.settings.hourlyWater,
         state.settings.habitsAlarm,
         state.settings.mealPreAlert,
+        state.settings.azanSound, // v2.8: azan recitation changes the alarm sound
       ])
     : "";
 
@@ -345,24 +346,56 @@ function Shell() {
   useEffect(() => {
     if (!ready || !alarmSig || !isNative()) return;
     const s = stateRef.current;
-    const list: NativeAlarm[] = [];
+    const now = Date.now();
+    const azanSound = s.settings.azanSound || "adhan.mp3";
+
+    // ---------- v2.8 EXACT ALARMS (azan / Fajr / meals / sleep) ----------
+    // The owner's #1 complaint: "আজান টাইমের পরে দেয়" — the LocalNotifications
+    // plugin's alarms get deferred by aggressive OEM battery-killers. These
+    // now go through OUR ExactAlarmPlugin: AlarmManager.setAlarmClock() (the
+    // alarm-clock API OEMs never delay) + a full-screen-intent notification
+    // that LAUNCHES the azan view when the screen is off/locked. Armed for
+    // TODAY (remaining) + ALL of TOMORROW, re-synced on every open/resume,
+    // and re-armed by ExactBootReceiver after a reboot.
+    const exact: ExactAlarmSpec[] = [];
+    const days = [todayStr(), addDays(todayStr(), 1)];
+    const pushExact = (key: string, time: string, title: string, body: string, sound: string) => {
+      if (!/^\d{1,2}:\d{2}$/.test(time)) return;
+      for (const d of days) {
+        const at = dateAtHM(d, time);
+        if (at > now + 30000) exact.push({ id: `${key}@${d}`, at, key, time, title, body, sound });
+      }
+    };
     if (s.settings.fajrAlarm?.on)
-      list.push({ id: "fajr", time: s.settings.fajrAlarm.time, title: `🕌 ${t("fajrAlarm")}`, body: t("fajrAlarmMsg"), sound: "adhan.mp3" });
+      pushExact("fajr", s.settings.fajrAlarm.time, `🕌 ${t("fajrAlarm")}`, t("fajrAlarmMsg"), azanSound);
     (["fajr", "dhuhr", "asr", "maghrib", "isha"] as const).forEach((pk) => {
       const c = s.settings.adhanAlerts?.[pk];
-      if (c?.on) list.push({ id: `adhan_${pk}`, time: c.time, title: `🕌 ${t("adhanAlerts")} — ${t(`prayer_${pk}`)}`, body: t("adhanMsg"), sound: "adhan.mp3" });
+      if (c?.on)
+        pushExact(
+          `adhan_${pk}`,
+          c.time,
+          `🕌 ${t("adhanAlerts")} — ${t(`prayer_${pk}`)}`,
+          t("adhanMsg"),
+          azanSound
+        );
     });
     (["breakfast", "lunch", "dinner"] as const).forEach((mk) => {
       const c = s.settings.mealAlarms?.[mk];
       if (c?.on) {
         // v2.5: RANDOM music — the owner's two tracks alternate (একটার পর একটা).
         // Re-synced on every app open / settings change → real variety daily.
-        list.push({ id: `meal_${mk}`, time: c.time, title: `🍽 ${t(`meal_${mk}`)}`, body: t("mealAlarmMsg"), sound: randomMealMusic() });
+        pushExact(`meal_${mk}`, c.time, `🍽 ${t(`meal_${mk}`)}`, t("mealAlarmMsg"), randomMealMusic());
         // v2.4: 15-min EARLY heads-up (owner: নির্ধারিত সময়ের আগেই জানাবে)
         if (s.settings.mealPreAlert !== false)
-          list.push({ id: `mealpre_${mk}`, time: shiftTime(c.time, -15), title: `🍽 ${t(`meal_${mk}`)}`, body: t("mealPreMsg"), sound: "alarm.wav" });
+          pushExact(`mealpre_${mk}`, shiftTime(c.time, -15), `🍽 ${t(`meal_${mk}`)}`, t("mealPreMsg"), "alarm.wav");
       }
     });
+    if (s.settings.sleepAlarm?.on)
+      pushExact("sleep", s.settings.sleepAlarm.time, `😴 ${t("sleep")}`, t("sleepAlarmMsg"), "alarm.wav");
+
+    // ---------- REGULAR alarms (water Done/Snooze buttons / nudges) stay
+    // on LocalNotifications (recurring + action buttons work there) ----------
+    const list: NativeAlarm[] = [];
     // v2.4 WATER ALARM — interval-based, EVERY DAY, with ✓ Drink / 💤 Later
     // buttons (owner showed the My Habito reference). Recurring exact alarms:
     // they ring even when the app is closed.
@@ -379,32 +412,76 @@ function Shell() {
     if (s.settings.ayatNotif?.on)
       list.push({ id: "ayat", time: s.settings.ayatNotif.time, title: t("ayatNotifTitle"), body: t("dailyReminder") });
     if (s.settings.checkinTime) list.push({ id: "checkin", time: s.settings.checkinTime, title: `🌙 ${t("appName")}`, body: t("checkinMsg") });
-    if (s.settings.sleepAlarm?.on) list.push({ id: "sleep", time: s.settings.sleepAlarm.time, title: `😴 ${t("sleep")}`, body: t("sleepAlarmMsg") });
     // v2.4: daily Our Habit Reminder (owner: প্রতিদিন একটা করে অ্যালার্ট)
     if (s.settings.habitsAlarm?.on) {
       list.push({ id: "habits", time: s.settings.habitsAlarm.time, title: `🕌 ${t("appName")}`, body: t("habitsAlarmMsg") });
-      // v2.5 APP-OPEN NUDGES (owner round-7: বাজার আগে মাঝে মাঝে অ্যাপে ঢুকার
-      // রিমাইন্ডার — "কমপ্লিট করেছেন কিনা") — real notifications even when
-      // the app is closed.
+      // v2.5 APP-OPEN NUDGES — real notifications even when the app is closed.
       list.push({ id: "nudge_morning", time: "10:00", title: `👋 ${t("appName")}`, body: t("nudgeBody") });
       list.push({ id: "nudge_afternoon", time: "16:00", title: `👋 ${t("appName")}`, body: t("nudgeBody") });
     }
-    const anyOn = list.length > 0;
-    if (list.length) {
-      void nativeScheduleAlarms(list).then((r) => publishAlarmStatus(r, anyOn));
-    } else {
-      // everything off — clear the OS list and publish the calm state
-      void (async () => {
+
+    const anyOn = exact.length > 0 || list.length > 0;
+    void (async () => {
+      // the exact engine FIRST — it is the one that MUST ring on time
+      if (exact.length) await nativeScheduleExactAlarms(exact);
+      else await nativeCancelExactAlarms();
+      // then the regular recurring ones (keep their Done/Snooze buttons)
+      let localResult: AlarmSyncResult | null = null;
+      if (list.length) {
+        localResult = await nativeScheduleAlarms(list);
+      } else {
         try {
           const { LocalNotifications } = await import("@capacitor/local-notifications");
           await LocalNotifications.cancelAll();
         } catch {
           /* ignore */
         }
-      })();
-      publishAlarmStatus({ ok: true, expected: 0, pending: 0, permDenied: false, nextAt: "" }, false);
-    }
+      }
+      // publish the COMBINED OS-verified truth for the UI chips
+      const ex = await nativeExactPending();
+      let pend = 0;
+      try {
+        const { LocalNotifications } = await import("@capacitor/local-notifications");
+        const res = await LocalNotifications.getPending();
+        pend = (res?.notifications || []).length;
+      } catch {
+        /* ignore */
+      }
+      publishAlarmStatus(
+        {
+          ok: true,
+          expected: exact.length + list.length,
+          pending: ex.count + pend,
+          permDenied: Boolean(localResult?.permDenied),
+          nextAt: ex.nextAt ? new Date(ex.nextAt).toISOString() : localResult?.nextAt || "",
+        },
+        anyOn
+      );
+    })();
   }, [ready, alarmSig, t, resumeTick]);
+
+  // ---------- v2.8: the alarm that LAUNCHED the app (full-screen azan) ----------
+  // When the exact alarm fires with the screen off/locked, Android launches
+  // the app directly (full-screen intent). On open/resume we consume the
+  // payload → the reference-style azan view + the real adhan audio plays.
+  useEffect(() => {
+    if (!ready || !isNative()) return;
+    void (async () => {
+      const payload = await nativeConsumeAlarmLaunch();
+      if (!payload) return;
+      setAlarm((cur) =>
+        cur
+          ? cur
+          : {
+              key: payload.key,
+              title: payload.title,
+              body: payload.body,
+              sound: true,
+              time: payload.time,
+            }
+      );
+    })();
+  }, [ready, resumeTick]);
 
   // v2.4: notification ACTION buttons (water "✓ Drink" / "💤 Later") —
   // tapping Drink logs a glass instantly; Later snoozes 15 minutes.
@@ -479,31 +556,52 @@ function Shell() {
     })();
   }, [ready, today, updateSettings]);
 
-  // v2.4 FIRST-OPEN LOCATION (owner round-6 #4: অ্যাপ প্রথমবার খুললেই
-  // লোকেশন পারমিশন নিয়ে নামাজের সময় স্বয়ংক্রিয়ভাবে নির্ধারণ). Runs once
-  // per device in the APK; on refusal the Dhaka fallback stays.
+  // ---------- v2.8 WORLDWIDE LOCATION + AUTO TIMEZONE ----------
+  // (owner: "USA, সুইডি, সিঙ্গাপুর, বাংলাদেশ, ইন্ডিয়া — যে কোনো দেশ থেকে
+  // সবাই যাতে ব্যবহার করতে পারে; টাইমজোন সব অটো ডিটেক্ট")।
+  //  • no location yet → try GPS; denied/unavailable → IP geolocation
+  //  • device timezone CHANGED (user travelled abroad) → re-detect + refresh
+  //    prayer times so they follow the new country automatically
+  //  • throttled to once per 6h so it never spams
   useEffect(() => {
-    if (!ready || !isNative()) return;
+    if (!ready) return;
     const s = stateRef.current;
-    if (s.settings.location) return;
+    let deviceTz = "";
     try {
-      if (localStorage.getItem("ourhabit_locasked") === "1") return;
+      deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    } catch {
+      deviceTz = "";
+    }
+    const storedTz = s.settings.location?.tz || "";
+    const noLoc = !s.settings.location;
+    const tzChanged = Boolean(storedTz) && Boolean(deviceTz) && storedTz !== deviceTz;
+    if (!noLoc && !tzChanged) return;
+    // throttle (unless we have NO location at all)
+    try {
+      const last = Number(localStorage.getItem("ourhabit_loctry") || 0);
+      if (!noLoc && Date.now() - last < 6 * 3600 * 1000) return;
+      localStorage.setItem("ourhabit_loctry", String(Date.now()));
     } catch {
       /* ignore */
     }
     const id = setTimeout(async () => {
       try {
-        localStorage.setItem("ourhabit_locasked", "1");
-      } catch {
-        /* ignore */
-      }
-      const pos = await getCurrentLocation();
-      if (!pos) return; // denied / no GPS — Dhaka default remains
-      try {
-        const { fetchPrayerTimes } = await import("@/lib/logic");
+        const { fetchPrayerTimes, fetchIpLocation } = await import("@/lib/logic");
+        // 1) GPS
+        let pos: { lat: number; lng: number } | null = await getCurrentLocation();
+        let label = "My location";
+        // 2) IP fallback — works even with GPS denied, anywhere on earth
+        if (!pos) {
+          const ip = await fetchIpLocation();
+          if (ip) {
+            pos = { lat: ip.lat, lng: ip.lng };
+            label = ip.label;
+          }
+        }
+        if (!pos) return; // offline — retried next open
         const times = await fetchPrayerTimes(pos.lat, pos.lng);
         updateSettings({
-          location: { lat: pos.lat, lng: pos.lng, label: "My location" },
+          location: { lat: pos.lat, lng: pos.lng, label, tz: deviceTz },
           ...(times ? { prayerTimes: times, prayerTimesDate: todayStr() } : {}),
         });
       } catch {
@@ -511,7 +609,7 @@ function Shell() {
       }
     }, 3000); // let the permission flow + splash finish first
     return () => clearTimeout(id);
-  }, [ready]);
+  }, [ready, resumeTick, updateSettings]);
 
   // ensure the Firebase profile (invite code) exists once per signed-in user
   useEffect(() => {
@@ -523,7 +621,9 @@ function Shell() {
       try {
         const p = await ensureProfile({
           uid: acc.uid,
-          name: acc.name,
+          // v2.8: the REGISTERED name (settings.name) wins over the Google
+          // account name — owner: "ওর জিমেইলের নামটা থাকবে না"
+          name: stateRef.current.settings.name || acc.name,
           email: acc.email,
           emailVerified: acc.verified,
           provider: acc.provider,
@@ -608,6 +708,7 @@ function Shell() {
         </div>
       </AuthGate>
       <PermFlowHost />
+      <NameCapture />
     </>
   );
 }

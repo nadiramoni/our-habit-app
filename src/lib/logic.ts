@@ -327,6 +327,11 @@ export function reminderOfTheDay(date: string) {
 }
 
 // ---------- Prayer times (Aladhan free API) ----------
+// v2.8: worldwide-ready. Aladhan derives the timezone from the COORDINATES
+// (a user in Riyadh gets Riyadh-local times, in Stockholm Stockholm-local) —
+// so prayer times are ALWAYS correct for the user's actual location, wherever
+// on earth they are. The only wrong input would be a wrong location — which
+// fetchIpLocation below now covers when GPS is denied.
 export async function fetchPrayerTimes(lat: number, lng: number): Promise<Record<PrayerKey, string> | null> {
   try {
     const res = await fetch(
@@ -348,4 +353,53 @@ export async function fetchPrayerTimes(lat: number, lng: number): Promise<Record
   } catch {
     return null;
   }
+}
+
+/**
+ * v2.8: IP-based location fallback (owner: "সুইডি, সিঙ্গাপুর, USA, ইন্ডিয়া —
+ * সব দেশ থেকে যাতে ব্যবহার করা যায়")। When GPS is denied (or the phone has
+ * no fix), a free IP-geolocation API still finds the user's city so the
+ * prayer times follow the REAL location — not the old Dhaka default.
+ * Live-verified: ipwho.is serves CORS `*` (works from the WebView);
+ * ipapi.co sits behind a Cloudflare challenge when an Origin header is
+ * present → backup only.
+ */
+export async function fetchIpLocation(): Promise<{ lat: number; lng: number; label: string } | null> {
+  const timeout = (ms: number) => {
+    try {
+      const c = typeof AbortSignal !== "undefined" ? AbortSignal.timeout(ms) : undefined;
+      return c || undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  // 1) ipwho.is — CORS open, no key, generous free tier
+  try {
+    const res = await fetch("https://ipwho.is/", { signal: timeout(8000) });
+    const j = await res.json();
+    const lat = Number(j?.latitude);
+    const lng = Number(j?.longitude);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)) {
+      const city = String(j?.city || "").trim();
+      const country = String(j?.country || "").trim();
+      return { lat, lng, label: [city, country].filter(Boolean).join(", ") || "My location" };
+    }
+  } catch {
+    /* try the backup */
+  }
+  // 2) ipapi.co backup (may be Cloudflare-challenged from webviews)
+  try {
+    const res = await fetch("https://ipapi.co/json/", { signal: timeout(8000) });
+    const j = await res.json();
+    const lat = Number(j?.latitude);
+    const lng = Number(j?.longitude);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)) {
+      const city = String(j?.city || "").trim();
+      const country = String(j?.country_name || "").trim();
+      return { lat, lng, label: [city, country].filter(Boolean).join(", ") || "My location" };
+    }
+  } catch {
+    /* offline — GPS retry will happen next open */
+  }
+  return null;
 }

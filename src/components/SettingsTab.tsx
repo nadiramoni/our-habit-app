@@ -11,10 +11,11 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { useServerCfg } from "@/lib/cfg";
 import { Card, SectionTitle, Seg, ToggleRow } from "@/components/ui-bits";
+import AdsBanner from "@/components/AdsBanner";
 import { AppState, Lang } from "@/lib/types";
 import { APP_VERSION } from "@/lib/version";
 import { SmartlinkButton } from "@/components/AdsBanner";
-import { backupState, ensureFirebase, fbSignOut, restoreState } from "@/lib/cloud";
+import { backupState, ensureFirebase, fbSignOut, fbUpdateProfileName, restoreState } from "@/lib/cloud";
 import { totalPoints, levelInfo } from "@/lib/logic";
 import {
   isNative,
@@ -26,6 +27,8 @@ import {
   nativeRealTestNotification,
   nativeExactAlarmStatus,
   nativeOpenExactAlarmSettings,
+  nativeAlarmEngineStatus,
+  nativeOpenFullScreenSettings,
   PermStatus,
 } from "@/lib/native";
 import { PERM_FLOW_KEY } from "@/components/PermissionSetupFlow";
@@ -37,6 +40,13 @@ export default function SettingsTab() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [nativeOn, setNativeOn] = useState(false);
   const [fbStat, setFbStat] = useState<{ ok: boolean; projectId: string } | null>(null);
+  // v2.8: profile name editor + location card state
+  const [editName, setEditName] = useState(false);
+  const [fName, setFName] = useState("");
+  const [lName, setLName] = useState("");
+  const [nameSaved, setNameSaved] = useState(false);
+  const [locBusy, setLocBusy] = useState(false);
+  const [fullScreenPerm, setFullScreenPerm] = useState<boolean | null>(null);
 
   useEffect(() => {
     const id = setTimeout(() => setNativeOn(isNative()), 0);
@@ -78,6 +88,10 @@ export default function SettingsTab() {
     // v2.5: Fajr REAL fix — exact alarms are a special access on Android 12+;
     // if denied, Fajr/adhan can be late or skipped in Doze.
     setExactPerm(await nativeExactAlarmStatus());
+    // v2.8: full-screen azan permission (Android 14+ can disable it — the
+    // full-screen azan view then needs this flip turned back on)
+    const eng = await nativeAlarmEngineStatus();
+    setFullScreenPerm(eng ? eng.fullScreen : null);
   }, []);
 
   useEffect(() => {
@@ -100,6 +114,9 @@ export default function SettingsTab() {
     <div>
       <h1 className="text-xl font-bold mb-3">⚙️ {t("settingsTitle")}</h1>
 
+      {/* v2.8: ads on EVERY page (owner round-10 #1) */}
+      <AdsBanner variant="a" />
+
       {/* ---------- Profile / Account (Firebase) ---------- */}
       <Card className="mb-4">
         <SectionTitle title={`👤 ${t("profile")}`} />
@@ -107,14 +124,78 @@ export default function SettingsTab() {
           <div className="rounded-xl bg-primary/10 border border-primary/25 p-3">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center text-lg font-extrabold text-primary shrink-0">
-                {(acc.name || "?").slice(0, 1).toUpperCase()}
+                {(s.name || acc.name || "?").slice(0, 1).toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
-                {/* round-5: FULL name here (no truncation) */}
-                <div className="text-sm font-bold break-words">{acc.name || acc.email}</div>
+                {/* v2.8: the REGISTERED full name (settings.name) — never the
+                    Gmail display name (owner: "ওর জিমেইলের নামটা থাকবে না") */}
+                <div className="text-sm font-bold break-words">{s.name || acc.name || acc.email}</div>
                 <div className="text-xs text-muted-foreground break-all">{acc.email}</div>
               </div>
             </div>
+
+            {/* v2.8: EDIT NAME (first + last) — the registered name is the
+                single source of truth for every display + share */}
+            {editName ? (
+              <div className="mt-3 rounded-xl bg-background/60 border border-border p-2.5">
+                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">✏️ {t("editNameTitle")}</div>
+                <div className="flex gap-2 mb-2">
+                  <input
+                    value={fName}
+                    onChange={(e) => setFName(e.target.value)}
+                    placeholder={t("firstName")}
+                    autoComplete="given-name"
+                    className="w-full bg-muted rounded-lg px-3 py-2.5 text-sm border border-border outline-none focus:ring-1 focus:ring-ring"
+                  />
+                  <input
+                    value={lName}
+                    onChange={(e) => setLName(e.target.value)}
+                    placeholder={t("lastName")}
+                    autoComplete="family-name"
+                    className="w-full bg-muted rounded-lg px-3 py-2.5 text-sm border border-border outline-none focus:ring-1 focus:ring-ring"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={!fName.trim()}
+                    onClick={async () => {
+                      const full = `${fName.trim()}${lName.trim() ? ` ${lName.trim()}` : ""}`;
+                      updateSettings({ name: full, nameSet: true });
+                      setAccount({ ...acc, name: full });
+                      await fbUpdateProfileName(full);
+                      setNameSaved(true);
+                      setEditName(false);
+                      setTimeout(() => setNameSaved(false), 2200);
+                    }}
+                    className="flex-1 rounded-xl bg-primary text-primary-foreground text-xs font-bold py-2.5 min-h-[40px] disabled:opacity-40 active:scale-[0.98] transition-transform"
+                  >
+                    ✓ {t("saveBtn")}
+                  </button>
+                  <button type="button" onClick={() => setEditName(false)} className="rounded-xl bg-secondary text-xs py-2.5 px-3 min-h-[40px]">
+                    {t("cancel")}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cur = (s.name || acc.name || "").trim();
+                    const parts = cur.split(/\s+/).filter(Boolean);
+                    setFName(parts[0] || "");
+                    setLName(parts.length > 1 ? parts.slice(1).join(" ") : "");
+                    setEditName(true);
+                  }}
+                  className="rounded-xl bg-secondary text-xs font-semibold px-3 py-2 min-h-[36px] active:scale-95 transition-transform"
+                >
+                  ✏️ {t("editNameBtn")}
+                </button>
+                {nameSaved ? <span className="text-[11px] font-bold text-primary">✓ {t("nameSavedOk")}</span> : null}
+              </div>
+            )}
+
             {/* round-5: points LIVE here now (moved off the home header) */}
             <div className="mt-3 rounded-xl bg-background/60 border border-border px-3 py-2.5 flex items-center justify-between gap-2">
               <div>
@@ -129,7 +210,6 @@ export default function SettingsTab() {
             <div className="text-[10px] text-primary font-semibold mt-2">
               {acc.verified ? `✓ ${t("syncOn")}` : `⏳ ${t("verifyTitle")}`}
             </div>
-            <div className="text-[10px] text-muted-foreground mt-1">{t("profileNameAuto")}</div>
           </div>
         ) : (
           <div className="rounded-xl border border-primary/30 bg-gradient-to-br from-primary/10 to-transparent p-3.5">
@@ -185,6 +265,77 @@ export default function SettingsTab() {
             { value: "light", label: `☀️ ${t("light")}` },
           ]}
         />
+      </Card>
+
+      {/* ---------- v2.8: LOCATION & TIMEZONE (worldwide — owner: "যে কোনো
+          দেশ থেকে সবাই যাতে ব্যবহার করতে পারে, টাইমজোন অটো ডিটেক্ট") ---------- */}
+      <Card className="mb-4 border-primary/25 bg-gradient-to-br from-primary/5 to-transparent">
+        <SectionTitle title={`🌍 ${t("locCardTitle")}`} sub={t("locCardSub")} />
+        {(() => {
+          const loc = s.location;
+          let gmt = "";
+          try {
+            const off = -new Date().getTimezoneOffset() / 60;
+            gmt = `GMT${off >= 0 ? "+" : ""}${off}`;
+          } catch {
+            gmt = "";
+          }
+          let tzName = "";
+          try {
+            tzName = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+          } catch {
+            tzName = "";
+          }
+          return (
+            <>
+              <div className="rounded-xl bg-secondary/50 border border-border px-3 py-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg shrink-0">📍</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-bold truncate">{loc?.label || t("locDetecting")}</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {tzName ? `${tzName} · ${gmt}` : gmt} · 🕌 {t("prayerTimesAuto")}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={locBusy}
+                onClick={async () => {
+                  setLocBusy(true);
+                  try {
+                    const { fetchPrayerTimes, fetchIpLocation } = await import("@/lib/logic");
+                    const { getCurrentLocation } = await import("@/lib/native");
+                    let pos: { lat: number; lng: number } | null = await getCurrentLocation();
+                    let label = "My location";
+                    if (!pos) {
+                      const ip = await fetchIpLocation();
+                      if (ip) {
+                        pos = { lat: ip.lat, lng: ip.lng };
+                        label = ip.label;
+                      }
+                    }
+                    if (pos) {
+                      const times = await fetchPrayerTimes(pos.lat, pos.lng);
+                      updateSettings({
+                        location: { lat: pos.lat, lng: pos.lng, label, tz: tzName },
+                        ...(times ? { prayerTimes: times, prayerTimesDate: new Date().toISOString().slice(0, 10) } : {}),
+                      });
+                    }
+                  } catch {
+                    /* offline */
+                  }
+                  setLocBusy(false);
+                }}
+                className="w-full mt-2.5 rounded-xl bg-primary/10 text-primary text-xs font-bold py-2.5 min-h-[42px] active:scale-[0.98] transition-transform disabled:opacity-50"
+              >
+                {locBusy ? "⏳ ..." : `🔄 ${t("locRefresh")}`}
+              </button>
+              <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">✈️ {t("locTravelNote")}</p>
+            </>
+          );
+        })()}
       </Card>
 
       {/* ---------- Water goal ---------- */}
@@ -276,6 +427,30 @@ export default function SettingsTab() {
                 className="rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-xs font-semibold px-3 py-2.5 min-h-[40px] shrink-0 active:scale-95 transition-transform"
               >
                 ⚠️ {t("permExactAllow")}
+              </button>
+            ) : (
+              <span className="text-xs font-bold text-primary shrink-0">✓</span>
+            )}
+          </div>
+        ) : null}
+
+        {nativeOn ? (
+          <div className="flex items-center gap-3 py-2.5 border-t border-border">
+            <span className="icon-chip w-10 h-10 text-lg shrink-0">🖼️</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium">{t("permFullScreen")}</div>
+              <div className="text-xs text-muted-foreground">{t("permFullScreenSub")}</div>
+            </div>
+            {fullScreenPerm === false ? (
+              <button
+                type="button"
+                onClick={async () => {
+                  await nativeOpenFullScreenSettings();
+                  setTimeout(() => void refreshPerm(), 1500);
+                }}
+                className="rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-xs font-semibold px-3 py-2.5 min-h-[40px] shrink-0 active:scale-95 transition-transform"
+              >
+                ⚠️ {t("permAllowBtn")}
               </button>
             ) : (
               <span className="text-xs font-bold text-primary shrink-0">✓</span>
@@ -419,6 +594,9 @@ export default function SettingsTab() {
           <SmartlinkButton />
         </div>
       </Card>
+
+      {/* v2.8: ads on EVERY page */}
+      <AdsBanner variant="b" />
     </div>
   );
 }
