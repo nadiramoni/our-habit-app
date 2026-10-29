@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>অ্যাডমিন প্যানেল — আওয়ার হ্যাবিট</title>
+<style>
+  :root{
+    --bg:#020617; --card:#0f172a; --card2:#1e293b; --line:#1e293b; --line2:#334155;
+    --tx:#f1f5f9; --tx2:#94a3b8; --tx3:#64748b;
+    --em:#10b981; --em600:#059669; --em300:#6ee7b7; --embg:rgba(16,185,129,.12);
+    --rose:#fb7185; --amber:#fbbf24; --sky:#7dd3fc; --violet:#c4b5fd;
+    --font:"Hind Siliguri","Noto Sans Bengali","SolaimanLipi",-apple-system,"Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg);color:var(--tx);font-family:var(--font);font-size:15px;line-height:1.6}
+  button{font-family:var(--font);cursor:pointer;border:0}
+  input,textarea{font-family:var(--font)}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px}
+  .btn{border-radius:12px;padding:10px 16px;font-weight:700;font-size:13px;transition:.15s}
+  .btn-em{background:var(--em600);color:#fff}.btn-em:hover{background:var(--em)}
+  .btn-gray{background:var(--card2);color:var(--tx)}.btn-gray:hover{background:#3b4d63}
+  .btn-rose{background:rgba(244,63,94,.15);color:var(--rose)}.btn-rose:hover{background:rgba(244,63,94,.3)}
+  .btn-red{background:#be123c;color:#fff}.btn-red:hover{background:#e11d48}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .field{width:100%;background:var(--card2);border:1px solid var(--line2);border-radius:12px;padding:11px 14px;font-size:14px;color:var(--tx);outline:none}
+  .field:focus{border-color:var(--em);box-shadow:0 0 0 3px var(--embg)}
+  .mono{font-family:ui-monospace,"SFMono-Regular",Menlo,monospace}
+  .dim{color:var(--tx2)}.tiny{font-size:11px}.small{font-size:12px}
+  .chip{display:inline-block;font-size:10px;font-weight:700;border-radius:8px;padding:3px 9px}
+  .chip-ok{background:var(--embg);color:var(--em300)} .chip-ban{background:rgba(244,63,94,.15);color:var(--rose)}
+  .toggle{position:relative;width:52px;height:27px;border-radius:99px;background:#475569;transition:.2s;border:0;flex-shrink:0}
+  .toggle::after{content:"";position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:99px;background:#fff;transition:.2s}
+  .toggle.on{background:var(--em600)} .toggle.on::after{left:28px}
+  .toggle.mini{width:42px;height:23px}.toggle.mini::after{width:17px;height:17px;top:3px}.toggle.mini.on::after{left:22px}
+
+  /* ---------- screens ---------- */
+  .screen{display:none;min-height:100vh}
+  .screen.active{display:block}
+  .center-screen{display:none;min-height:100vh;align-items:center;justify-content:center;padding:22px}
+  .center-screen.active{display:flex}
+  .center-box{max-width:430px;width:100%;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:26px}
+
+  /* header */
+  header{position:sticky;top:0;z-index:30;background:rgba(15,23,42,.96);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  .hd{display:flex;align-items:center;justify-content:space-between;gap:10px;height:56px}
+  .hd h1{font-size:14px;line-height:1.2}
+  .hd .sub{font-size:10px;color:var(--tx3);line-height:1.2}
+  .tabs{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .tab{border-radius:10px;padding:7px 12px;font-size:12px;font-weight:700;background:var(--card2);color:var(--tx2)}
+  .tab:hover{background:#3b4d63}
+  .tab.active{background:var(--em600);color:#fff}
+
+  /* stats */
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0}
+  @media(min-width:720px){.stats{grid-template-columns:repeat(6,1fr)}}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:11px}
+  .stat .l{font-size:10px;color:var(--tx2);line-height:1.3}
+  .stat .v{font-size:24px;font-weight:800;margin-top:2px}
+
+  /* table */
+  .tblwrap{background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:auto}
+  table{width:100%;border-collapse:collapse;font-size:13px;min-width:860px}
+  th{font-size:11px;color:var(--tx2);text-align:right;padding:10px 10px;border-bottom:1px solid var(--line);background:rgba(15,23,42,.8);white-space:nowrap}
+  th:last-child{text-align:center}
+  td{padding:9px 10px;border-bottom:1px solid rgba(30,41,59,.6);text-align:right;vertical-align:middle}
+  td:last-child{text-align:center}
+  tr.row:hover{background:rgba(30,41,59,.4);cursor:pointer}
+  .name{color:var(--em300);font-weight:700;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mail{color:var(--tx2);max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* zone cards + ads */
+  .zone{background:rgba(30,41,59,.55);border:1px solid rgba(51,65,85,.6);border-radius:14px;padding:13px;margin-bottom:10px}
+  .zone .zt{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .zone .zl{font-weight:700;font-size:13px}
+  .zone .zh{font-size:10px;color:var(--tx3)}
+  .zone textarea{width:100%;background:var(--bg);border:1px solid var(--line2);border-radius:10px;padding:9px 11px;font-size:11px;color:var(--tx);font-family:ui-monospace,Menlo,monospace;margin-top:9px;resize:vertical}
+  .rowline{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+  .rowline .lb{width:96px;flex-shrink:0;font-size:12px;color:var(--tx2)}
+  .rowline .field{flex:1}
+  .sec{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px}
+  .sec>h2{font-size:14px;font-weight:800;margin-bottom:12px}
+  .stickybar{position:sticky;bottom:12px;background:rgba(15,23,42,.97);border:1px solid var(--line);border-radius:16px;padding:12px;display:flex;gap:12px;align-items:center;backdrop-filter:blur(8px)}
+
+  /* modal */
+  #modalBack{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:50;overflow-y:auto}
+  #modalBack.open{display:block}
+  .modal{background:var(--card);border:1px solid var(--line);border-radius:18px;max-width:680px;margin:26px auto}
+  .mhead{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card);border-radius:18px 18px 0 0;z-index:2}
+  .mbody{padding:16px}
+  .idbox{background:rgba(30,41,59,.5);border-radius:14px;padding:14px;margin-bottom:13px}
+  .daystbl{width:100%;min-width:600px;font-size:11px}
+  .act{background:rgba(30,41,59,.5);border-radius:14px;padding:13px}
+  .grow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .note{font-size:10px;color:var(--tx3);line-height:1.7;margin-top:9px}
+  .msg{font-size:12px;color:var(--em300);background:var(--embg);border-radius:10px;padding:8px 12px;margin-top:9px;display:none}
+  .msg.show{display:block}
+  .err{color:var(--rose);font-size:12px;text-align:center;margin-top:9px;display:none}
+  .err.show{display:block}
+  .amber{background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);color:#fde68a;border-radius:12px;padding:11px 13px;font-size:12px;line-height:1.7}
+  .okbox{background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);border-radius:12px;padding:11px 13px;font-size:12px;line-height:1.7;color:var(--em300)}
+  ol.steps{padding-right:20px;margin-top:9px}
+  ol.steps li{margin-bottom:5px}
+  .spin{display:inline-block;animation:pulse 1.2s infinite}
+  @keyframes pulse{50%{opacity:.35}}
+  .pill{font-size:10px;background:var(--card2);border-radius:99px;padding:3px 10px;color:var(--tx2)}
+  .flexend{display:flex;justify-content:flex-end;gap:8px;margin-top:11px}
+  .hide{display:none !important}
+</style>
+</head>
+<body>
+
+<!-- ============ SCREEN: boot ============ -->
+<div id="scr-boot" class="center-screen active">
+  <p class="dim spin">লোড হচ্ছে…</p>
+</div>
+
+<!-- ============ SCREEN: no key ============ -->
+<div id="scr-nokey" class="center-screen">
+  <div class="center-box">
+    <div style="text-align:center;font-size:38px">🔑</div>
+    <h2 style="text-align:center;font-size:19px;margin:8px 0 12px">অ্যাডমিন কী নেই</h2>
+    <p id="nokeyHint" class="small dim" style="line-height:1.8"></p>
+    <div style="background:var(--card2);border-radius:14px;padding:13px;margin-top:13px" class="small dim">
+      <b style="color:var(--tx)">কী নামানোর নিয়ম (একবারই লাগবে):</b>
+      <ol class="steps">
+        <li>Firebase Console ওপেন করো → তোমার প্রজেক্ট (our-habit-61587)</li>
+        <li>⚙️ Project Settings → Service accounts ট্যাব</li>
+        <li>নিচের নীল বাটন <b>“Generate new private key”</b> চাপো</li>
+        <li>ডাউনলোড হওয়া JSON ফাইলটাকে নাম বদলে <b style="color:var(--em300)">admin-sdk-key.json</b> করে প্রজেক্ট ফোল্ডারে রাখো (package.json যেখানে আছে ঠিক সেখানে)</li>
+        <li>তারপর <span class="mono">bun run dev</span> দিয়ে সার্ভার চালু করো আর এই প্যানেল রিফ্রেশ দাও</li>
+      </ol>
+    </div>
+    <p class="tiny" style="color:var(--rose);margin-top:11px;line-height:1.7">⚠️ admin-sdk-key.json কারো সাথে শেয়ার করবে না — এটা তোমার পুরো Firebase প্রজেক্টের মাস্টার চাবি।</p>
+    <div class="flexend"><button class="btn btn-em" onclick="boot()">🔄 আবার চেষ্টা করো</button></div>
+  </div>
+</div>
+
+<!-- ============ SCREEN: offline ============ -->
+<div id="scr-off" class="center-screen">
+  <div class="center-box">
+    <div style="text-align:center;font-size:38px">🔌</div>
+    <h2 style="text-align:center;font-size:19px;margin:8px 0 12px">সার্ভার কানেক্ট হচ্ছে না</h2>
+    <p class="small dim" style="line-height:1.8">
+      এই প্যানেল (GitHub Pages) শুধু একটা রিমোট। আসল ডেটা আসে <b style="color:var(--tx)">তোমার পিসির সার্ভার</b> থেকে —
+      কারণ Firebase-এর মাস্টার কী (admin-sdk-key.json) কখনোই কোনো পাবলিক ওয়েবসাইটে রাখা যায় না।
+      তাই প্যানেল খোলার আগে পিসিতে অ্যাপের সার্ভারটা চালু থাকতে হবে:
+    </p>
+    <div style="background:var(--card2);border-radius:14px;padding:13px;margin-top:13px" class="small dim">
+      <ol class="steps">
+        <li>পিসিতে প্রজেক্ট ফোল্ডার ওপেন করো → টার্মিনালে <span class="mono">bun run dev</span> লিখে এন্টার (লেখা দেখাবে: <span class="mono">localhost:3000</span>)</li>
+        <li>নিচের ঠিকানাটা ঠিক আছে কিনা দেখো</li>
+        <li>তারপর আবার চেষ্টা করো</li>
+      </ol>
+    </div>
+    <div class="rowline" style="margin-top:13px">
+      <span class="lb">সার্ভার</span>
+      <input id="offUrl" class="field mono" placeholder="http://localhost:3000" />
+      <button class="btn btn-gray" style="flex-shrink:0" onclick="saveBase('#offUrl')">সেভ</button>
+    </div>
+    <div class="flexend"><button class="btn btn-em" onclick="boot()">🔄 আবার চেষ্টা করো</button></div>
+  </div>
+</div>
+
+<!-- ============ SCREEN: login ============ -->
+<div id="scr-login" class="center-screen">
+  <div class="center-box">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+      <div style="width:48px;height:48px;border-radius:14px;background:var(--embg);border:1px solid rgba(16,185,129,.3);display:flex;align-items:center;justify-content:center;font-size:24px">🛡️</div>
+      <div>
+        <h2 style="font-size:17px">অ্যাডমিন প্যানেল</h2>
+        <p class="tiny dim">আওয়ার হ্যাবিট — মালিকের কন্ট্রোল রুম (ওয়েব)</p>
+      </div>
+    </div>
+    <input id="pinInput" type="password" inputmode="numeric" autocomplete="off" class="field" style="text-align:center;font-size:20px;letter-spacing:6px" placeholder="পিন দাও" onkeydown="if(event.key==='Enter')doLogin()" />
+    <p id="loginErr" class="err"></p>
+    <button id="loginBtn" class="btn btn-em" style="width:100%;margin-top:6px;font-size:15px;padding:13px" onclick="doLogin()">ঢুকো</button>
+    <p class="tiny dim" style="text-align:center;margin-top:13px">
+      সার্ভার: <span id="loginBase" class="mono" style="color:var(--em300)"></span>
+      · <a href="#" style="color:var(--sky)" onclick="toggleBaseEdit();return false">বদলানো</a>
+    </p>
+    <div id="baseEdit" class="rowline hide" style="margin-top:9px">
+      <input id="loginUrl" class="field mono" placeholder="http://localhost:3000" />
+      <button class="btn btn-gray" style="flex-shrink:0" onclick="saveBase('#loginUrl')">সেভ</button>
+    </div>
+  </div>
+</div>
+<!-- ============ SCREEN: app (dashboard) ============ -->
+<div id="scr-app" class="screen">
+  <header>
+    <div class="wrap hd">
+      <div style="display:flex;align-items:center;gap:10px;min-width:0">
+        <span style="font-size:20px">🛡️</span>
+        <div style="min-width:0">
+          <h1>অ্যাডমিন প্যানেল — আওয়ার হ্যাবিট</h1>
+          <p class="sub" id="hdSub">ওয়েব প্যানেল · GitHub Pages</p>
+        </div>
+      </div>
+      <div class="tabs">
+        <button class="tab active" id="tab-users" onclick="setTab('users')">👥 ইউজার</button>
+        <button class="tab" id="tab-ads" onclick="setTab('ads')">📢 অ্যাডস</button>
+        <button class="tab" id="tab-set" onclick="setTab('set')">⚙️ সেটিংস</button>
+        <button class="tab" style="background:rgba(244,63,94,.15);color:var(--rose)" onclick="doLogout()">বাইরে</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap" style="padding:16px 14px 40px">
+
+    <!-- ================= USERS TAB ================= -->
+    <section id="pane-users">
+      <div class="stats" id="statsRow"></div>
+      <div class="grow" style="margin-bottom:12px">
+        <input id="searchBox" class="field" style="flex:1;min-width:200px" placeholder="🔍 নাম বা ইমেইল খোঁজো…" oninput="renderUsers()" />
+        <button class="tab" id="f-all" onclick="setFilter('all')">সব</button>
+        <button class="tab" id="f-google" onclick="setFilter('google')">🔵 Google</button>
+        <button class="tab" id="f-email" onclick="setFilter('email')">✉️ ইমেইল</button>
+        <button class="tab" id="f-banned" onclick="setFilter('banned')">🚫 ব্যান</button>
+        <button class="tab" onclick="loadUsers()">🔄 রিফ্রেশ</button>
+      </div>
+      <div class="tblwrap">
+        <table>
+          <thead>
+            <tr>
+              <th>নাম</th><th>ইমেইল</th><th>ধরন</th><th>স্ট্যাটাস</th>
+              <th>নামাজ (আজ)</th><th>পানি</th><th>রিলস</th><th>স্ট্রিক</th><th>শেষ অ্যাক্টিভ</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="usersBody">
+            <tr><td colspan="10" style="text-align:center;padding:36px" class="dim spin">লোড হচ্ছে…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tiny dim" style="margin-top:10px;line-height:1.7" id="usersCount"></p>
+    </section>
+
+    <!-- ================= ADS TAB ================= -->
+    <section id="pane-ads" class="hide" style="max-width:760px">
+      <div class="sec" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <div>
+          <h2 style="margin:0">📢 অ্যাডস মাস্টার সুইচ</h2>
+          <p class="tiny dim" style="margin-top:2px">বন্ধ করলে সব অ্যাপে সব অ্যাড উঠে যাবে</p>
+        </div>
+        <button class="toggle" id="adsMaster" onclick="toggleMaster()"></button>
+      </div>
+
+      <div class="sec">
+        <h2>🎯 Adsterra জোনস</h2>
+        <div id="zonesBox"></div>
+      </div>
+
+      <div class="sec">
+        <h2>📱 AdMob (অ্যাপের জন্য)</h2>
+        <div class="rowline"><span class="lb">ব্যানার আইডি</span><input id="amBanner" class="field mono" placeholder="ca-app-pub-…" /></div>
+        <div class="rowline"><span class="lb">নেটিভ আইডি</span><input id="amNative" class="field mono" placeholder="ca-app-pub-…" /></div>
+        <div class="rowline" style="margin:0"><span class="lb">রিওয়ার্ডেড আইডি</span><input id="amRewarded" class="field mono" placeholder="ca-app-pub-…" /></div>
+      </div>
+
+      <div class="sec">
+        <h2>🔄 অটো-আপডেট</h2>
+        <div class="rowline"><span class="lb">নতুন ভার্সন</span><input id="upVersion" class="field" placeholder="যেমন 3.1.0" /></div>
+        <div class="rowline"><span class="lb">APK লিংক</span><input id="upApk" class="field mono" placeholder="https://…apk" /></div>
+        <div class="rowline"><span class="lb" style="align-self:flex-start;padding-top:9px">চেঞ্জলগ</span><textarea id="upChg" class="field" rows="3" placeholder="নতুন কী এসেছে…"></textarea></div>
+        <label style="display:flex;align-items:center;gap:9px;cursor:pointer">
+          <input type="checkbox" id="upForce" style="width:17px;height:17px;accent-color:var(--em600)" />
+          <span class="small">জোর করে আপডেট (না করলে অ্যাপ খুলবে না)</span>
+        </label>
+      </div>
+
+      <div class="stickybar">
+        <button class="btn btn-em" style="flex:1;padding:13px" onclick="saveAds()">💾 সেভ করো — সব অ্যাপে যাবে</button>
+        <p id="adsMsg" class="msg" style="max-width:50%;margin:0"></p>
+      </div>
+    </section>
+
+    <!-- ================= SETTINGS TAB ================= -->
+    <section id="pane-set" class="hide" style="max-width:640px">
+      <div class="sec">
+        <h2>🔐 অ্যাডমিন পিন</h2>
+        <div id="pinDefaultWarn" class="amber hide" style="margin-bottom:12px">
+          ⚠️ এখনো <b>ডিফল্ট পিন</b> চালু আছে — যেটা আমি তোমাকে দিয়েছিলাম। একবার বদলে নিলে প্যানেলটা শুধু তোমার।
+        </div>
+        <div class="rowline"><span class="lb">এখনকার পিন</span><input id="curPin" type="password" class="field" placeholder="এখন যেটা দিয়ে ঢুকো" /></div>
+        <div class="rowline" style="margin:0"><span class="lb">নতুন পিন</span><input id="newPin" type="password" class="field" placeholder="৩–১২ অক্ষর" /></div>
+        <div class="flexend">
+          <button class="btn btn-em" id="pinBtn" onclick="changePin()">পিন বদলাও</button>
+        </div>
+        <p id="pinMsg" class="msg"></p>
+        <p class="note">পিন বদলালে সাথে সাথে লগইন ঠিকই থাকবে — নতুন টোকেন নিয়ে নেওয়া হয়ে যাবে। পরের বার থেকে নতুন পিনটাই লাগবে।</p>
+      </div>
+
+      <div class="sec">
+        <h2>🌐 সার্ভার</h2>
+        <p class="small dim" style="margin-bottom:10px;line-height:1.8">
+          এই প্যানেলটা GitHub Pages-এ থাকে, কিন্তু ডেটা আসে তোমার পিসির সার্ভার থেকে (default:
+          <span class="mono">http://localhost:3000</span>)। কারণ সার্ভারে Firebase-এর মাস্টার কী আছে —
+          সেটা কখনো পাবলিক ওয়েবসাইটে রাখা যায় না। পিসিতে <span class="mono">bun run dev</span> চালু থাকলেই প্যানেল কাজ করবে।
+        </p>
+        <div class="rowline" style="margin:0">
+          <span class="lb">ঠিকানা</span>
+          <input id="setUrl" class="field mono" placeholder="http://localhost:3000" />
+          <button class="btn btn-gray" style="flex-shrink:0" onclick="saveBase('#setUrl')">সেভ ও কানেক্ট</button>
+        </div>
+      </div>
+
+      <div class="sec">
+        <h2>ℹ️ কীভাবে কাজ করে</h2>
+        <ol class="steps small dim" style="line-height:1.9">
+          <li>এই ফাইলটা (<span class="mono">index.html</span>) GitHub রিপোতে থাকে → GitHub Pages সেটা চালায়।</li>
+          <li>পিন দিলে সেটা যায় তোমার পিসির সার্ভারে (<span class="mono">/api/admin/session</span>) — সার্ভার হ্যাশ করে মিলিয়ে দেখে, তারপর টোকেন দেয়।</li>
+          <li>সেই টোকেন দিয়েই প্যানেল ইউজার লিস্ট, স্ট্যাটাস, ব্যান/আনব্যান, পাসওয়ার্ড, অ্যাডস — সব কমান্ড চালায়।</li>
+          <li>পিন কখনো পেজের কোডে লেখা থাকে না — তাই পেজ পাবলিক হলেও তোমার পিন তোমার কাছেই থাকে।</li>
+        </ol>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ============ USER DETAIL MODAL ============ -->
+<div id="modalBack">
+  <div class="modal">
+    <div class="mhead">
+      <b style="font-size:14px">👤 ইউজারের পুরো রিপোর্ট</b>
+      <button class="btn btn-gray" style="padding:5px 11px;font-weight:800" onclick="closeModal()">✕</button>
+    </div>
+    <div class="mbody" id="detailBox"><p class="dim spin" style="text-align:center;padding:30px">লোড হচ্ছে…</p></div>
+  </div>
+</div>
+<script>
+"use strict";
+/* ================================================================
+   আওয়ার হ্যাবিট — ওয়েব অ্যাডমিন প্যানেল (এক ফাইলের প্যানেল, v3.1)
+   GitHub Pages-এ থাকে; ডেটা আসে মালিকের পিসির সার্ভার থেকে
+   (bun run dev → localhost:3000)। লগইন = মালিকের পিন (ডিফল্ট 755) →
+   সার্ভার ভেরিফাই করে Bearer টোকেন দেয় → টোকেন দিয়েই সব কমান্ড।
+   ================================================================ */
+
+var LS_BASE = "oh_webadmin_base", LS_TOKEN = "oh_webadmin_token";
+
+var AT_ZONES = [
+  { key: "bannerUpgrade", label: "⬆️ আপগ্রেড ব্যানার (সবার আগে দেখায়)", hint: "একটা ACTIVE ব্যানার জোনের GET CODE দাও" },
+  { key: "banner300", label: "ব্যানার 300×250 (মোবাইল)", hint: "300x250 ব্যানার জোন" },
+  { key: "banner728", label: "ব্যানার 728×90 (ট্যাবলেট/ডেস্কটপ)", hint: "728x90 ব্যানার জোন" },
+  { key: "nativeBanner", label: "নেটিভ ব্যানার (কার্ডের ফাঁকে)", hint: "Native Banner জোন" },
+  { key: "socialBar", label: "সোশ্যাল বার (ভাসমান)", hint: "Social Bar জোন — সবচেয়ে বেশি আয়" },
+  { key: "smartlink", label: "স্মার্টলিংক বাটন", hint: "Direct Link জোন" },
+  { key: "popunder", label: "পপআন্ডার (ডিফল্ট বন্ধ)", hint: "খুললে নতুন ট্যাবে অ্যাড ওপেন হয়" }
+];
+
+var state = {
+  base: "", token: "", webPin: null,
+  users: [], stats: null, ads: null,
+  filter: "all", tab: "users",
+  detail: null, detailUid: "", confirmKey: ""
+};
+
+/* ---------------- helpers ---------------- */
+function $(s) { return document.querySelector(s); }
+function esc(s) {
+  return String(s === null || s === undefined ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function bn(n) {
+  if (n === null || n === undefined) return "—";
+  try { return new Intl.NumberFormat("bn-BD").format(n); } catch (e) { return String(n); }
+}
+function fmtDate(v) {
+  if (!v) return "—";
+  try {
+    var d = v instanceof Date ? v : new Date(String(v));
+    if (isNaN(d.getTime())) return String(v).slice(0, 16);
+    return d.toLocaleString("bn-BD", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  } catch (e) { return "—"; }
+}
+function timeAgo(v) {
+  if (!v) return "—";
+  try {
+    var d = v instanceof Date ? v : new Date(String(v));
+    var mins = Math.floor((Date.now() - d.getTime()) / 60000);
+    if (isNaN(mins)) return "—";
+    if (mins < 1) return "এখন";
+    if (mins < 60) return bn(mins) + " মিনিট আগে";
+    if (mins < 1440) return bn(Math.floor(mins / 60)) + " ঘণ্টা আগে";
+    return bn(Math.floor(mins / 1440)) + " দিন আগে";
+  } catch (e) { return "—"; }
+}
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
+
+/* ---------------- screens ---------------- */
+var SCREENS = ["scr-boot", "scr-nokey", "scr-off", "scr-login", "scr-app"];
+function show(id) {
+  SCREENS.forEach(function (x) { $("#" + x).classList.remove("active"); });
+  $("#" + id).classList.add("active");
+  window.scrollTo(0, 0);
+}
+function showLogin() {
+  state.token = ""; lsDel(LS_TOKEN);
+  $("#pinInput").value = ""; $("#loginErr").classList.remove("show");
+  show("scr-login");
+  setTimeout(function () { $("#pinInput").focus(); }, 60);
+}
+
+/* ---------------- server base ---------------- */
+function initialBase() {
+  var saved = lsGet(LS_BASE);
+  if (saved && /^https?:\/\//.test(saved)) return saved;
+  if (location.origin === "http://localhost:3000" || location.origin === "http://127.0.0.1:3000") return location.origin;
+  return "http://localhost:3000";
+}
+function toggleBaseEdit() {
+  var row = $("#baseEdit");
+  row.classList.toggle("hide");
+  if (!row.classList.contains("hide")) $("#loginUrl").value = state.base;
+}
+function saveBase(sel) {
+  var raw = String($(sel).value || "").trim();
+  if (!/^https?:\/\/.+/.test(raw)) { alert("পুরো ঠিকানা লিখো — যেমন http://localhost:3000"); return; }
+  raw = raw.replace(/\/+$/, "");
+  state.base = raw; lsSet(LS_BASE, raw);
+  $("#loginBase").textContent = raw; $("#offUrl").value = raw; $("#loginUrl").value = raw; $("#setUrl").value = raw;
+  boot();
+}
+
+/* ---------------- api ---------------- */
+async function api(path, opts) {
+  opts = opts || {};
+  var method = opts.method || "GET";
+  var headers = {};
+  if (opts.body !== undefined) headers["content-type"] = "application/json";
+  if (state.token) headers["authorization"] = "Bearer " + state.token;
+  var res;
+  try {
+    res = await fetch(state.base + path, {
+      method: method, headers: headers,
+      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      cache: "no-store"
+    });
+  } catch (e) { throw { network: true }; }
+  var j = null;
+  try { j = await res.json(); } catch (e) {}
+  if (res.status === 401 && state.token) { showLogin(); throw { auth: true }; }
+  if (!res.ok) throw { status: res.status, data: j, network: false };
+  return j;
+}
+
+/* ---------------- boot + login ---------------- */
+async function boot() {
+  state.base = initialBase();
+  state.token = lsGet(LS_TOKEN) || "";
+  $("#loginBase").textContent = state.base;
+  $("#offUrl").value = state.base; $("#loginUrl").value = state.base; $("#setUrl").value = state.base;
+  show("scr-boot");
+  try {
+    var j = await api("/api/admin/session");
+    if (!j.keyReady) {
+      $("#nokeyHint").textContent = j.hint || "admin-sdk-key.json ফাইলটা পাওয়া যায়নি।";
+      show("scr-nokey"); return;
+    }
+    state.webPin = j.webPin || null;
+    if (j.authed) { enterApp(); return; }
+    state.token = ""; lsDel(LS_TOKEN);
+    showLogin();
+  } catch (e) {
+    if (e && e.auth) return;             // already pushed to login
+    show("scr-off");                     // network / server down
+  }
+}
+async function doLogin() {
+  var pin = $("#pinInput").value.trim();
+  var errEl = $("#loginErr");
+  errEl.classList.remove("show");
+  if (!pin) { errEl.textContent = "পিন লিখো"; errEl.classList.add("show"); return; }
+  var btn = $("#loginBtn"); btn.disabled = true; btn.textContent = "…";
+  try {
+    var j = await api("/api/admin/session", { method: "POST", body: { pin: pin } });
+    if (j && j.ok && j.token) {
+      state.token = j.token; lsSet(LS_TOKEN, j.token);
+      enterApp();
+    } else {
+      errEl.textContent = (j && j.message) || "লগইন হয়নি";
+      errEl.classList.add("show");
+    }
+  } catch (e) {
+    if (e && e.network) { show("scr-off"); return; }
+    if (e && e.auth) return;
+    var msg = e && e.data && e.data.message ? e.data.message : "লগইন হয়নি — পিন চেক করো";
+    errEl.textContent = msg; errEl.classList.add("show");
+  } finally {
+    btn.disabled = false; btn.textContent = "ঢুকো";
+  }
+}
+function doLogout() {
+  api("/api/admin/session", { method: "DELETE" }).catch(function () {});
+  showLogin();
+}
+function enterApp() {
+  show("scr-app");
+  $("#hdSub").textContent = "ওয়েব প্যানেল · " + state.base.replace(/^https?:\/\//, "");
+  $("#pinDefaultWarn").classList.toggle("hide", !(state.webPin && state.webPin.isDefault));
+  if (!state.users.length) loadUsers();
+  setTab("users");
+}
+
+/* ---------------- tabs ---------------- */
+function setTab(t) {
+  state.tab = t;
+  $("#tab-users").classList.toggle("active", t === "users");
+  $("#tab-ads").classList.toggle("active", t === "ads");
+  $("#tab-set").classList.toggle("active", t === "set");
+  $("#pane-users").classList.toggle("hide", t !== "users");
+  $("#pane-ads").classList.toggle("hide", t !== "ads");
+  $("#pane-set").classList.toggle("hide", t !== "set");
+  if (t === "ads" && !state.ads) loadAds();
+}
+function setFilter(f) {
+  state.filter = f;
+  ["all", "google", "email", "banned"].forEach(function (k) {
+    $("#f-" + k).classList.toggle("active", k === f);
+    $("#f-" + k).style.background = k === f ? "var(--em600)" : "";
+    $("#f-" + k).style.color = k === f ? "#fff" : "";
+  });
+  renderUsers();
+}
+
+/* ---------------- users ---------------- */
+async function loadUsers() {
+  var tb = $("#usersBody");
+  tb.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:34px" class="dim spin">লোড হচ্ছে…</td></tr>';
+  try {
+    var j = await api("/api/admin/users?pages=5");
+    state.users = j.users || []; state.stats = j.stats || null;
+    renderStats(); renderUsers();
+  } catch (e) {
+    if (e && e.auth) return;
+    tb.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px" class="err show">লোড হয়নি — সার্ভার চালু আছে তো?</td></tr>';
+  }
+}
+function renderStats() {
+  var s = state.stats || {};
+  var cards = [
+    { l: "👥 মোট ইউজার", v: s.total, c: "var(--tx)" },
+    { l: "🔵 Google (জিমেইল)", v: s.google, c: "var(--sky)" },
+    { l: "✉️ ইমেইল (ম্যানুয়াল)", v: s.email, c: "var(--em300)" },
+    { l: "⚡ আজ অ্যাক্টিভ", v: s.activeToday, c: "var(--amber)" },
+    { l: "📈 অ্যাপ ব্যবহার করছে", v: s.withApp, c: "var(--violet)" },
+    { l: "🚫 ব্যান হওয়া", v: s.banned, c: "var(--rose)" }
+  ];
+  $("#statsRow").innerHTML = cards.map(function (c) {
+    return '<div class="stat"><p class="l">' + c.l + '</p><p class="v" style="color:' + c.c + '">' + bn(c.v || 0) + "</p></div>";
+  }).join("");
+  $("#usersCount").textContent =
+    "মোট " + bn(state.users.length) + " অ্যাকাউন্ট লোড হয়েছে (প্রথম ৫০০) · সারিতে চাপলে ওই ইউজারের ১৪ দিনের পুরো রিপোর্ট + ব্যান/পাসওয়ার্ড/ডিলিট অপশন আসবে";
+}
+function prayerCell(u) {
+  if (u.today) return '<span class="mono">' + bn(u.today.prayers) + "/৫</span>";
+  if (u.lastDay) return '<span class="mono dim" title="শেষ লগ ' + esc(u.lastDay.date) + '">' + bn(u.lastDay.prayers) + "/৫</span>";
+  return "—";
+}
+function renderUsers() {
+  var q = String($("#searchBox").value || "").trim().toLowerCase();
+  var list = state.users.filter(function (u) {
+    if (state.filter === "google" && u.provider !== "google") return false;
+    if (state.filter === "email" && u.provider !== "password") return false;
+    if (state.filter === "banned" && !u.disabled) return false;
+    if (!q) return true;
+    return (u.name || "").toLowerCase().indexOf(q) >= 0 || (u.email || "").toLowerCase().indexOf(q) >= 0;
+  });
+  if (!list.length) {
+    $("#usersBody").innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px" class="dim">কেউ পাওয়া যায়নি</td></tr>';
+    return;
+  }
+  $("#usersBody").innerHTML = list.map(function (u) {
+    var reels = u.today && u.today.reelsMin !== null && u.today.reelsMin !== undefined
+      ? '<span class="' + (u.today.reelsMin > 60 ? "mono" : "mono dim") + '"' + (u.today.reelsMin > 60 ? ' style="color:var(--rose);font-weight:800"' : "") + ">" + bn(u.today.reelsMin) + "মি</span>"
+      : "—";
+    return "<tr class=\"row\" onclick=\"openDetail('" + esc(u.uid) + "')\">" +
+      '<td><span class="name">' + esc(u.name || "—") + "</span></td>" +
+      '<td><span class="mail">' + esc(u.email || "—") + "</span></td>" +
+      "<td>" + (u.provider === "google" ? "🔵 Google" : "✉️ ইমেইল") + "</td>" +
+      "<td>" + (u.disabled ? '<span class="chip chip-ban">🚫 ব্যান</span>' : '<span class="chip chip-ok">✅ সক্রিয়</span>') + "</td>" +
+      "<td>" + prayerCell(u) + "</td>" +
+      '<td><span class="mono dim">' + (u.today ? bn(u.today.waterMl) + "মি°" : "—") + "</span></td>" +
+      "<td>" + reels + "</td>" +
+      "<td>" + (u.days ? "🔥 " + bn(u.streak) : "—") + "</td>" +
+      '<td class="tiny dim">' + (u.lastActive ? timeAgo(u.lastActive) : "—") + "</td>" +
+      '<td><button class="btn btn-gray" style="padding:5px 11px;font-size:11px" onclick="event.stopPropagation();openDetail(\'' + esc(u.uid) + "')\">দেখো ›</button></td>" +
+      "</tr>";
+  }).join("");
+}
+
+/* ---------------- user detail ---------------- */
+async function openDetail(uid) {
+  state.detailUid = uid; state.confirmKey = ""; state.detail = null;
+  $("#modalBack").classList.add("open");
+  $("#detailBox").innerHTML = '<p class="dim spin" style="text-align:center;padding:30px">লোড হচ্ছে…</p>';
+  try {
+    var d = await api("/api/admin/user/" + encodeURIComponent(uid));
+    state.detail = d;
+    renderDetail();
+  } catch (e) {
+    if (e && e.auth) return;
+    $("#detailBox").innerHTML = '<p class="err show" style="padding:20px">লোড হয়নি — আবার খোলো</p>';
+  }
+}
+function closeModal() { $("#modalBack").classList.remove("open"); }
+function renderDetail() {
+  var d = state.detail;
+  if (!d) return;
+  var u = d.user || {};
+  var days = d.days || [];
+  var squares = function (arr) { return (arr || []).map(function (p) { return p ? "🟩" : "⬜"; }).join(""); };
+  var rows = days.length ? days.map(function (dd) {
+    var reelsStyle = (dd.reelsMin || 0) > 60 ? "color:var(--rose);font-weight:800" : "";
+    return "<tr>" +
+      '<td class="mono dim">' + esc(dd.date) + "</td>" +
+      '<td style="text-align:center"><span class="mono">' + bn((dd.prayers || []).filter(Boolean).length) + "/৫</span> <span class=\"dim\">" + squares(dd.prayers) + "</span></td>" +
+      '<td style="color:var(--sky)">' + bn(dd.waterMl) + "মি°</td>" +
+      '<td style="' + reelsStyle + '">' + (dd.reelsMin === null ? "—" : bn(dd.reelsMin) + "মি") + "</td>" +
+      '<td style="color:var(--amber)">' + bn(dd.dhikr) + "</td>" +
+      '<td class="dim">' + bn(dd.meditationMin) + "মি</td>" +
+      '<td class="dim tiny mono">' + esc(dd.sleepBed || "—") + "→" + esc(dd.sleepWake || "—") + "</td>" +
+      "</tr>";
+  }).join("") : '<tr><td colspan="7" style="text-align:center;padding:14px" class="dim">কোনো হ্যাবিট ডেটা নেই — এখনো অ্যাপ ব্যবহার করেনি</td></tr>';
+
+  $("#detailBox").innerHTML =
+    '<div class="idbox">' +
+      '<p style="font-size:19px;font-weight:800;color:var(--em300)">' + esc(d.name || u.displayName || "—") + "</p>" +
+      '<p class="small dim">✉️ ' + esc(u.email || "—") + "</p>" +
+      '<p class="tiny dim">' + (u.provider === "google" ? "🔵 Google (জিমেইল) দিয়ে অ্যাকাউন্ট" : "✉️ ইমেইল (ম্যানুয়াল) দিয়ে অ্যাকাউন্ট") + (u.emailVerified ? " · ✅ ভেরিফাইড" : " · ⏳ ভেরিফাই হয়নি") + "</p>" +
+      '<p class="tiny dim">অ্যাকাউন্ট খোলা: ' + fmtDate(u.createdAt) + " · শেষ লগইন: " + fmtDate(u.lastSignIn) + "</p>" +
+      '<p class="tiny dim">ক্লাউড ব্যাকআপ: ' + (d.backupUpdatedAt ? timeAgo(d.backupUpdatedAt) : "নেই") + "</p>" +
+      '<p class="tiny dim">স্ট্রিক: 🔥 ' + bn((d.settings || {}).streak) + " · পয়েন্ট: ⭐ " + bn(d.points) + " · বন্ধু: " + bn((d.friends || []).length) + "</p>" +
+      (u.disabled ? '<p class="small" style="color:var(--rose);font-weight:800">🚫 এই অ্যাকাউন্ট ব্যান করা আছে</p>' : "") +
+    "</div>" +
+    '<div class="idbox">' +
+      '<p class="small" style="font-weight:800;margin-bottom:8px">📅 শেষ ১৪ দিনের রিয়েল স্ট্যাটাস</p>' +
+      '<div style="overflow:auto"><table class="daystbl"><thead><tr>' +
+      "<th>তারিখ</th><th>নামাজ</th><th>পানি</th><th>রিলস</th><th>যিকির</th><th>মেডি</th><th>ঘুম</th>" +
+      "</tr></thead><tbody>" + rows + "</tbody></table></div>" +
+    "</div>" +
+    '<div class="act" id="actBox"></div>';
+  renderActions();
+}
+function renderActions() {
+  var d = state.detail, u = d ? d.user || {} : {};
+  if (!d) return;
+  var ck = state.confirmKey;
+  $("#actBox").innerHTML =
+    '<p class="small" style="font-weight:800;margin-bottom:10px">⚙️ অ্যাডমিন অ্যাকশন</p>' +
+    '<div class="grow" style="margin-bottom:10px">' +
+      '<input id="setPassVal" class="field mono" style="flex:1;min-width:170px" placeholder="নতুন পাসওয়ার্ড (৬+ অক্ষর)" />' +
+      '<button class="btn btn-em" onclick="actSetpass()">🔑 পাসওয়ার্ড বদলাও</button>' +
+      '<button class="btn btn-gray" onclick="actDo(\'resetmail\')">✉️ রিসেট মেইল</button>' +
+    "</div>" +
+    '<div class="grow">' +
+      (u.disabled
+        ? '<button class="btn btn-em" onclick="actDo(\'unban\')">✅ আনব্যান করো</button>'
+        : ck === "ban"
+          ? '<button class="btn btn-red spin" onclick="actDo(\'ban\')">⚠️ হ্যাঁ, ব্যান করে দাও!</button> <button class="btn btn-gray" onclick="state.confirmKey=\'\';renderActions()">না</button>'
+          : '<button class="btn btn-rose" onclick="confirmOr(\'ban\')">🚫 ব্যান করো</button>') +
+      (ck === "del"
+        ? '<button class="btn btn-red spin" onclick="actDo(\'delete\')">⚠️ হ্যাঁ, পুরো অ্যাকাউন্ট মুছে দাও!</button> <button class="btn btn-gray" onclick="state.confirmKey=\'\';renderActions()">না</button>'
+        : '<button class="btn btn-rose" onclick="confirmOr(\'del\')">🗑️ অ্যাকাউন্ট ডিলিট</button>') +
+    "</div>" +
+    '<p class="msg" id="actMsg"></p>' +
+    '<p class="note">ব্যান করলে ইউজারের সেশন কয়েক মিনিটের মধ্যে মারা যাবে আর লগইনে “অ্যাকাউন্ট ব্যান করা হয়েছে” দেখাবে। ডিলিট করলে অ্যাকাউন্ট + ক্লাউড ডেটা সব মুছে যাবে — ফেরানো যাবে না।</p>';
+}
+function confirmOr(key) {
+  if (state.confirmKey === key) { state.confirmKey = ""; actDo(key === "ban" ? "ban" : "delete"); return; }
+  state.confirmKey = key; renderActions();
+}
+function actSetpass() {
+  var v = String(($("#setPassVal") || {}).value || "").trim();
+  if (v.length < 6) { actMsg("পাসওয়ার্ড অন্তত ৬ অক্ষরের হতে হবে", true); return; }
+  actDo("setpass", { password: v });
+}
+function actMsg(text, bad) {
+  var el = $("#actMsg");
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = bad ? "var(--rose)" : "";
+  el.classList.add("show");
+}
+async function actDo(action, extra) {
+  var uid = state.detailUid;
+  actMsg("⏳ হচ্ছে…");
+  try {
+    var j = await api("/api/admin/user/" + encodeURIComponent(uid), { method: "POST", body: Object.assign({ action: action }, extra || {}) });
+    if (j && j.ok) {
+      await loadUsers();
+      if (action === "delete") { closeModal(); return; }
+      await openDetail(uid);
+    } else {
+      actMsg((j && (j.message || j.error)) || "হয়নি", true);
+    }
+  } catch (e) {
+    if (e && e.auth) return;
+    if (e && e.data && e.data.message) actMsg(e.data.message, true);
+    else actMsg("নেটওয়ার্ক সমস্যা", true);
+  }
+}
+
+/* ---------------- ads ---------------- */
+async function loadAds() {
+  try {
+    var j = await api("/api/admin/ads");
+    var cfg = j.meta && j.meta.cfg;
+    if (typeof cfg === "string") { try { cfg = JSON.parse(cfg); } catch (e) { cfg = null; } }
+    if (!cfg) { adsMsg("অ্যাড কনফিগ পাওয়া যায়নি", true); return; }
+    state.ads = cfg;
+    if (!state.ads.at) state.ads.at = {};
+    if (!state.ads.ads) state.ads.ads = {};
+    $("#adsMaster").classList.toggle("on", !!state.ads.adsEnabled);
+    $("#amBanner").value = ((state.ads.ads.banner || {}).id) || "";
+    $("#amNative").value = ((state.ads.ads.native || {}).id) || "";
+    $("#amRewarded").value = ((state.ads.ads.rewarded || {}).id) || "";
+    $("#upVersion").value = state.ads.latestVersion || "";
+    $("#upApk").value = state.ads.apkUrl || "";
+    $("#upChg").value = state.ads.changelog || "";
+    $("#upForce").checked = !!state.ads.forceUpdate;
+    renderZones();
+  } catch (e) {
+    if (e && e.auth) return;
+    adsMsg("অ্যাড কনফিগ লোড হয়নি — সার্ভার দেখো", true);
+  }
+}
+function renderZones() {
+  $("#zonesBox").innerHTML = AT_ZONES.map(function (z) {
+    var zone = (state.ads.at || {})[z.key] || { on: false, code: "" };
+    return '<div class="zone">' +
+      '<div class="zt"><div style="min-width:0"><p class="zl">' + z.label + '</p><p class="zh">' + z.hint + "</p></div>" +
+      '<button class="toggle mini' + (zone.on ? " on" : "") + '" onclick="zoneToggle(\'' + z.key + '\')"></button></div>' +
+      '<textarea rows="2" placeholder="Adsterra ড্যাশবোর্ড থেকে GET CODE কপি করে এখানে পেস্ট করো" oninput="zoneCode(this,\'' + z.key + '\')">' + esc(zone.code || "") + "</textarea>" +
+      "</div>";
+  }).join("");
+}
+function zoneToggle(key) {
+  var z = state.ads.at[key] || (state.ads.at[key] = { on: false, code: "" });
+  z.on = !z.on;
+  renderZones();
+}
+function zoneCode(ta, key) {
+  var z = state.ads.at[key] || (state.ads.at[key] = { on: false, code: "" });
+  z.code = ta.value;
+}
+function toggleMaster() {
+  state.ads.adsEnabled = !state.ads.adsEnabled;
+  $("#adsMaster").classList.toggle("on", state.ads.adsEnabled);
+}
+function adsMsg(text, bad) {
+  var el = $("#adsMsg");
+  el.textContent = text;
+  el.style.color = bad ? "var(--rose)" : "";
+  el.classList.add("show");
+  clearTimeout(adsMsg._t);
+  adsMsg._t = setTimeout(function () { el.classList.remove("show"); }, 6000);
+}
+async function saveAds() {
+  if (!state.ads) return;
+  state.ads.ads = state.ads.ads || {};
+  state.ads.ads.banner = Object.assign({}, state.ads.ads.banner, { id: $("#amBanner").value.trim() });
+  state.ads.ads.native = Object.assign({}, state.ads.ads.native, { id: $("#amNative").value.trim() });
+  state.ads.ads.rewarded = Object.assign({}, state.ads.ads.rewarded, { id: $("#amRewarded").value.trim() });
+  state.ads.latestVersion = $("#upVersion").value.trim();
+  state.ads.apkUrl = $("#upApk").value.trim();
+  state.ads.changelog = $("#upChg").value;
+  state.ads.forceUpdate = $("#upForce").checked;
+  adsMsg("⏳ সেভ হচ্ছে…");
+  try {
+    var j = await api("/api/admin/ads", { method: "POST", body: { cfg: state.ads } });
+    if (j && j.ok) adsMsg(j.message || "সেভ হয়ে গেছে ✅");
+    else adsMsg("সেভ হয়নি", true);
+  } catch (e) {
+    if (e && e.auth) return;
+    adsMsg((e && e.data && e.data.message) || "নেটওয়ার্ক সমস্যা", true);
+  }
+}
+
+/* ---------------- pin change ---------------- */
+async function changePin() {
+  var cur = $("#curPin").value.trim();
+  var nw = $("#newPin").value.trim();
+  var m = $("#pinMsg");
+  m.classList.remove("show");
+  function bad(t) { m.textContent = t; m.style.color = "var(--rose)"; m.classList.add("show"); }
+  if (!cur || !nw) return bad("দুইটা ঘরই পূরণ করো");
+  if (nw.length < 3 || nw.length > 12) return bad("নতুন পিন ৩–১২ অক্ষরের হতে হবে");
+  var btn = $("#pinBtn"); btn.disabled = true;
+  try {
+    var j = await api("/api/admin/session", { method: "POST", body: { pin: cur, newPin: nw } });
+    if (j && j.ok && j.token) {
+      state.token = j.token; lsSet(LS_TOKEN, j.token);
+      state.webPin = { isDefault: false };
+      $("#pinDefaultWarn").classList.add("hide");
+      $("#curPin").value = ""; $("#newPin").value = "";
+      m.textContent = j.message || "নতুন পিন সেভ হয়েছে ✅";
+      m.style.color = ""; m.classList.add("show");
+    } else {
+      bad((j && j.message) || "হয়নি");
+    }
+  } catch (e) {
+    if (e && e.auth) return;
+    bad((e && e.data && e.data.message) || "হয়নি — আবার চেষ্টা করো");
+  } finally { btn.disabled = false; }
+}
+
+/* ---------------- start ---------------- */
+boot();
+</script>
+</body>
+</html>
