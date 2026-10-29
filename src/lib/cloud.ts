@@ -466,6 +466,8 @@ export interface ChatMsg {
   fromName: string; // sender's REGISTERED name
   text?: string;
   image?: string; // compressed dataURL (≤ ~700KB — Firestore doc limit safety)
+  audio?: string; // v3.3: voice message — base64 dataURL of an .webm/.opus clip
+  audioDur?: number; // v3.3: voice duration in seconds (for UI display)
   createdAt: number;
 }
 
@@ -476,7 +478,13 @@ export async function fbSendChat(
   serverCfg?: Partial<ServerCfg> | null
 ): Promise<boolean> {
   const st = await ensureFirebase(serverCfg);
-  if (!st.configured) return false;
+  if (!st.configured) {
+    // v3.3 OFFLINE: queue the message — the app will retry when the network
+    // returns. Without this, an offline send returned `false` and the user
+    // had to manually retype everything. Now it's saved and flushed later.
+    queueChatMessage(pairKey, msg);
+    return false;
+  }
   try {
     const { doc, setDoc } = await import("firebase/firestore");
     await setDoc(
@@ -485,10 +493,79 @@ export async function fbSendChat(
       { merge: true }
     );
     return true;
-  } catch {
+  } catch (e: any) {
+    // offline / network error → queue for later flush
+    if (String(e?.code || e || "").match(/unavailable|offline|network|failed-precondition/i)) {
+      queueChatMessage(pairKey, msg);
+    }
     return false;
   }
 }
+
+// ---------- v3.3: OFFLINE CHAT QUEUE (store-and-forward) ----------
+// Owner: "নেট না থাকলেও চ্যাট লিখব — সেভ থাকবে, নেট এলে অটো যাবে।"
+// Queue lives in localStorage (small, persists across app restarts). A single
+// flusher (debounced + online listener) drains the queue when the network
+// returns. Each queued message keeps the SAME id → no duplicate sends.
+
+const QUEUE_KEY = "oh_chat_queue";
+interface QueuedMsg { pairKey: string; msg: ChatMsg; attempts: number; }
+
+function readQueue(): QueuedMsg[] {
+  try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || "[]"); } catch { return []; }
+}
+function writeQueue(q: QueuedMsg[]) {
+  try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q.slice(0, 500))); } catch { /* ignore */ }
+}
+function queueChatMessage(pairKey: string, msg: ChatMsg) {
+  const q = readQueue();
+  // dedupe by id — never queue the same message twice
+  if (!q.some((x) => x.msg.id === msg.id)) q.push({ pairKey, msg, attempts: 0 });
+  writeQueue(q);
+  scheduleFlush();
+}
+let flushTimer: any = null;
+async function flushChatQueue() {
+  const q = readQueue();
+  if (!q.length) return;
+  const st = await ensureFirebase(null);
+  if (!st.configured) return;
+  const { doc, setDoc } = await import("firebase/firestore");
+  const remaining: QueuedMsg[] = [];
+  for (const item of q) {
+    try {
+      await setDoc(
+        doc(fsDb!, "pairs", item.pairKey, "notes", item.msg.id),
+        JSON.parse(JSON.stringify(item.msg)),
+        { merge: true }
+      );
+      // success — drop from queue
+    } catch (e: any) {
+      item.attempts++;
+      // keep retrying for up to 50 attempts (then give up to avoid infinite queue)
+      if (item.attempts < 50) remaining.push(item);
+    }
+  }
+  writeQueue(remaining);
+}
+function scheduleFlush() {
+  if (flushTimer) return;
+  // try now, then every 30s until queue drains
+  flushTimer = setInterval(() => {
+    flushChatQueue().catch(() => {}).finally(() => {
+      if (!readQueue().length) { clearInterval(flushTimer); flushTimer = null; }
+    });
+  }, 30_000);
+  void flushChatQueue().catch(() => {});
+}
+// on app start + when the browser comes online, drain the queue
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => void flushChatQueue().catch(() => {}));
+  // try a flush 5s after every page load (catches messages queued in a prior session)
+  setTimeout(() => void flushChatQueue().catch(() => {}), 5000);
+}
+/** Public helper: returns how many messages are currently queued (offline). */
+export function chatQueueSize(): number { return readQueue().length; }
 
 /**
  * The state the background OhKeepAliveService listener page needs — the MAIN
@@ -584,24 +661,37 @@ export function listenNotes(
   serverCfg?: Partial<ServerCfg> | null
 ): (() => void) | null {
   if (!fbConfigured(serverCfg)) return null;
+  // v3.3 FIX: return a REAL unsubscribe that waits for the async onSnapshot
+  // registration to finish, then calls its returned unsubscribe. Without this,
+  // the old `() => undefined` left the listener leaking AND — worse — the
+  // caller's useEffect cleanup fired before onSnapshot ever registered, so
+  // listeners were silently dropped on quick re-renders (chat stopped updating).
+  let realUnsub: (() => void) | null = null;
+  let cancelled = false;
   ensureFirebase(serverCfg).then((st) => {
-    if (!st.configured) return;
+    if (!st.configured || cancelled) return;
     import("firebase/firestore").then(({ collection, onSnapshot, orderBy, query }) => {
+      if (cancelled) return;
       const q = query(collection(fsDb!, "pairs", pairKey, "notes"), orderBy("createdAt", "asc"));
-      return onSnapshot(
+      realUnsub = onSnapshot(
         q,
         (snap) => {
           const out: SharedNoteItem[] = [];
           snap.forEach((d) => out.push(d.data() as SharedNoteItem));
           cb(out);
         },
-        () => {
-          /* permission/offline — stay silent */
+        (err: any) => {
+          // v3.3: surface the error so the user knows WHY chat is silent
+          // (usually: Firestore rules denied, OR network offline)
+          console.warn("[listenNotes] error on", pairKey, err?.code || err);
         }
       );
     });
   });
-  return () => undefined;
+  return () => {
+    cancelled = true;
+    try { if (realUnsub) realUnsub(); } catch { /* ignore */ }
+  };
 }
 
 // ==================== AUTH: Email/Password + verification ====================
@@ -895,19 +985,31 @@ export async function pushDay(uid: string, summary: DaySummary, serverCfg?: Part
 /** Live-listen a friend's day summary from backups/{uid}.days — realtime for the partner card. */
 export function listenDay(uid: string, date: string, cb: (d: DaySummary | null) => void, serverCfg?: Partial<ServerCfg> | null): () => void {
   if (!fbConfigured(serverCfg)) { cb(null); return () => undefined; }
+  // v3.3 FIX: return a REAL unsubscribe (same bug as listenNotes — the old
+  // `() => undefined` left listeners leaking AND dropped them on re-render,
+  // which is why friends' daily status never showed up).
+  let realUnsub: (() => void) | null = null;
+  let cancelled = false;
   ensureFirebase(serverCfg).then((st) => {
-    if (!st.configured) { cb(null); return; }
+    if (!st.configured || cancelled) return;
     import("firebase/firestore").then(({ doc, onSnapshot }) => {
-      return onSnapshot(
+      if (cancelled) return;
+      realUnsub = onSnapshot(
         doc(fsDb!, "backups", uid),
         (snap) => {
           if (!snap.exists()) return cb(null);
           const days = (snap.data() as { days?: Record<string, DaySummary> }).days || {};
           cb(days[date] ?? null);
         },
-        () => cb(null)
+        (err: any) => {
+          console.warn("[listenDay] error for", uid, err?.code || err);
+          cb(null);
+        }
       );
     });
   });
-  return () => undefined;
+  return () => {
+    cancelled = true;
+    try { if (realUnsub) realUnsub(); } catch { /* ignore */ }
+  };
 }
