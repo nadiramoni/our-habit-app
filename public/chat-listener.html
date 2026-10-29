@@ -141,6 +141,81 @@
     });
   }
 
+  // ==================== v3.3: BACKGROUND UPDATE NOTIFICATION ====================
+  // Owner: "নতুন আপডেট দিলে পুরোনো ভার্সন ইউজারদের কাছে অটো নোটিফিকেশন যাবে।"
+  // Polls app/meta every 5 min for latestVersion + forceUpdate + apkUrl. When
+  // latestVersion > the version this APK was built with (stored in oh_chat_state
+  // by the main app at sign-in as "buildVersion"), posts an Android notif.
+  // The notif fires ONCE per new version (notifiedVersions cache in localStorage)
+  // so we don't spam the user every 5 min.
+
+  var VERSION_KEY = "oh_notified_versions";
+  var lastUpdateCheck = 0;
+  var UPDATE_CHECK_INTERVAL = 5 * 60 * 1000; // 5 min — same cadence as the main app
+
+  function readNotifiedVersions() {
+    try { return JSON.parse(localStorage.getItem(VERSION_KEY) || "[]"); } catch (e) { return []; }
+  }
+  function writeNotifiedVersions(arr) {
+    try { localStorage.setItem(VERSION_KEY, JSON.stringify(arr.slice(-50))); } catch (e) {}
+  }
+
+  // v2.7+ style semver compare: "2.9.1" > "2.9.0" → true
+  function versionGt(a, b) {
+    if (!a || !b) return false;
+    var pa = String(a).split(/[.+-]/), pb = String(b).split(/[.+-]/);
+    for (var i = 0; i < Math.max(pa.length, pb.length); i++) {
+      var na = parseInt(pa[i] || "0", 10) || 0;
+      var nb = parseInt(pb[i] || "0", 10) || 0;
+      if (na > nb) return true;
+      if (na < nb) return false;
+    }
+    return false;
+  }
+
+  function checkAppUpdate() {
+    if (!booted || !db) return;
+    var now = Date.now();
+    if (now - lastUpdateCheck < UPDATE_CHECK_INTERVAL) return;
+    lastUpdateCheck = now;
+    try {
+      loadMod("firebase-firestore.js").then(function (fs) {
+        try {
+          fs.getDoc(fs.doc(db, "app", "meta")).then(function (snap) {
+            if (!snap.exists()) return;
+            var meta = snap.data() || {};
+            var latest = meta.latestVersion;
+            if (!latest) return;
+            // the build's version comes from oh_chat_state (main app writes it)
+            var st = readState();
+            var cur = (st && (st.buildVersion || st.appVersion)) || "";
+            if (!cur) {
+              // fallback: try localStorage written at install time
+              try { cur = localStorage.getItem("oh_app_version") || ""; } catch (e) {}
+            }
+            if (!cur) return; // unknown current → don't notify
+            if (!versionGt(latest, cur)) return; // not newer
+
+            // dedupe — only notify ONCE per version
+            var notified = readNotifiedVersions();
+            if (notified.indexOf(latest) >= 0) return;
+            notified.push(latest);
+            writeNotifiedVersions(notified);
+
+            var title = "🔄 " + (window.__hasBn ? "অ্যাপ আপডেট এসেছে" : "App update available");
+            var body = (window.__hasBn ? "v" : "v") + latest + (meta.changelog ? (" — " + meta.changelog) : (window.__hasBn ? " — অ্যাপ খুলে আপডেট করো" : " — open the app to update"));
+            try {
+              if (window.OHNative && window.OHNative.postNotification) {
+                window.OHNative.postNotification(title, body, "app_update_" + latest);
+              }
+              log("update notif posted for v" + latest);
+            } catch (e) { log("update notif failed: " + e); }
+          }).catch(function (e) { log("meta read failed: " + e); });
+        } catch (e) { log("meta read err: " + e); }
+      }).catch(function (e) { log("fs load for update failed: " + e); });
+    } catch (e) { log("update check err: " + e); }
+  }
+
   // retry boot until the state appears (the app may not have written it yet)
   var bootTries = 0;
   var bootTimer = setInterval(function () {
@@ -154,6 +229,7 @@
   setInterval(function () {
     if (!booted) return;
     resubscribe();
+    checkAppUpdate();
   }, 30000);
 
   boot();
