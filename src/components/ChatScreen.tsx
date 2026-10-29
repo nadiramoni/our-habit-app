@@ -23,7 +23,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { useServerCfg } from "@/lib/cfg";
-import { ChatMsg, FbProfile, fbSendChat, listenNotes, listenProfile, pairKeyOf, writeChatListenerState } from "@/lib/cloud";
+import { ChatMsg, FbProfile, chatQueueSize, fbSendChat, listenNotes, listenProfile, pairKeyOf, writeChatListenerState } from "@/lib/cloud";
 import { uid as newId } from "@/lib/types";
 import { nativeVibrate } from "@/lib/native";
 
@@ -88,10 +88,9 @@ export default function ChatScreen() {
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const [photoBusy, setPhotoBusy] = useState(false);
-  const [photoErr, setPhotoErr] = useState("");
+  // v3.3 OFFLINE: shows "📨 অফলাইন — নেট এলে অটো যাবে" when a message was queued
+  const [offlineStatus, setOfflineStatus] = useState("");
   const listRef = useRef<HTMLDivElement | null>(null);
-  const fileRef = useRef<HTMLInputElement | null>(null);
   const readMarkedRef = useRef<string>("");
 
   // global open event
@@ -158,7 +157,7 @@ export default function ChatScreen() {
   }, [msgs.length, target]);
 
   const send = useCallback(
-    async (body: { text?: string; image?: string }) => {
+    async (body: { text?: string }) => {
       if (!acc?.uid || !pairKey) return;
       const msg: ChatMsg = {
         id: newId(),
@@ -166,50 +165,24 @@ export default function ChatScreen() {
         from: acc.uid,
         fromName: state.settings.name || acc.name || "Me",
         ...(body.text ? { text: body.text } : {}),
-        ...(body.image ? { image: body.image } : {}),
         createdAt: Date.now(),
       };
       setBusy(true);
       const ok = await fbSendChat(pairKey, msg, cfg);
       setBusy(false);
       if (!ok) {
-        // offline — keep the composer text so nothing is lost
-        if (body.text) setText(body.text);
+        // v3.3 OFFLINE: message is queued in localStorage — tell the user
+        const qn = chatQueueSize();
+        setOfflineStatus(qn > 0 ? `📨 অফলাইন — ${qn} মেসেজ সারিতে আছে, নেট এলে অটো যাবে` : "📨 অফলাইন — মেসেজ সেভ হয়েছে, নেট এলে যাবে");
+        setTimeout(() => setOfflineStatus(""), 4000);
       } else {
         setText("");
+        setOfflineStatus("");
         void nativeVibrate(15);
       }
     },
     [acc?.uid, acc?.name, pairKey, cfg, state.settings.name]
   );
-
-  const pickPhoto = useCallback(async () => {
-    setPhotoErr("");
-    setPhotoBusy(true);
-    try {
-      const input = fileRef.current;
-      if (!input?.files?.length) return; // cancelled
-      const compressed = await compressImage(input.files[0]);
-      if (!compressed) {
-        setPhotoErr(t("errGeneric"));
-        return;
-      }
-      if (compressed.length > 950_000) {
-        // Firestore doc limit safety — recompress smaller
-        const smaller = await compressImage(input.files[0], 720, 0.4);
-        if (!smaller || smaller.length > 950_000) {
-          setPhotoErr(t("chatPhotoBig"));
-          return;
-        }
-        await send({ image: smaller });
-      } else {
-        await send({ image: compressed });
-      }
-    } finally {
-      setPhotoBusy(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  }, [send, t]);
 
   if (!target) return null;
 
@@ -255,15 +228,6 @@ export default function ChatScreen() {
                   }`}
                 >
                   {!mine ? <div className="text-[10px] font-bold text-primary mb-0.5">{m.fromName || t("chatTitle")}</div> : null}
-                  {m.image ? (
-                     
-                    <img
-                      src={m.image}
-                      alt="photo"
-                      className="rounded-xl max-w-[220px] max-h-[280px] object-cover mb-1 border border-black/5"
-                      loading="lazy"
-                    />
-                  ) : null}
                   {m.text ? <div className="text-sm leading-snug break-words whitespace-pre-wrap">{m.text}</div> : null}
                   <div className={`text-[9px] mt-0.5 text-right ${mine ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
                     {timeOf(m.createdAt || 0)}
@@ -276,23 +240,12 @@ export default function ChatScreen() {
       </div>
 
       {/* composer */}
+      {offlineStatus && (
+        <div style={{ padding: "8px 14px 4px", background: "rgba(125,211,252,.08)", borderTop: "1px solid rgba(125,211,252,.25)", color: "#7dd3fc", fontSize: "11px", textAlign: "center" }}>
+          {offlineStatus}
+        </div>
+      )}
       <div className="border-t border-border bg-card px-3 py-2.5 flex items-end gap-2 shrink-0" style={{ paddingBottom: "max(10px, env(safe-area-inset-bottom))" }}>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={() => void pickPhoto()}
-        />
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          disabled={photoBusy || busy}
-          aria-label={t("chatPhoto")}
-          className="w-11 h-11 rounded-full bg-secondary text-lg flex items-center justify-center shrink-0 disabled:opacity-50 active:scale-95 transition-transform"
-        >
-          {photoBusy ? "…" : "📷"}
-        </button>
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -311,7 +264,6 @@ export default function ChatScreen() {
           {busy ? "…" : "➤"}
         </button>
       </div>
-      {photoErr ? <div className="px-4 pb-3 text-[11px] text-destructive">{photoErr}</div> : null}
     </div>
   );
 }
@@ -433,7 +385,8 @@ export function ChatWatchdog() {
               openPairRef.current !== p.key &&
               (last.createdAt || 0) > Date.now() - 60_000
             ) {
-              const body = last.text || t("chatImageMsg");
+              // v3.3: notification body — text-only chat
+              const body = last.text || t("chatNewMsg");
               fireNotif(`💬 ${last.fromName || p.name}`, body, "alarm.wav");
               void nativeVibrate(40);
             }
