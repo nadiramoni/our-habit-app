@@ -17,11 +17,52 @@ import {
   getLog,
   qiblaBearing,
 } from "@/lib/types";
-import { dayPoints, fetchPrayerTimes, reminderOfTheDay, dhikrTotal, computeStreaks } from "@/lib/logic";
+import { dayPoints, fetchPrayerTimes, reminderOfTheDay, dhikrTotal, computeStreaks, MAX_POINTS } from "@/lib/logic";
 import AdsBanner, { AtNativeInline } from "@/components/AdsBanner";
-import { isNative, nativeGetVideoUsage, nativeOpenUsageAccess, UsageResult } from "@/lib/native";
-import { playAdd, playFanfare, playMinus, playStart, playTick } from "@/lib/audio";
-import { nativeVibrate } from "@/lib/native";
+import { isNative, nativeGetVideoUsage, nativeOpenUsageAccess, nativeVibrate, UsageResult } from "@/lib/native";
+import { playAdd, playChime, playFanfare, playMinus, playStart, playTick } from "@/lib/audio";
+import { glassesOf, waterAlarmTimes, WaterAlarmCfg, shiftTime } from "@/lib/types";
+
+// ---------- v2.4: alarm ON/OFF confirmation popup (owner round-6 #3) ----------
+// "অ্যালার্ম চালু করলে সাথে সাথে একটি পপ-আপ: আপনার অ্যালার্মটি সফলভাবে চালু
+// হয়েছে" — green check animation, vibrates, auto-dismisses.
+function AlarmConfirm({ text }: { text: string }) {
+  return (
+    <div className="fixed inset-0 z-[92] flex items-center justify-center p-6 pointer-events-none">
+      <div className="alarm-confirm-pop rounded-3xl bg-card border-2 border-primary/50 shadow-2xl shadow-primary/30 px-6 py-5 flex flex-col items-center gap-2 text-center max-w-[320px]">
+        <span className="w-14 h-14 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-2xl font-extrabold shadow-lg shadow-primary/30">✓</span>
+        <p className="text-sm font-bold text-primary leading-snug">{text}</p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Shared hook for every alarm toggle: shows the success popup + vibrates.
+ * Pass on=false to show the "turned off" variant instead.
+ */
+function useAlarmConfirm() {
+  const { t } = useStore();
+  const [msg, setMsg] = useState<string | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const show = (on: boolean) => {
+    void nativeVibrate(on ? 40 : 20);
+    // v2.5: the owner asked for a SOUND too — every alarm ON plays a happy
+    // success jingle, OFF plays a soft chime (খাওয়ার অ্যালার্ম দিয়ে শুরু করে
+    // যতগুলা অ্যালার্ম অন করব তখন যাদের একটা সাউন্ড দেয়)
+    try {
+      if (on) playFanfare();
+      else playChime();
+    } catch {
+      /* audio not ready yet */
+    }
+    setMsg(on ? t("alarmOnToast") : t("alarmOffToast"));
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setMsg(null), 2000);
+  };
+  const node = msg ? <AlarmConfirm text={msg} /> : null;
+  return { show, node };
+}
 
 // ---------- Header ----------
 function Header({ onSecret }: { onSecret?: () => void }) {
@@ -107,55 +148,343 @@ function Header({ onSecret }: { onSecret?: () => void }) {
   );
 }
 
-// ---------- Daily reminder ----------
+// ---------- v2.5 MOSQUE CARD (owner round-7: ক্যাপ/উপরের কার্ডটা রেফারেন্স
+// অ্যাপের মতো সুন্দর মসজিদ কার্ড হবে — সেম স্টাইল) ----------
+function MosqueBadge() {
+  return (
+    <svg viewBox="0 0 96 96" className="w-full h-full" role="img" aria-label="Mosque">
+      <defs>
+        <linearGradient id="oh-mcard-sky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#2ea36f" />
+          <stop offset="100%" stopColor="#0d5c40" />
+        </linearGradient>
+      </defs>
+      <circle cx="48" cy="48" r="46" fill="url(#oh-mcard-sky)" />
+      <circle cx="24" cy="26" r="2" fill="#ffe9a3" opacity="0.9" />
+      <circle cx="72" cy="20" r="1.6" fill="#ffe9a3" opacity="0.8" />
+      <circle cx="66" cy="34" r="1.4" fill="#fff" opacity="0.7" />
+      <path d="M48 18 a9 9 0 1 0 0.01 0 z" fill="none" />
+      <path d="M62 22 a10 10 0 1 1 -6 -18 a8 8 0 1 0 6 18 z" fill="#ffe9a3" />
+      {/* minarets */}
+      <rect x="16" y="46" width="7" height="34" rx="3" fill="#0b4d36" />
+      <circle cx="19.5" cy="44" r="5" fill="#0b4d36" />
+      <circle cx="19.5" cy="41" r="1.6" fill="#ffe9a3" />
+      <rect x="73" y="46" width="7" height="34" rx="3" fill="#0b4d36" />
+      <circle cx="76.5" cy="44" r="5" fill="#0b4d36" />
+      <circle cx="76.5" cy="41" r="1.6" fill="#ffe9a3" />
+      {/* hall */}
+      <rect x="28" y="62" width="40" height="18" rx="3" fill="#0b4d36" />
+      <path d="M45 80 v-10 a3.5 3.5 0 0 1 7 0 v10 z" fill="#063928" />
+      {/* dome */}
+      <path d="M48 32 c9 0 14 7 16 15 c-10 4 -22 4 -32 0 c2 -8 7 -15 16 -15 z" fill="#0b4d36" />
+      <path d="M48 28 l2.2 5 h-4.4 z" fill="#ffe9a3" />
+      <circle cx="48" cy="26.5" r="1.8" fill="#ffe9a3" />
+    </svg>
+  );
+}
+
+// ---------- Daily reminder (v2.5: reference-app style mosque card) ----------
 function ReminderCard() {
   const { today, state, t } = useStore();
   const r = reminderOfTheDay(today);
   const bn = state.settings.language === "bn";
   return (
-    <Card className="mb-4 quote-card bg-gradient-to-br from-primary/10 via-primary/5 to-transparent border-primary/20">
-      <div className="flex gap-3 items-start relative">
-        <span className="text-2xl">🕌</span>
-        <div>
-          <div className="text-[10px] font-bold text-primary uppercase tracking-wider">{t("dailyReminderCard")}</div>
-          <p className="text-sm mt-1 leading-snug">{bn ? r.bn : r.en}</p>
-          <p className="text-[11px] text-muted-foreground mt-1">— {r.src}</p>
+    <div
+      className="mb-4 rounded-3xl border border-primary/25 overflow-hidden relative"
+      style={{ background: "linear-gradient(135deg, rgba(46,163,111,0.16) 0%, rgba(13,92,64,0.10) 55%, transparent 100%)" }}
+    >
+      <div className="flex items-stretch gap-3 p-4">
+        <div className="w-16 h-16 rounded-2xl bg-primary/15 border border-primary/30 shadow-inner shrink-0 overflow-hidden flex items-center justify-center">
+          <MosqueBadge />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[10px] font-bold text-primary uppercase tracking-[0.18em] flex items-center gap-1.5">
+            <span className="inline-block w-4 h-[2px] rounded bg-primary/60" />
+            {t("dailyReminderCard")}
+          </div>
+          <p className="text-[15px] font-semibold leading-snug mt-1.5">{bn ? r.bn : r.en}</p>
+          <p className="text-[11px] text-muted-foreground mt-1.5">— {r.src}</p>
         </div>
       </div>
-    </Card>
+      {/* decorative bottom strip like the reference card */}
+      <div className="h-1.5 w-full" style={{ background: "linear-gradient(90deg, var(--primary) 0%, color-mix(in srgb, var(--primary) 35%, transparent) 60%, transparent 100%)" }} />
+    </div>
   );
 }
 
-// ---------- Weekly strip ----------
-function WeekStrip() {
+// ---------- v2.5 FULL MONTH CALENDAR (owner round-7) ----------
+// "শেষ ৭ দিন" আর থাকবে না — পুরো মাস জুড়ে তারিখ-ভিত্তিক ক্যালেন্ডার:
+//   • প্রতিটা দিনের রিং = ওই দিনের পয়েন্ট (শূন্য হলে খালি)
+//   • যেকোনো পুরোনো তারিখে চাপ দিলে ওই দিনে কী করা হয়েছিল / করা হয়নি
+//     (not-done গুলোতে স্পষ্ট ✗ "করা হয়নি" লেখা থাকবে — owner-এর
+//     "no habit" মার্কিং)
+//   • রেকর্ড-হীন দিনে "এই দিনে কোনো রেকর্ড নেই" (রেফারেন্স অ্যাপের মতো)
+function MonthCard() {
   const { state, today, t } = useStore();
-  const days = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = addDays(today, -i);
-    const l = state.logs[d];
-    const pts = l ? dayPoints(l) : 0;
-    days.push({ d, pts, pct: pts / 41 });
-  }
-  const lbl = (d: string) => {
+  const [sel, setSel] = useState(today);
+  const [view, setView] = useState(() => {
+    const [y, m] = today.split("-").map(Number);
+    return { y, m };
+  });
+  const cur = useMemo(() => {
+    const [y, m] = today.split("-").map(Number);
+    return { y, m };
+  }, [today]);
+  const isThisMonth = view.y === cur.y && view.m === cur.m;
+
+  const monthLabel = useMemo(() => {
+    try {
+      return new Intl.DateTimeFormat(state.settings.language === "bn" ? "bn-BD" : "en-GB", {
+        month: "long",
+        year: "numeric",
+      }).format(new Date(view.y, view.m - 1, 1));
+    } catch {
+      return `${view.y}-${String(view.m).padStart(2, "0")}`;
+    }
+  }, [view, state.settings.language]);
+
+  // Saturday-first grid (Bangladesh week: শনি → শুক্র)
+  const cells = useMemo(() => {
+    const lead = (new Date(view.y, view.m - 1, 1).getDay() + 1) % 7;
+    const days = new Date(view.y, view.m, 0).getDate();
+    const out: (string | null)[] = Array(lead).fill(null);
+    for (let d = 1; d <= days; d++) {
+      out.push(`${view.y}-${String(view.m).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
+    }
+    return out;
+  }, [view]);
+
+  const shiftMonth = (delta: number) => {
+    setView((v) => {
+      let m = v.m + delta;
+      let y = v.y;
+      if (m < 1) { m = 12; y -= 1; }
+      if (m > 12) { m = 1; y += 1; }
+      return { y, m };
+    });
+  };
+
+  const wd = (d: string) => {
     const [y, m, dd] = d.split("-").map(Number);
     return new Intl.DateTimeFormat(state.settings.language === "bn" ? "bn-BD" : "en-GB", { weekday: "narrow" }).format(
       new Date(y, m - 1, dd)
     );
   };
+
+  const weekdayLabels = useMemo(() => {
+    // one fixed reference week starting on a Saturday (2026-10-24 = শনিবার)
+    const fmt = (d: string) => {
+      const [y, m, dd] = d.split("-").map(Number);
+      return new Intl.DateTimeFormat(state.settings.language === "bn" ? "bn-BD" : "en-GB", { weekday: "narrow" }).format(
+        new Date(y, m - 1, dd)
+      );
+    };
+    return ["2026-10-24", "2026-10-25", "2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30"].map(fmt);
+  }, [state.settings.language]);
+
+  // ---------- selected day detail ----------
+  const selLog = state.logs[sel];
+  const selPts = selLog ? dayPoints(selLog) : 0;
+  const goal = state.settings.waterGoalMl;
+  const doneRow = (ok: boolean) =>
+    ok ? (
+      <span className="text-primary font-bold shrink-0">✓</span>
+    ) : (
+      <span className="text-destructive font-bold shrink-0" title={t("notDone")}>✗</span>
+    );
+  const hmFmt = (mins: number) =>
+    mins >= 60 ? `${Math.floor(mins / 60)} ${t("hour")} ${mins % 60} ${t("min")}` : `${mins} ${t("min")}`;
+
+  const selDateLabel = useMemo(() => {
+    try {
+      const [y, m, d] = sel.split("-").map(Number);
+      return new Intl.DateTimeFormat(state.settings.language === "bn" ? "bn-BD" : "en-GB", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      }).format(new Date(y, m - 1, d));
+    } catch {
+      return sel;
+    }
+  }, [sel, state.settings.language]);
+
+  const customList = state.customHabits || [];
+
   return (
     <Card className="mb-4">
-      <SectionTitle title={t("last7days")} />
-      <div className="grid grid-cols-7 gap-1.5">
-        {days.map((x) => (
-          <div key={x.d} className="flex flex-col items-center gap-1">
-            <Ring pct={x.pct} size={40} stroke={4}>
-              <span className="text-[9px] font-bold">{x.pts}</span>
-            </Ring>
-            <span className={`text-[10px] ${x.d === today ? "text-primary font-bold" : "text-muted-foreground"}`}>
-              {lbl(x.d)}
-            </span>
+      <SectionTitle title={`🗓 ${t("monthView")}`} sub={t("monthViewSub")} />
+
+      {/* month header: ‹ অক্টোবর ২০২৬ › */}
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <button
+          type="button"
+          onClick={() => shiftMonth(-1)}
+          aria-label="prev month"
+          className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center text-sm shrink-0 active:scale-95 transition-transform"
+        >
+          ‹
+        </button>
+        <div className="text-sm font-extrabold text-center flex-1 truncate">{monthLabel}</div>
+        <button
+          type="button"
+          onClick={() => shiftMonth(1)}
+          disabled={isThisMonth}
+          aria-label="next month"
+          className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center text-sm shrink-0 active:scale-95 transition-transform disabled:opacity-40"
+        >
+          ›
+        </button>
+      </div>
+
+      {/* weekday row */}
+      <div className="grid grid-cols-7 gap-1 mb-1">
+        {weekdayLabels.map((w, i) => (
+          <div key={i} className="text-center text-[9px] font-bold text-muted-foreground uppercase">
+            {w}
           </div>
         ))}
+      </div>
+
+      {/* day grid */}
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map((d, i) => {
+          if (!d) return <div key={`e${i}`} />;
+          const future = d > today;
+          const l = state.logs[d];
+          const pts = l ? dayPoints(l) : 0;
+          const pct = Math.max(0, Math.min(1, pts / MAX_POINTS));
+          const isSel = d === sel;
+          const isToday = d === today;
+          const dayNum = Number(d.split("-")[2]);
+          return (
+            <button
+              key={d}
+              type="button"
+              disabled={future}
+              onClick={() => setSel(d)}
+              className={`flex flex-col items-center gap-0.5 rounded-xl py-1 transition-all ${
+                future ? "opacity-30" : "active:scale-95"
+              } ${isSel ? "bg-primary/15 ring-1 ring-primary/50" : ""}`}
+            >
+              <Ring pct={pct} size={34} stroke={3.5}>
+                <span className={`text-[10px] font-bold leading-none ${isToday ? "text-primary" : ""}`}>{dayNum}</span>
+              </Ring>
+              <span className={`text-[8px] leading-none ${isToday ? "text-primary font-bold" : "text-muted-foreground"}`}>
+                {wd(d)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {sel !== today ? (
+        <button
+          type="button"
+          onClick={() => {
+            setSel(today);
+            setView(cur);
+          }}
+          className="mt-2 text-[11px] font-semibold text-primary bg-primary/10 border border-primary/25 rounded-full px-3 py-1.5 min-h-[32px]"
+        >
+          ↩ {t("goToday")}
+        </button>
+      ) : null}
+
+      {/* ---------- selected day's full record ---------- */}
+      <div className="mt-3 pt-3 border-t border-border">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="text-sm font-bold">{selDateLabel}</div>
+          {selLog ? (
+            <span className="text-[11px] font-bold text-primary bg-primary/10 border border-primary/25 rounded-full px-2.5 py-1 shrink-0">
+              ⚡ {selPts} {t("pointShort")}
+            </span>
+          ) : null}
+        </div>
+
+        {!selLog ? (
+          <div className="rounded-xl bg-secondary/60 border border-border px-3 py-4 text-center">
+            <div className="text-2xl mb-1">🕰️</div>
+            <p className="text-xs text-muted-foreground font-medium">{t("noRecordDay")}</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            {/* prayers */}
+            <div className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+              {doneRow(Object.values(selLog.prayers).filter(Boolean).length === 5)}
+              <span className="text-xs font-medium flex-1">🕌 {t("prayers")}</span>
+              <span className="text-[11px] font-bold">
+                {Object.values(selLog.prayers).filter(Boolean).length}/5
+              </span>
+            </div>
+            {/* water */}
+            <div className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+              {doneRow(selLog.waterMl >= goal)}
+              <span className="text-xs font-medium flex-1">💧 {t("water")}</span>
+              <span className="text-[11px] font-bold">
+                {glassesOf(selLog.waterMl)} {t("glassUnit")} · {(selLog.waterMl / 1000).toFixed(2)}L
+                {selLog.waterMl >= goal ? "" : ` · ${t("notDone")}`}
+              </span>
+            </div>
+            {/* prayer water */}
+            <div className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+              {doneRow(selLog.prayerWater.filter(Boolean).length === 5)}
+              <span className="text-xs font-medium flex-1">🥛 {t("prayerWater")}</span>
+              <span className="text-[11px] font-bold">{selLog.prayerWater.filter(Boolean).length}/5</span>
+            </div>
+            {/* reels */}
+            <div className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+              {doneRow(selLog.reelsMin !== null && selLog.reelsMin === 0)}
+              <span className="text-xs font-medium flex-1">🎬 {t("reels")}</span>
+              <span className={`text-[11px] font-bold ${selLog.reelsMin ? "text-destructive" : "text-primary"}`}>
+                {selLog.reelsMin === null ? t("notDone") : selLog.reelsMin === 0 ? `🔥 ${t("reelsFreeToday").split("!")[0]}` : hmFmt(selLog.reelsMin)}
+              </span>
+            </div>
+            {/* dhikr */}
+            <div className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+              {doneRow(dhikrTotal(selLog) >= 100)}
+              <span className="text-xs font-medium flex-1">📿 {t("dhikr")}</span>
+              <span className="text-[11px] font-bold">{dhikrTotal(selLog)}</span>
+            </div>
+            {/* meditation / focus */}
+            <div className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+              {doneRow(selLog.meditationMin >= 10)}
+              <span className="text-xs font-medium flex-1">🧘 {t("meditation")}</span>
+              <span className="text-[11px] font-bold">{hmFmt(selLog.meditationMin)}</span>
+            </div>
+            <div className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+              {doneRow(selLog.focusMin >= 25)}
+              <span className="text-xs font-medium flex-1">🎯 {t("focus")}</span>
+              <span className="text-[11px] font-bold">{hmFmt(selLog.focusMin)}</span>
+            </div>
+            {/* sleep */}
+            <div className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+              {doneRow(Boolean(selLog.sleepBed && selLog.sleepWake))}
+              <span className="text-xs font-medium flex-1">😴 {t("sleep")}</span>
+              <span className="text-[11px] font-bold">
+                {selLog.sleepBed && selLog.sleepWake ? `${selLog.sleepBed} → ${selLog.sleepWake}` : t("notDone")}
+              </span>
+            </div>
+            {/* custom habits — done AND not-done both listed (owner: no habit মার্কিং) */}
+            {customList.map((h) => (
+              <div key={h.id} className="flex items-center gap-2 rounded-xl bg-secondary/50 px-3 py-2">
+                {doneRow(Boolean(selLog.customDone?.[h.id]))}
+                <span className="text-xs font-medium flex-1 truncate">
+                  {h.icon} {h.name}
+                </span>
+                <span className={`text-[11px] font-bold ${selLog.customDone?.[h.id] ? "text-primary" : "text-destructive"}`}>
+                  {selLog.customDone?.[h.id] ? "✓" : t("notDone")}
+                </span>
+              </div>
+            ))}
+            {/* note */}
+            {selLog.note.trim() ? (
+              <div className="rounded-xl bg-secondary/50 px-3 py-2">
+                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">📝 {t("note")}</div>
+                <p className="text-xs leading-relaxed whitespace-pre-wrap break-words">{selLog.note}</p>
+              </div>
+            ) : null}
+          </div>
+        )}
       </div>
     </Card>
   );
@@ -203,7 +532,20 @@ export function PrayerCard() {
     }
     const times2 = await fetchPrayerTimes(lat, lng);
     if (times2) {
-      updateSettings({ prayerTimes: times2, prayerTimesDate: today, location: { lat, lng, label } });
+      // v2.5: adhan reminder TIMES auto-follow the fetched prayer times
+      // (on/off switches stay user-controlled — auto only moves the clock)
+      const st = state.settings;
+      const adhanAlerts = { ...st.adhanAlerts };
+      PRAYER_KEYS.forEach((pk) => {
+        adhanAlerts[pk] = { ...adhanAlerts[pk], time: times2[pk] };
+      });
+      updateSettings({
+        prayerTimes: times2,
+        prayerTimesDate: today,
+        location: { lat, lng, label },
+        adhanAlerts,
+        adhanAutoSet: true,
+      });
       setLocState("ok");
     } else setLocState("fail");
   };
@@ -358,6 +700,9 @@ function WaterCard() {
   const log = getLog(state, today);
   const goal = state.settings.waterGoalMl;
   const pct = Math.min(1, log.waterMl / goal);
+  const glasses = glassesOf(log.waterMl);
+  const goalGlasses = Math.max(1, Math.round(goal / 250));
+  const leftGlasses = Math.max(0, goalGlasses - glasses);
   const glassButtons = useMemo(() => {
     const n = Math.round(goal / 250);
     return Math.min(n, 12);
@@ -365,6 +710,7 @@ function WaterCard() {
 
   const add = (ml: number) => {
     updateLog(today, (l) => ({ waterMl: Math.max(0, l.waterMl + ml) }));
+    void nativeVibrate(ml > 0 ? 25 : 15);
     if (ml > 0) playAdd();
     else playMinus();
   };
@@ -389,11 +735,21 @@ function WaterCard() {
           {t("waterGoalReached")}
         </div>
       ) : null}
-      <div className="flex items-center justify-between text-sm mb-2">
-        <span className="font-bold">
-          {log.waterMl} <span className="text-xs text-muted-foreground font-normal">/ {goal} {t("waterOf")}</span>
-        </span>
-        <span className="text-xs text-muted-foreground">{Math.round(pct * 100)}%</span>
+      {/* v2.4: GLASSES first (owner: "আমি কত গ্লাস পানি খেয়েছি") — instant
+          numbers: drank / remaining / percent, all update immediately */}
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        <div className="rounded-xl bg-primary/10 border border-primary/25 px-2 py-2 text-center">
+          <div className="text-lg font-extrabold text-primary leading-none">{glasses}</div>
+          <div className="text-[9px] text-muted-foreground mt-1">{t("glassesDone")}</div>
+        </div>
+        <div className="rounded-xl bg-secondary/60 border border-border px-2 py-2 text-center">
+          <div className="text-lg font-extrabold leading-none">{leftGlasses}</div>
+          <div className="text-[9px] text-muted-foreground mt-1">{t("glassesLeft")}</div>
+        </div>
+        <div className="rounded-xl bg-secondary/60 border border-border px-2 py-2 text-center">
+          <div className="text-lg font-extrabold leading-none">{Math.round(pct * 100)}%</div>
+          <div className="text-[9px] text-muted-foreground mt-1">{t("waterOf")} {goal}ml</div>
+        </div>
       </div>
       <Bar pct={pct} className="mb-3" />
       <div className="flex flex-wrap gap-2 mb-2">
@@ -449,7 +805,11 @@ function WaterCard() {
   );
 }
 
-// ---------- Reels (detail page) ----------
+// ---------- Reels/Shorts (detail page) — v2.4 FULL AUTO REDESIGN ----------
+// Owner round-6 #8: NO manual minute input, NO plus/minus buttons, NO custom
+// time entry — the phone measures everything itself via Usage Access and the
+// card is a live dashboard. Shorts/Reels COUNT is REAL (each shorts-style
+// activity resume = one video opened, straight from OS UsageEvents).
 function ReelsCard() {
   const { state, updateLog, updateSettings, today, t } = useStore();
   const log = getLog(state, today);
@@ -457,44 +817,61 @@ function ReelsCard() {
   const total = Object.values(reels).reduce((a, b) => a + b, 0);
   const shorts = REEL_APPS.filter((a) => a.short).reduce((a, x) => a + reels[x.id], 0);
   const long = reels.ytlong;
-  const estCount = Math.round(shorts / 0.5); // avg reel ≈ 30s
-  const [customApp, setCustomApp] = useState<ReelApp | null>(null);
-  const [customVal, setCustomVal] = useState("");
   const [nativeOn, setNativeOn] = useState(false);
+  const [granted, setGranted] = useState<boolean | null>(null);
+  const [counts, setCounts] = useState({ total: 0, yt: 0, fb: 0, ig: 0 });
   const [autoBusy, setAutoBusy] = useState(false);
-  const [autoMsg, setAutoMsg] = useState("");
 
   useEffect(() => {
     const id = setTimeout(() => setNativeOn(isNative()), 0);
     return () => clearTimeout(id);
   }, []);
 
-  const autoTrack = async () => {
-    setAutoBusy(true);
-    setAutoMsg("");
-    let res: UsageResult | null = await nativeGetVideoUsage();
-    if (!res || !res.granted) {
-      await nativeOpenUsageAccess();
-      setAutoBusy(false);
-      setAutoMsg("permission");
+  // AUTO-TRACK: pull real numbers from the OS — no button press needed.
+  const autoTrack = async (silent = true) => {
+    if (!isNative()) return;
+    if (!silent) setAutoBusy(true);
+    const res: UsageResult | null = await nativeGetVideoUsage();
+    if (!res) {
+      if (!silent) setAutoBusy(false);
       return;
     }
-    updateLog(today, (l) => {
-      const next = {
-        ...emptyReels(),
-        ...(l.reels || {}),
-        facebook: res.facebook,
-        ytshorts: res.ytshorts,
-        tiktok: res.tiktok,
-        instagram: res.instagram,
-        ytlong: res.ytlong,
-        other: res.other,
-      };
-      const sum = Object.values(next).reduce((a, b) => a + b, 0);
-      return { reels: next, reelsMin: sum };
-    });
-    setAutoBusy(false);
+    setGranted(res.granted);
+    if (res.granted) {
+      setCounts({ total: res.shortsCount || 0, yt: res.shortsYt || 0, fb: res.shortsFb || 0, ig: res.shortsIg || 0 });
+      updateLog(today, (l) => {
+        const next = {
+          ...emptyReels(),
+          ...(l.reels || {}),
+          facebook: res.facebook,
+          ytshorts: res.ytshorts,
+          tiktok: res.tiktok,
+          instagram: res.instagram,
+          ytlong: res.ytlong,
+          other: res.other,
+        };
+        const sum = Object.values(next).reduce((a, b) => a + b, 0);
+        return { reels: next, reelsMin: sum };
+      });
+    }
+    if (!silent) setAutoBusy(false);
   };
+
+  // auto on open + every 5 min + when the user comes back to the app
+  useEffect(() => {
+    if (!nativeOn) return;
+    const first = setTimeout(() => void autoTrack(true), 0);
+    const iv = setInterval(() => void autoTrack(true), 5 * 60000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") void autoTrack(true);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearTimeout(first);
+      clearInterval(iv);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [nativeOn, today]);
 
   const weekWasted = useMemo(() => {
     let sum = 0;
@@ -505,52 +882,97 @@ function ReelsCard() {
     return sum;
   }, [state.logs, today]);
 
-  const setApp = (id: ReelApp, min: number) => {
-    updateLog(today, (l) => {
-      const next = { ...emptyReels(), ...(l.reels || {}), [id]: Math.max(0, Math.min(1440, min)) };
-      const sum = Object.values(next).reduce((a, b) => a + b, 0);
-      return { reels: next, reelsMin: sum };
-    });
-  };
+  // 2h 05min style display (owner: মিনিট ও ঘণ্টা হিসেবে)
+  const hm = (mins: number) => (mins >= 60 ? `${Math.floor(mins / 60)} ${t("hour")} ${mins % 60} ${t("min")}` : `${mins} ${t("min")}`);
 
-  const setFree = () => {
-    setCustomApp(null);
-    updateLog(today, { reels: emptyReels(), reelsMin: 0 });
-  };
-
-  const applyCustom = () => {
-    if (customApp && customVal) {
-      setApp(customApp, parseInt(customVal, 10) || 0);
-    }
-    setCustomApp(null);
-    setCustomVal("");
-  };
+  const appRows = REEL_APPS.map((a) => ({ ...a, min: reels[a.id] })).filter((r) => r.min > 0).sort((a, b) => b.min - a.min);
+  const maxRow = Math.max(1, ...appRows.map((r) => r.min));
 
   return (
     <Card className="mb-4">
       <SectionTitle
         title={`🎬 ${t("reels")}`}
-        sub={t("reelsPerAppSub")}
-        right={<span className="text-xs text-muted-foreground shrink-0">{t("reelsTotalToday")}: <b className={total > 0 ? "text-destructive" : "text-primary"}>{total} {t("min")}</b></span>}
+        sub={nativeOn ? t("autoTrackingOn") : t("autoTrackNote")}
+        right={<span className="text-xs text-muted-foreground shrink-0">{t("reelsTotalToday")}: <b className={total > 0 ? "text-destructive" : "text-primary"}>{hm(total)}</b></span>}
       />
-      <div className="flex flex-wrap gap-2 mb-3">
-        <Chip active={log.reelsMin === 0} onClick={setFree}>
-          ✂️ {t("reelsFreeToday").split("!")[0]}
-        </Chip>
-        {nativeOn ? (
+
+      {/* auto badge — the card measures itself */}
+      {nativeOn && granted ? (
+        <div className="rounded-xl bg-primary/10 border border-primary/25 px-3 py-2 text-[11px] font-semibold text-primary flex items-center gap-2 mb-3">
+          <span className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
+          🤖 {t("autoTrackingOn")}
+        </div>
+      ) : null}
+
+      {/* permission card — one tap to fix, then everything is automatic */}
+      {nativeOn && granted === false ? (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 mb-3">
+          <div className="text-sm font-bold text-amber-600 dark:text-amber-400 mb-1">📊 {t("usageNeedPerm")}</div>
+          <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">{t("usageAccessNote")}</p>
           <button
             type="button"
-            onClick={() => void autoTrack()}
-            disabled={autoBusy}
-            className="rounded-full bg-primary text-primary-foreground text-xs font-semibold px-3 py-1.5 min-h-[32px] disabled:opacity-50"
+            onClick={async () => {
+              await nativeOpenUsageAccess();
+              // re-check when the user comes back
+              setTimeout(() => void autoTrack(true), 1500);
+            }}
+            className="rounded-xl bg-primary text-primary-foreground text-xs font-semibold px-4 py-2.5 min-h-[40px]"
           >
-            🤖 {autoBusy ? "..." : t("autoTrackBtn")}
+            ⚙️ {t("permUsageOpen")}
           </button>
-        ) : null}
+        </div>
+      ) : null}
+
+      {/* headline stats: shorts count + total time + shorts/long split */}
+      {total > 0 || counts.total > 0 ? (
+        <>
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            <div className="rounded-xl bg-destructive/10 border border-destructive/25 px-2 py-2.5 text-center">
+              <div className="text-lg font-extrabold text-destructive leading-none">{counts.total}</div>
+              <div className="text-[9px] text-muted-foreground mt-1 leading-tight">{t("shortsWatched")}</div>
+            </div>
+            <div className="rounded-xl bg-amber-500/10 border border-amber-500/25 px-2 py-2.5 text-center">
+              <div className="text-lg font-extrabold text-amber-600 dark:text-amber-400 leading-none">{shorts}</div>
+              <div className="text-[9px] text-muted-foreground mt-1 leading-tight">{t("shortsVsLong")} ⚡ {t("min")}</div>
+            </div>
+            <div className="rounded-xl bg-sky-500/10 border border-sky-500/25 px-2 py-2.5 text-center">
+              <div className="text-lg font-extrabold text-sky-600 dark:text-sky-400 leading-none">{long}</div>
+              <div className="text-[9px] text-muted-foreground mt-1 leading-tight">{t("longWatched")} 📺 {t("min")}</div>
+            </div>
+          </div>
+          <div className="h-3 rounded-full overflow-hidden flex bg-muted mb-1.5">
+            <div className="h-full bg-destructive/80" style={{ width: `${total ? (shorts / total) * 100 : 0}%` }} />
+            <div className="h-full bg-amber-500/70" style={{ width: `${total ? (long / total) * 100 : 0}%` }} />
+          </div>
+          {counts.yt > 0 ? (
+            <p className="text-[10px] text-muted-foreground mb-2">▶️ YouTube Shorts: <b className="text-foreground">{counts.yt}</b>{counts.fb ? ` · 📘 Facebook Reels: ${counts.fb}` : ""}{counts.ig ? ` · 📸 Instagram: ${counts.ig}` : ""}</p>
+          ) : null}
+        </>
+      ) : (
+        <div className="rounded-xl bg-primary/10 text-primary text-sm font-medium px-3 py-2 mb-3">{t("reelsFreeToday")}</div>
+      )}
+
+      {/* per-app live minutes — READ-ONLY bars (manual entry removed) */}
+      {appRows.length ? (
+        <div className="text-xs font-semibold mb-1.5">{t("reelsPerApp")}</div>
+      ) : null}
+      <div className="flex flex-col gap-1.5">
+        {appRows.map((r) => (
+          <div key={r.id} className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/5 p-2">
+            <span className="text-base w-6 text-center shrink-0">{r.icon}</span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <span className="text-xs font-medium truncate">{t(`reel_${r.id}`)}</span>
+                <span className="text-[11px] font-bold text-destructive shrink-0">{hm(r.min)}</span>
+              </div>
+              <Bar pct={r.min / maxRow} className="h-1.5" />
+            </div>
+          </div>
+        ))}
       </div>
 
-      {/* daily limit — crossing it fires a REAL tracking notification (v2.1) */}
-      <div className="rounded-xl border border-border bg-secondary/40 p-2.5 mb-3">
+      {/* daily limit — crossing it fires a REAL tracking notification */}
+      <div className="rounded-xl border border-border bg-secondary/40 p-2.5 mt-3">
         <div className="text-xs font-semibold">⏰ {t("reelsLimitLabel")}</div>
         <div className="text-[10px] text-muted-foreground mb-2">{t("reelsLimitSub")}</div>
         <div className="flex flex-wrap gap-1.5">
@@ -568,96 +990,17 @@ function ReelsCard() {
           <div className="text-[11px] text-destructive font-semibold mt-2">🔔 {t("reelsLimitNotifTitle")}</div>
         ) : null}
       </div>
-      {nativeOn && autoMsg === "permission" ? (
-        <p className="text-[11px] text-amber-600 dark:text-amber-400 mb-2">⚙️ {t("usageAccessNote")}</p>
-      ) : null}
-
-      <div className="text-xs font-semibold mb-1.5">{t("reelsPerApp")}</div>
-      <div className="flex flex-col gap-1.5">
-        {REEL_APPS.map((a) => {
-          const v = reels[a.id];
-          return (
-            <div key={a.id} className={`flex items-center gap-2 rounded-xl border p-2 ${v > 0 ? "border-destructive/40 bg-destructive/5" : "border-border bg-secondary/40"}`}>
-              <span className="text-base w-6 text-center shrink-0">{a.icon}</span>
-              <span className="text-xs font-medium flex-1 min-w-0 truncate">{t(`reel_${a.id}`)}</span>
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  type="button"
-                  aria-label={`-${t("min")}`}
-                  onClick={() => setApp(a.id, v - 5)}
-                  className="w-8 h-8 rounded-lg bg-muted text-sm font-bold"
-                >
-                  −
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCustomApp(customApp === a.id ? null : a.id);
-                    setCustomVal("");
-                  }}
-                  className={`w-14 h-8 rounded-lg text-xs font-bold ${v > 0 ? "bg-destructive/15 text-destructive" : "bg-muted text-muted-foreground"}`}
-                >
-                  {v} {t("min")}
-                </button>
-                <button
-                  type="button"
-                  aria-label={`+${t("min")}`}
-                  onClick={() => setApp(a.id, v + 5)}
-                  className="w-8 h-8 rounded-lg bg-primary/15 text-primary text-sm font-bold"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {customApp ? (
-        <div className="flex gap-2 mt-2">
-          <input
-            inputMode="numeric"
-            autoFocus
-            placeholder={`${t("custom")} — ${t(`reel_${customApp}`)}`}
-            value={customVal}
-            onChange={(e) => setCustomVal(e.target.value.replace(/\D/g, ""))}
-            className="flex-1 bg-muted rounded-xl px-3 py-2 text-sm border border-border outline-none focus:ring-1 focus:ring-ring min-h-[44px]"
-          />
-          <button type="button" onClick={applyCustom} className="rounded-xl bg-primary text-primary-foreground px-4 text-sm min-h-[44px]">
-            OK
-          </button>
-        </div>
-      ) : null}
 
       {log.reelsMin !== null && log.reelsMin > 0 ? (
         <div className="rounded-xl bg-destructive/10 text-destructive text-sm font-medium px-3 py-2 mt-3">
-          ⏳ {log.reelsMin} {t("reelsWasted")}
-        </div>
-      ) : null}
-      {log.reelsMin === 0 ? (
-        <div className="rounded-xl bg-primary/10 text-primary text-sm font-medium px-3 py-2 mt-3">{t("reelsFreeToday")}</div>
-      ) : null}
-
-      {total > 0 ? (
-        <div className="mt-3 pt-3 border-t border-border">
-          <div className="flex items-center justify-between text-xs mb-1.5">
-            <span className="font-semibold">📊 {t("shortsVsLong")}</span>
-            <span className="text-muted-foreground">{t("estReelsCount")}: <b className="text-foreground">~{estCount}</b></span>
-          </div>
-          <div className="h-3 rounded-full overflow-hidden flex bg-muted">
-            <div className="h-full bg-destructive/80" style={{ width: `${total ? (shorts / total) * 100 : 0}%` }} />
-            <div className="h-full bg-amber-500/70" style={{ width: `${total ? (long / total) * 100 : 0}%` }} />
-          </div>
-          <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-            <span>⚡ {t("reel_ytshorts")}/{t("reel_tiktok")}/{t("reel_instagram")}: <b className="text-destructive">{shorts} {t("min")}</b></span>
-            <span>📺 {t("reel_ytlong")}: <b className="text-amber-600 dark:text-amber-400">{long} {t("min")}</b></span>
-          </div>
+          ⏳ {hm(log.reelsMin)} — {t("reelsWasted")}
         </div>
       ) : null}
 
       <p className="text-xs text-muted-foreground mt-3">
-        {t("reelsWeek")}: <b className="text-destructive">{weekWasted} {t("min")}</b> · {t("reelsWarning")}
+        {t("reelsWeek")}: <b className="text-destructive">{hm(weekWasted)}</b> · {t("reelsWarning")}
       </p>
-      <p className="text-[10px] text-muted-foreground mt-2 opacity-80">{t("autoTrackNote")}</p>
+      {!nativeOn ? <p className="text-[10px] text-muted-foreground mt-2 opacity-80">{t("autoTrackNote")}</p> : null}
     </Card>
   );
 }
@@ -898,39 +1241,6 @@ function TimerCard({
   );
 }
 
-// ---------- Mood ----------
-function MoodCard() {
-  const { state, updateLog, today, t } = useStore();
-  const log = getLog(state, today);
-  const faces = ["😞", "😕", "😐", "🙂", "😄"];
-  return (
-    <Card className="mb-4">
-      <SectionTitle title={`💛 ${t("mood")}`} sub={t("moodSub")} />
-      <div className="grid grid-cols-5 gap-2">
-        {faces.map((f, i) => {
-          const v = i + 1;
-          const on = log.mood === v;
-          return (
-            <button
-              key={v}
-              type="button"
-              onClick={() => {
-                updateLog(today, { mood: v });
-              }}
-              className={`rounded-xl border p-2 flex flex-col items-center gap-1 min-h-[64px] ${
-                on ? "bg-primary text-primary-foreground border-primary" : "bg-secondary border-transparent"
-              }`}
-            >
-              <span className="text-xl leading-none">{f}</span>
-              <span className="text-[9px] leading-none">{t(`mood${v}`)}</span>
-            </button>
-          );
-        })}
-      </div>
-    </Card>
-  );
-}
-
 // ---------- Sleep ----------
 function SleepCard() {
   const { state, updateLog, updateSettings, today, t } = useStore();
@@ -1097,15 +1407,16 @@ function MealsCard() {
           </div>
         ))}
       </div>
-      <p className="text-[10px] text-muted-foreground mt-2">🎵 {t("mealAlarmsCfgSub")}</p>
+      <p className="text-[10px] text-muted-foreground mt-2">🎵 {t("mealAlarmsCfgSub")} · 🎲 {t("mealMusicNote")}</p>
     </Card>
   );
 }
 
 // ---------- All alarms & reminders (detail page) ----------
 function AlarmsCard() {
-  const { state, updateSettings, t, notifPerm, askNotifPerm, fireNotif } = useStore();
+  const { state, updateSettings, t } = useStore();
   const s = state.settings;
+  const confirm = useAlarmConfirm();
 
   const setAdhanTime = (k: PrayerKey, patch: Partial<{ on: boolean; time: string }>) => {
     updateSettings({ adhanAlerts: { ...s.adhanAlerts, [k]: { ...s.adhanAlerts[k], ...patch } } });
@@ -1126,8 +1437,14 @@ function AlarmsCard() {
     alert(t("timesSet"));
   };
 
+  // v2.4 water alarm config with migration from the legacy hourly toggle
+  const wa: WaterAlarmCfg = s.waterAlarm || { on: false, intervalMin: 60, from: "09:00", to: "22:00" };
+  const setWa = (patch: Partial<WaterAlarmCfg>) => updateSettings({ waterAlarm: { ...wa, ...patch }, hourlyWater: false });
+  const timesPreview = wa.on ? waterAlarmTimes(wa) : [];
+
   return (
     <div>
+      {confirm.node}
       <Card className="mb-4">
         <SectionTitle title={`🕌 ${t("fajrAlarm")}`} sub={t("fajrAlarmSub")} />
         <div className="flex items-center justify-between gap-3">
@@ -1143,7 +1460,10 @@ function AlarmsCard() {
               type="button"
               role="switch"
               aria-checked={s.fajrAlarm.on}
-              onClick={() => updateSettings({ fajrAlarm: { ...s.fajrAlarm, on: !s.fajrAlarm.on } })}
+              onClick={() => {
+                confirm.show(!s.fajrAlarm.on);
+                updateSettings({ fajrAlarm: { ...s.fajrAlarm, on: !s.fajrAlarm.on } });
+              }}
               className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${s.fajrAlarm.on ? "bg-primary" : "bg-muted border border-border"}`}
             >
               <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${s.fajrAlarm.on ? "left-[22px]" : "left-0.5"}`} />
@@ -1164,6 +1484,13 @@ function AlarmsCard() {
             ) : undefined
           }
         />
+        {/* v2.5: নামাজের রিমাইন্ডার অটো সেট ব্যাজ (owner: এগুলো সব অটো থাকবে —
+            লোকেশনের নামাজের সময় বদলালে রিমাইন্ডারের সময়ও নিজে নিজে আপডেট হয়) */}
+        {s.adhanAutoSet !== false && s.prayerTimes ? (
+          <div className="rounded-xl bg-primary/10 border border-primary/25 px-3 py-2 text-[11px] font-semibold text-primary mb-2">
+            🤖 {t("adhanAutoBadge")}
+          </div>
+        ) : null}
         {PRAYER_KEYS.map((k) => (
           <div key={k} className="flex items-center justify-between gap-3 py-2 border-t border-border first:border-0">
             <span className="text-sm font-medium">{t(`prayer_${k}`)}</span>
@@ -1178,7 +1505,10 @@ function AlarmsCard() {
                 type="button"
                 role="switch"
                 aria-checked={s.adhanAlerts[k].on}
-                onClick={() => setAdhanTime(k, { on: !s.adhanAlerts[k].on })}
+                onClick={() => {
+                  confirm.show(!s.adhanAlerts[k].on);
+                  setAdhanTime(k, { on: !s.adhanAlerts[k].on });
+                }}
                 className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${s.adhanAlerts[k].on ? "bg-primary" : "bg-muted border border-border"}`}
               >
                 <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${s.adhanAlerts[k].on ? "left-[22px]" : "left-0.5"}`} />
@@ -1188,24 +1518,145 @@ function AlarmsCard() {
         ))}
       </Card>
 
-      <Card className="mb-4">
-        <SectionTitle title={`🔔 ${t("reminders")}`} />
-        <div className="flex items-center justify-between gap-3 py-2">
+      {/* ---------- v2.4 WATER ALARM (owner round-6 #1: নির্দিষ্ট সময় পরপর
+          পানির নোটিফিকেশন — My Habito স্টাইল, ✓ Drink / 💤 Later বাটনসহ) ---------- */}
+      <Card className="mb-4 border-sky-500/30 bg-gradient-to-br from-sky-500/5 to-transparent">
+        <SectionTitle title={t("waterAlarm")} sub={t("waterAlarmSub")} />
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm font-medium">💧 {t("waterAlarm")}</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={wa.on}
+            onClick={() => {
+              confirm.show(!wa.on);
+              setWa({ on: !wa.on });
+            }}
+            className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${wa.on ? "bg-primary" : "bg-muted border border-border"}`}
+          >
+            <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${wa.on ? "left-[22px]" : "left-0.5"}`} />
+          </button>
+        </div>
+        {wa.on ? (
+          <div className="mt-3 rounded-xl border border-border bg-secondary/40 p-2.5">
+            <div className="text-xs font-semibold mb-2">⏱ {t("waterEvery")}</div>
+            <div className="flex flex-wrap gap-1.5">
+              {[30, 60, 120, 180].map((v) => (
+                <Chip key={v} active={wa.intervalMin === v} onClick={() => setWa({ intervalMin: v })}>
+                  {v < 60 ? `${v} মিনিট` : `${v / 60} ঘণ্টা`}
+                </Chip>
+              ))}
+            </div>
+            <div className="text-xs font-semibold mt-3 mb-1.5">🕐 {t("waterWindow")}</div>
+            <div className="flex items-center gap-2">
+              <input
+                type="time"
+                value={wa.from}
+                onChange={(e) => setWa({ from: e.target.value })}
+                className="bg-muted rounded-lg px-2 py-1.5 text-sm border border-border outline-none focus:ring-1 focus:ring-ring"
+              />
+              <span className="text-xs text-muted-foreground">→</span>
+              <input
+                type="time"
+                value={wa.to}
+                onChange={(e) => setWa({ to: e.target.value })}
+                className="bg-muted rounded-lg px-2 py-1.5 text-sm border border-border outline-none focus:ring-1 focus:ring-ring"
+              />
+            </div>
+            {timesPreview.length ? (
+              <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">
+                🔔 {timesPreview.length} {t("reminders")} · {timesPreview.slice(0, 4).join(", ")}
+                {timesPreview.length > 4 ? "…" : ""}
+              </p>
+            ) : null}
+            <p className="text-[10px] text-muted-foreground mt-1.5 leading-relaxed">
+              🎵 water-alarm music · ✓ {t("waterDone")} / 💤 {t("waterSnooze")}
+            </p>
+          </div>
+        ) : null}
+      </Card>
+
+      {/* ---------- v2.4: daily OUR HABIT REMINDER (owner: প্রতিদিন একটা করে
+          অ্যালার্ট দিও) ---------- */}
+      <Card className="mb-4 border-primary/25 bg-gradient-to-br from-primary/5 to-transparent">
+        <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-sm font-medium">{t("hourlyWater")}</div>
-            <div className="text-xs text-muted-foreground">{t("hourlyWaterSub")}</div>
+            <div className="text-sm font-semibold">{t("habitsReminder")}</div>
+            <div className="text-xs text-muted-foreground">{t("habitsReminderSub")}</div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <input
+              type="time"
+              value={s.habitsAlarm?.time || "20:00"}
+              onChange={(e) => updateSettings({ habitsAlarm: { on: true, time: e.target.value } })}
+              className="bg-muted rounded-lg px-2 py-1.5 text-sm border border-border outline-none focus:ring-1 focus:ring-ring"
+            />
+            <button
+              type="button"
+              role="switch"
+              aria-checked={Boolean(s.habitsAlarm?.on)}
+              onClick={() => {
+                confirm.show(!s.habitsAlarm?.on);
+                updateSettings({ habitsAlarm: { on: !s.habitsAlarm?.on, time: s.habitsAlarm?.time || "20:00" } });
+              }}
+              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${s.habitsAlarm?.on ? "bg-primary" : "bg-muted border border-border"}`}
+            >
+              <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${s.habitsAlarm?.on ? "left-[22px]" : "left-0.5"}`} />
+            </button>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="mb-4">
+        <SectionTitle title={`🍽 ${t("meals")}`} sub={t("mealsSub")} />
+        {MEAL_KEYS.map((mk) => (
+          <div key={mk} className="flex items-center justify-between gap-3 py-2 border-t border-border first:border-0">
+            <span className="text-sm font-medium">{t(`meal_${mk}`)}</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="time"
+                value={s.mealAlarms[mk].time}
+                onChange={(e) => updateSettings({ mealAlarms: { ...s.mealAlarms, [mk]: { ...s.mealAlarms[mk], time: e.target.value } } })}
+                className="bg-muted rounded-lg px-2 py-1.5 text-sm border border-border outline-none focus:ring-1 focus:ring-ring"
+              />
+              <button
+                type="button"
+                role="switch"
+                aria-checked={s.mealAlarms[mk].on}
+                onClick={() => {
+                  confirm.show(!s.mealAlarms[mk].on);
+                  updateSettings({ mealAlarms: { ...s.mealAlarms, [mk]: { ...s.mealAlarms[mk], on: !s.mealAlarms[mk].on } } });
+                }}
+                className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${s.mealAlarms[mk].on ? "bg-primary" : "bg-muted border border-border"}`}
+              >
+                <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${s.mealAlarms[mk].on ? "left-[22px]" : "left-0.5"}`} />
+              </button>
+            </div>
+          </div>
+        ))}
+        {/* v2.4: 15-min early heads-up toggle (owner: নির্ধারিত সময়ের আগেই জানাবে) */}
+        <div className="flex items-center justify-between gap-3 py-2 border-t border-border mt-1">
+          <div className="min-w-0">
+            <div className="text-sm font-medium">⏮ {t("mealPreAlert")}</div>
+            <div className="text-xs text-muted-foreground">{t("mealPreAlertSub")}</div>
           </div>
           <button
             type="button"
             role="switch"
-            aria-checked={s.hourlyWater}
-            onClick={() => updateSettings({ hourlyWater: !s.hourlyWater })}
-            className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${s.hourlyWater ? "bg-primary" : "bg-muted border border-border"}`}
+            aria-checked={s.mealPreAlert !== false}
+            onClick={() => updateSettings({ mealPreAlert: s.mealPreAlert === false })}
+            className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${s.mealPreAlert !== false ? "bg-primary" : "bg-muted border border-border"}`}
           >
-            <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${s.hourlyWater ? "left-[22px]" : "left-0.5"}`} />
+            <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${s.mealPreAlert !== false ? "left-[22px]" : "left-0.5"}`} />
           </button>
         </div>
-        <div className="flex items-center justify-between gap-3 py-2 border-t border-border">
+        {/* v2.5: random meal music note (owner: একটার পর একটা মিউজিক বাজবে) */}
+        <p className="text-[10px] text-muted-foreground mt-2">🎵 {t("mealAlarmsCfgSub")} · 🎲 {t("mealMusicNote")}</p>
+      </Card>
+
+      <Card className="mb-4">
+        <SectionTitle title={`🔔 ${t("reminders")}`} />
+        <div className="flex items-center justify-between gap-3 py-2">
           <div className="min-w-0">
             <div className="text-sm font-medium">{t("dailyAyat")}</div>
           </div>
@@ -1220,7 +1671,10 @@ function AlarmsCard() {
               type="button"
               role="switch"
               aria-checked={s.ayatNotif.on}
-              onClick={() => updateSettings({ ayatNotif: { ...s.ayatNotif, on: !s.ayatNotif.on } })}
+              onClick={() => {
+                confirm.show(!s.ayatNotif.on);
+                updateSettings({ ayatNotif: { ...s.ayatNotif, on: !s.ayatNotif.on } });
+              }}
               className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${s.ayatNotif.on ? "bg-primary" : "bg-muted border border-border"}`}
             >
               <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${s.ayatNotif.on ? "left-[22px]" : "left-0.5"}`} />
@@ -1240,31 +1694,11 @@ function AlarmsCard() {
         </div>
       </Card>
 
-      <Card className="mb-4">
-        <SectionTitle title={`🔐 ${t("permNotif")}`} sub={t("permNotifSub")} />
-        <div className="flex gap-2">
-          {notifPerm !== "granted" ? (
-            <button type="button" onClick={() => void askNotifPerm()} className="flex-1 rounded-xl bg-primary text-primary-foreground text-sm font-semibold py-2.5 min-h-[44px]">
-              🔔 {t("permNotifAsk")}
-            </button>
-          ) : (
-            <div className="flex-1 rounded-xl bg-primary/10 text-primary text-sm font-semibold py-2.5 min-h-[44px] text-center">
-              ✓ {t("permNotif")}
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              fireNotif(t("appName"), t("checkinMsg"));
-              alert(t("testNotif"));
-            }}
-            className="rounded-xl bg-secondary px-4 text-sm min-h-[44px]"
-          >
-            {t("permTest")}
-          </button>
-        </div>
-        <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">{t("alarmNote")}</p>
-      </Card>
+      {/* v2.5: the whole "নোটিফিকেশন অনুমতি / টেস্ট নোটিফিকেশন" card that used
+          to sit here is REMOVED — owner round-7 marked it with a red X:
+          "এই পুরা ফাংশন যেটা আছে নোটিফিকেশন ওটা টোটালি এখান থেকে সরাইয়া
+          করে রিমুভ করে দিবা"। Notification permission now lives ONLY in
+          Settings → Permissions. */}
     </div>
   );
 }
@@ -1278,11 +1712,11 @@ type DetailKey =
   | "dhikr"
   | "meditation"
   | "focus"
-  | "mood"
   | "sleep"
   | "note"
   | "meals"
-  | "alarms";
+  | "alarms"
+  | "newhabit";
 
 const DETAIL_I18N: Record<DetailKey, string> = {
   prayers: "detailPrayers",
@@ -1291,11 +1725,11 @@ const DETAIL_I18N: Record<DetailKey, string> = {
   dhikr: "detailDhikr",
   meditation: "detailMeditation",
   focus: "detailFocus",
-  mood: "detailMood",
   sleep: "detailSleep",
   note: "detailNote",
   meals: "detailMeals",
   alarms: "detailAlarms",
+  newhabit: "newHabit",
 };
 
 const TINT: Record<DetailKey, string> = {
@@ -1305,11 +1739,11 @@ const TINT: Record<DetailKey, string> = {
   dhikr: "from-violet-500/15 to-transparent border-violet-500/25",
   meditation: "from-teal-500/15 to-transparent border-teal-500/25",
   focus: "from-amber-500/15 to-transparent border-amber-500/25",
-  mood: "from-yellow-500/15 to-transparent border-yellow-500/25",
   sleep: "from-indigo-500/15 to-transparent border-indigo-500/25",
   note: "from-slate-500/15 to-transparent border-slate-500/25",
   meals: "from-orange-500/15 to-transparent border-orange-500/25",
   alarms: "from-red-500/15 to-transparent border-red-500/25",
+  newhabit: "from-primary/15 to-transparent border-primary/25",
 };
 
 function HabitTile({
@@ -1358,12 +1792,20 @@ function HabitTile({
 }
 
 function HabitGrid({ onOpen }: { onOpen: (k: DetailKey) => void }) {
-  const { state, today, t } = useStore();
+  const { state, today, t, toggleCustomHabit } = useStore();
   const log = getLog(state, today);
   const goal = state.settings.waterGoalMl;
   const prayersDone = PRAYER_KEYS.filter((k) => log.prayers[k]).length;
   const reelsTotal = log.reelsMin ?? 0;
   const nextPrayerKey = PRAYER_KEYS.find((k) => !log.prayers[k]);
+  const customList = state.customHabits || [];
+
+  const toggleCustom = (id: string, wasOn: boolean) => {
+    toggleCustomHabit(today, id);
+    void nativeVibrate(20);
+    if (!wasOn) playTick(customList.findIndex((h) => h.id === id) + 1);
+    else playMinus();
+  };
 
   return (
     <div className="grid grid-cols-2 gap-2.5 mb-4">
@@ -1379,8 +1821,8 @@ function HabitGrid({ onOpen }: { onOpen: (k: DetailKey) => void }) {
       <HabitTile
         icon="💧"
         titleKey="water"
-        value={`${(log.waterMl / 1000).toFixed(2)} / ${(goal / 1000).toFixed(1)} L`}
-        sub={`${Math.round(Math.min(1, log.waterMl / goal) * 100)}%`}
+        value={`${glassesOf(log.waterMl)} ${t("glassUnit")}`}
+        sub={`${(log.waterMl / 1000).toFixed(2)} / ${(goal / 1000).toFixed(1)} L · ${Math.round(Math.min(1, log.waterMl / goal) * 100)}%`}
         pct={Math.min(1, log.waterMl / goal)}
         tint="water"
         onOpen={onOpen}
@@ -1425,6 +1867,50 @@ function HabitGrid({ onOpen }: { onOpen: (k: DetailKey) => void }) {
         tint="sleep"
         onOpen={onOpen}
       />
+
+      {/* ---- v2.5: user-created habits (নতুন হ্যাবিট) — one tap = done today ---- */}
+      {customList.map((h) => {
+        const on = Boolean(log.customDone?.[h.id]);
+        return (
+          <button
+            key={h.id}
+            type="button"
+            onClick={() => toggleCustom(h.id, on)}
+            className={`habit-tile tile-in text-left rounded-2xl border bg-gradient-to-br ${
+              on ? "from-primary/25 to-transparent border-primary/40 tile-done" : "from-slate-500/15 to-transparent border-slate-500/25"
+            } p-3.5 flex flex-col gap-2 min-h-[118px] transition-transform active:scale-[0.97]`}
+          >
+            <div className="flex items-start justify-between">
+              <span className="tile-ico w-9 h-9 rounded-xl bg-background/80 dark:bg-background/60 border border-border flex items-center justify-center text-lg shadow-sm">
+                {h.icon}
+              </span>
+              {on ? (
+                <span className="tile-check w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[11px] font-bold shadow">✓</span>
+              ) : (
+                <span className="w-6 h-6 rounded-full border-2 border-dashed border-muted-foreground/40 text-muted-foreground/60 flex items-center justify-center text-[11px] font-bold">+</span>
+              )}
+            </div>
+            <div>
+              <div className="text-[11px] font-semibold text-muted-foreground leading-tight uppercase tracking-wide">{t("newHabit")}</div>
+              <div className="text-[15px] font-extrabold leading-tight mt-0.5 break-words line-clamp-2">{h.name}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">{on ? t("doneToday") : t("notDone")}</div>
+            </div>
+          </button>
+        );
+      })}
+
+      {/* ---- v2.5: ADD-NEW-HABIT tile (owner: ঘুমের পাশে Add অপশন) ---- */}
+      <button
+        type="button"
+        onClick={() => onOpen("newhabit")}
+        className="habit-tile tile-in rounded-2xl border-2 border-dashed border-primary/40 bg-primary/5 p-3.5 flex flex-col items-center justify-center gap-2 min-h-[118px] text-center transition-transform active:scale-[0.97]"
+      >
+        <span className="w-11 h-11 rounded-2xl bg-primary/15 border border-primary/30 flex items-center justify-center text-2xl text-primary font-bold shadow-sm">＋</span>
+        <div>
+          <div className="text-sm font-extrabold text-primary">{t("newHabit")}</div>
+          <div className="text-[10px] text-muted-foreground mt-0.5">{t("newHabitSub")}</div>
+        </div>
+      </button>
     </div>
   );
 }
@@ -1535,6 +2021,97 @@ function AlarmsLayer({ onOpen }: { onOpen: (k: DetailKey) => void }) {
   );
 }
 
+// ---------- v2.5: NEW HABIT manager (নতুন হ্যাবিট detail page) ----------
+const HABIT_ICONS = ["✅", "📖", "🏃", "🧹", "💪", "🧺", "📚", "🚶", "🧴", "🌾", "📞", "🛠"];
+
+function NewHabitCard() {
+  const { state, t, addCustomHabit, removeCustomHabit } = useStore();
+  const [name, setName] = useState("");
+  const [icon, setIcon] = useState(HABIT_ICONS[0]);
+  const list = state.customHabits || [];
+
+  const add = () => {
+    if (!name.trim()) return;
+    addCustomHabit(name, icon);
+    setName("");
+    setIcon(HABIT_ICONS[0]);
+    playAdd();
+    void nativeVibrate(25);
+  };
+
+  return (
+    <div>
+      <Card className="mb-4">
+        <SectionTitle title={`➕ ${t("newHabit")}`} sub={t("newHabitSub")} />
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") add();
+          }}
+          maxLength={40}
+          placeholder={t("newHabitName")}
+          aria-label={t("newHabitName")}
+          className="w-full bg-muted rounded-xl px-3 py-2.5 text-sm border border-border outline-none focus:ring-1 focus:ring-ring min-h-[46px]"
+        />
+        <div className="flex flex-wrap gap-1.5 mt-2.5">
+          {HABIT_ICONS.map((ic) => (
+            <button
+              key={ic}
+              type="button"
+              onClick={() => setIcon(ic)}
+              className={`w-10 h-10 rounded-xl border text-lg flex items-center justify-center transition-all active:scale-90 ${
+                icon === ic ? "border-primary bg-primary/15 scale-105" : "border-border bg-secondary/50"
+              }`}
+            >
+              {ic}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={add}
+          disabled={!name.trim() || list.length >= 12}
+          className="w-full mt-3 rounded-xl bg-primary text-primary-foreground text-sm font-bold py-3 min-h-[48px] disabled:opacity-40 active:scale-[0.98] transition-transform"
+        >
+          ＋ {t("newHabitAdd")}
+        </button>
+        {list.length >= 12 ? <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-2">⚠️ {t("newHabitMax")}</p> : null}
+      </Card>
+
+      {list.length ? (
+        <Card className="mb-4">
+          <SectionTitle title={`📋 ${t("newHabitList")}`} />
+          <div className="flex flex-col gap-1.5">
+            {list.map((h) => (
+              <div key={h.id} className="flex items-center gap-2.5 rounded-xl bg-secondary/50 border border-border px-3 py-2.5">
+                <span className="text-lg shrink-0">{h.icon}</span>
+                <span className="text-sm font-medium flex-1 min-w-0 truncate">{h.name}</span>
+                <button
+                  type="button"
+                  aria-label={`delete ${h.name}`}
+                  onClick={() => {
+                    if (!confirm(`"${h.name}" — ${t("habitDeleted")}?`)) return;
+                    removeCustomHabit(h.id);
+                    playMinus();
+                    void nativeVibrate(20);
+                  }}
+                  className="w-9 h-9 rounded-lg bg-destructive/10 text-destructive flex items-center justify-center text-sm shrink-0 active:scale-90 transition-transform"
+                >
+                  🗑
+                </button>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-muted-foreground mt-2.5 leading-relaxed">
+            💡 হোমের গ্রিডে প্রতিটা হ্যাবিটের তালেই চাপ দিলে আজকের জন্য ✓ হয়ে যাবে।
+          </p>
+        </Card>
+      ) : null}
+    </div>
+  );
+}
+
 // ---------- Full-screen detail page ----------
 // v2.2 FIX: rendered through a PORTAL to <body>. It used to live inside the
 // tab container whose .page-in animation (fill-mode: both) keeps a transform
@@ -1577,11 +2154,11 @@ function DetailPage({ k, onClose }: { k: DetailKey; onClose: () => void }) {
         {k === "dhikr" ? <DhikrCard /> : null}
         {k === "meditation" ? <TimerCard icon="🧘" title={t("meditation")} sub={t("meditationSub")} presets={[10, 15, 20, 30]} doneMsg={t("meditationDone")} field="meditationMin" /> : null}
         {k === "focus" ? <TimerCard icon="🎯" title={t("focus")} sub={t("focusSub")} presets={[25, 50]} doneMsg={t("focusDone")} field="focusMin" /> : null}
-        {k === "mood" ? <MoodCard /> : null}
         {k === "sleep" ? <SleepCard /> : null}
         {k === "note" ? <TodayNoteCard /> : null}
         {k === "meals" ? <MealsCard /> : null}
         {k === "alarms" ? <AlarmsCard /> : null}
+        {k === "newhabit" ? <NewHabitCard /> : null}
       </div>
     </div>,
     document.body
@@ -1612,7 +2189,7 @@ export default function HomeTab({ onSecret }: { onSecret?: () => void }) {
       <Header onSecret={onSecret} />
       <AdsBanner compact variant="a" />
       <ReminderCard />
-      <WeekStrip />
+      <MonthCard />
       <div className="px-1 mb-2">
         <h2 className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">{t("todayCard")}</h2>
       </div>

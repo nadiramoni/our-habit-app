@@ -10,6 +10,51 @@ import { mirrorMeta, readRawMeta, writeRawMeta } from "@/lib/cloud";
 import { isNative } from "@/lib/native";
 
 /**
+ * v2.4: LIVE banner health — reads window.__atHealth (written by AdsBanner
+ * after every real-render verdict). The owner sees at a glance WHICH zones
+ * actually render and which still serve empty (zone activation state).
+ */
+function BannerHealth() {
+  const { t } = useStore();
+  const [health, setHealth] = useState<Record<string, { ok: boolean; mode: string; at: number }>>({});
+  useEffect(() => {
+    const read = () => {
+      try {
+        setHealth({ ...((window as unknown as { __atHealth?: Record<string, { ok: boolean; mode: string; at: number }> }).__atHealth || {}) });
+      } catch {
+        /* ignore */
+      }
+    };
+    read();
+    const iv = setInterval(read, 4000);
+    return () => clearInterval(iv);
+  }, []);
+  const keys = Object.keys(health);
+  if (!keys.length) return null;
+  return (
+    <div className="border-t border-border pt-3 mt-3">
+      <div className="text-sm font-bold">🩺 Banner Health ({t("admLiveTag") || "live"})</div>
+      <div className="text-[11px] text-muted-foreground mb-2 leading-relaxed">
+        Zone-এর স্ট্যাটাস — Adsterra dashboard-এ zone "Active" না হলে এখানে লাল দেখাবে। সবুজ = বিজ্ঞাপন সত্যিই রেন্ডার হচ্ছে।
+      </div>
+      <div className="flex flex-col gap-1">
+        {keys.map((k) => {
+          const hv = health[k];
+          return (
+            <div key={k} className={`flex items-center justify-between rounded-lg px-2.5 py-1.5 text-[11px] ${hv.ok ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"}`}>
+              <span className="font-mono truncate max-w-[55%]">…{k.slice(-8)}</span>
+              <span className="font-bold shrink-0">
+                {hv.ok ? "✓ রেন্ডার হচ্ছে" : `✗ খালি (${hv.mode})`}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
  * APK mode: there is NO server (static export) — /api/config is dead.
  * So the panel authenticates + saves DIRECTLY to the owner's Firebase:
  *   • PIN hash lives in Firestore app/meta.adminPin (sha256, same salt as
@@ -283,7 +328,7 @@ function AtZoneRow({
 
 function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
   const { t } = useStore();
-  const { cfg, refresh } = useServerCfg();
+  const { cfg, loaded, refresh } = useServerCfg();
   const [draft, setDraft] = useState<ServerCfg>(cfg);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -294,6 +339,13 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
   useEffect(() => {
     setDraft(cfg);
   }, [cfg]);
+
+  // v2.5 CRITICAL SAVE GUARD: if the owner opens the panel and hits Save
+  // BEFORE the live config finished loading, the draft is still the EMPTY
+  // default → saving would wipe every zone code (this is exactly how the
+  // Social Bar / Popunder codes vanished from Firestore). Saving is now
+  // impossible until the real config is loaded.
+  const cfgReady = loaded;
 
   const setAds = (patch: Partial<ServerAdsCfg>) => setDraft((d) => ({ ...d, ads: { ...d.ads, ...patch } }));
   const setAt = (patch: Partial<AtCfg>) => setDraft((d) => ({ ...d, at: { ...d.at, ...patch } }));
@@ -308,6 +360,7 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
   })();
 
   const save = async () => {
+    if (!cfgReady) return; // never save the empty default over the live config
     setErr("");
     setBusy(true);
     try {
@@ -391,6 +444,21 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
         {/* ---- Ads ---- */}
         <Card className="mb-4">
           <SectionTitle title={`💰 ${t("adsSection")}`} sub={t("adsSub")} />
+
+          {/* v2.5 BANNER HELP — the owner's #1 issue: banner zones serve an EMPTY
+              script (verified: HTTP 200/0 bytes + 403) → that means the zone is
+              NOT ACTIVE on Adsterra's side. No app code can fix that; the zones
+              activate from the dashboard. This box guides the owner exactly. */}
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 mb-3">
+            <div className="text-sm font-bold text-amber-600 dark:text-amber-400 mb-1">⚠️ Banner দেখাচ্ছে না? এই ৪টা স্টেপ ফলো করো</div>
+            <ol className="text-[11px] text-muted-foreground leading-relaxed list-decimal list-inside space-y-1">
+              <li>Adsterra Dashboard → <b>Websites</b> → তোমার সাইট/app-এর ডোমেইন <b>Added + Approved</b> আছে কিনা দেখো (Banner format-এর জন্য website approval বাধ্যতামূলক — Popunder/Social Bar-এ লাগে না, তাই ওগুলো চলে)।</li>
+              <li><b>Zones</b> → Banner 468×60 আর 300×250 zone-এর স্ট্যাটাস <b>Active</b> কিনা দেখো। Pending থাকলে Adsterra approve করা পর্যন্ত অপেক্ষা করো বা support-এ টিকেট দাও।</li>
+              <li>নিচের 🩺 Banner Health-এ লাল <b>✗ খালি</b> দেখালে = zone এখনো সার্ভার থেকে খালি স্ক্রিপ্ট দিচ্ছে। Zone Active হওয়ার সাথে সাথে অ্যাপে অটো বিজ্ঞাপন আসা শুরু হবে (কোনো রি-ইনস্টল লাগবে না)।</li>
+              <li>Social Bar ও Popunder-এর কোড আগের সেভে মুছে গিয়েছিল — দুইটা জোনের কোড <b>আবার পেস্ট করে ON করো</b>, ওগুলো সাথে সাথে কাজ করবে (তুমি নিজেই দেখেছ কাজ করছে)।</li>
+            </ol>
+          </div>
+
           <ToggleRow label={t("admMaster")} checked={draft.adsEnabled} onChange={(v) => setDraft({ ...draft, adsEnabled: v })} />
 
           <div className="border-t border-border pt-3 mt-2">
@@ -436,6 +504,9 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
               <AtZoneRow label={`⚠️ ${t("atPopunder")}`} hint={t("atPopunderHint")} zone={draft.at.popunder} onChange={(z) => setAt({ popunder: z })} />
               <AtZoneRow label={`🔗 ${t("atSmartlink")}`} hint={t("atSmartlinkHint")} zone={draft.at.smartlink} isUrl onChange={(z) => setAt({ smartlink: z })} />
             </div>
+
+            {/* v2.4: LIVE banner health — did the network actually render? */}
+            <BannerHealth />
           </div>
 
           <div className="border-t border-border pt-3 mt-2">
@@ -525,12 +596,17 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
         </Card>
 
         {err ? <p className="text-xs text-destructive mb-2">{err}</p> : null}
+        {!cfgReady ? (
+          <p className="text-[11px] text-amber-600 dark:text-amber-400 text-center mb-2 font-semibold">
+            ⏳ কনফিগ লোড হচ্ছে… লোড শেষ হলে Save চালু হবে (খালি কনফিগ সেভ হওয়া আটকানো হলো)
+          </p>
+        ) : null}
         <div className="fixed bottom-0 left-0 right-0 p-4 bg-background/95 backdrop-blur border-t border-border" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 16px)" }}>
           <div className="max-w-md mx-auto">
             <button
               type="button"
               onClick={() => void save()}
-              disabled={busy}
+              disabled={busy || !cfgReady}
               className="w-full rounded-xl bg-primary text-primary-foreground text-sm font-bold py-3 min-h-[48px] disabled:opacity-50"
             >
               {saved ? t("adminSaved") : busy ? "..." : `💾 ${t("adsSaved").replace(" ✓", "")}`}

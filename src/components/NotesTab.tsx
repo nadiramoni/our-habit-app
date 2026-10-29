@@ -43,6 +43,40 @@ import {
   nearbyAvailable,
   nearbyStopAll,
 } from "@/lib/nearby";
+import { nativeShareText, nativeVibrate } from "@/lib/native";
+
+// ---------- v2.4: beautiful share format (owner round-6 #6) ----------
+// Title FIRST, a clear separator, then the body — plus a soft footer.
+function formatNoteShare(title: string, body: string, footer: string): string {
+  const t = (title || "").trim();
+  const b = (body || "").trim();
+  const lines: string[] = [];
+  if (t) {
+    lines.push(`📌 ${t}`);
+    lines.push("──────────────");
+  }
+  if (b) lines.push(b);
+  if (!t && !b) return "";
+  lines.push("");
+  lines.push(footer);
+  return lines.join("\n");
+}
+
+function useShareNote() {
+  const { t } = useStore();
+  const [busy, setBusy] = useState(false);
+  const share = async (title: string, body: string) => {
+    const text = formatNoteShare(title, body, t("shareViaApp"));
+    if (!text) return;
+    setBusy(true);
+    void nativeVibrate(20);
+    const how = await nativeShareText(title || t("appName"), text, t("shareNoteDialog"));
+    setBusy(false);
+    if (how === "copied") alert(t("shareCopied"));
+    // "native"/"web" = the system share sheet opened (user picked an app)
+  };
+  return { share, busy };
+}
 
 type SubTab = "personal" | "shared";
 
@@ -87,6 +121,7 @@ function PersonalNotes() {
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [open, setOpen] = useState(false);
+  const { share, busy } = useShareNote();
 
   const add = () => {
     if (!title.trim() && !text.trim()) return;
@@ -142,21 +177,33 @@ function PersonalNotes() {
           {state.personalNotes.map((n) => (
             <Card key={n.id} className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-sm font-semibold">{n.title}</div>
-                <p className="text-xs text-muted-foreground whitespace-pre-wrap mt-0.5">{n.text}</p>
+                {/* v2.4: TITLE first, then the body — clear separation */}
+                <div className="text-sm font-extrabold text-primary leading-snug">{n.title}</div>
+                {n.text ? <p className="text-xs text-foreground/90 whitespace-pre-wrap mt-1.5 leading-relaxed border-l-2 border-primary/30 pl-2.5">{n.text}</p> : null}
                 <div className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1.5">
                   <span>📱 {t("stLocal")}</span>
                   <span>· {n.date}</span>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => deletePersonalNote(n.id)}
-                aria-label="delete note"
-                className="text-xs text-destructive shrink-0 rounded-lg bg-destructive/10 px-2 py-1.5 active:scale-95 transition-transform"
-              >
-                🗑
-              </button>
+              <div className="flex flex-col gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => void share(n.title, n.text)}
+                  disabled={busy}
+                  aria-label={t("shareNote")}
+                  className="text-xs text-primary rounded-lg bg-primary/10 px-2 py-1.5 active:scale-95 transition-transform disabled:opacity-50"
+                >
+                  📤
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deletePersonalNote(n.id)}
+                  aria-label="delete note"
+                  className="text-xs text-destructive rounded-lg bg-destructive/10 px-2 py-1.5 active:scale-95 transition-transform"
+                >
+                  🗑
+                </button>
+              </div>
             </Card>
           ))}
         </div>
@@ -345,6 +392,7 @@ function ConflictModal({ pairKey, conflict }: { pairKey: string; conflict: NoteC
 function SharedNotes() {
   const { state, t, openAuth } = useStore();
   const { cfg } = useServerCfg();
+  const { share } = useShareNote();
   const acc = state.account;
   const [me, setMe] = useState<FbProfile | null>(null);
   const [partnerUid, setPartnerUid] = useState<string>("");
@@ -603,6 +651,15 @@ function SharedNotes() {
                           className="text-[11px] bg-secondary text-muted-foreground rounded-lg px-2 py-1 active:scale-95 transition-transform"
                         >
                           ✏️
+                        </button>
+                        {/* v2.4: share this note via the native share sheet */}
+                        <button
+                          type="button"
+                          onClick={() => void share("", n.text)}
+                          aria-label={t("shareNote")}
+                          className="text-[11px] bg-primary/10 text-primary rounded-lg px-2 py-1 active:scale-95 transition-transform"
+                        >
+                          📤
                         </button>
                         <button
                           type="button"

@@ -54,6 +54,18 @@ export function extractContainerId(raw: string): string | null {
 /** Guard so a zone script is injected only once per page load (StrictMode-safe). */
 const injected = new Set<string>();
 
+// v2.4: live banner health, read by the secret admin panel —
+// window.__atHealth[key] = { ok, mode, at }
+export function beaconHealth(key: string, ok: boolean, mode: string): void {
+  try {
+    const w = window as unknown as { __atHealth?: Record<string, { ok: boolean; mode: string; at: number }> };
+    w.__atHealth = w.__atHealth || {};
+    w.__atHealth[key] = { ok, mode, at: Date.now() };
+  } catch {
+    /* ignore */
+  }
+}
+
 function useZoneScript(url: string | null, zoneKey: string) {
   useEffect(() => {
     if (!url) return;
@@ -94,9 +106,14 @@ function AdsterraIframe({ code, w, h }: { code: string; w?: number; h?: number }
   const H = h ?? parsed?.h ?? 60;
   const slotId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const wrapRef = useRef<HTMLDivElement>(null);
+  const directRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   const [ready, setReady] = useState(false);
   const [bust, setBust] = useState(0);
+  // v2.4: after 3 failed srcdoc attempts try the OFFICIAL injection path —
+  // atOptions + script straight into the page (some networks only render there)
+  const [mode, setMode] = useState<"iframe" | "direct">("iframe");
+  const failsRef = useRef(0);
   const loadedRef = useRef(false);
 
   useEffect(() => {
@@ -129,18 +146,58 @@ function AdsterraIframe({ code, w, h }: { code: string; w?: number; h?: number }
   // real-render verdict from inside the iframe (works even under sandbox:
   // allow-scripts lets the child postMessage the parent)
   useEffect(() => {
-    if (!parsed) return;
+    if (!parsed || mode !== "iframe") return;
     const onMsg = (e: MessageEvent) => {
       const d = e.data as { __at?: string; ok?: boolean } | null;
       if (!d || d.__at !== slotId) return;
       const ok = d.ok === true;
       loadedRef.current = ok;
       setReady(ok);
-      // ok:false → keep the placeholder; the retry ladder below will re-fetch
+      beaconHealth(parsed.key, ok, "iframe");
+      if (!ok) {
+        // 3 empty verdicts → try the official direct injection path once
+        failsRef.current += 1;
+        if (failsRef.current >= 3) setMode("direct");
+      }
     };
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
-  }, [parsed, slotId]);
+  }, [parsed, slotId, mode]);
+
+  // v2.4 DIRECT INJECTION fallback — the exact usage Adsterra documents:
+  // a fresh atOptions global followed by the zone script, appended to the
+  // real page. One at a time (atOptions is a single global).
+  useEffect(() => {
+    if (!parsed || mode !== "direct") return;
+    const host = directRef.current;
+    if (!host) return;
+    const w2 = window as unknown as { __atDirectActive?: boolean; __atDirectDone?: Record<string, boolean> };
+    w2.__atDirectDone = w2.__atDirectDone || {};
+    if (w2.__atDirectActive || w2.__atDirectDone[parsed.key]) return;
+    w2.__atDirectActive = true;
+    w2.__atDirectDone[parsed.key] = true;
+    host.innerHTML = "";
+    const cfgScript = document.createElement("script");
+    cfgScript.text = `atOptions={'key':'${parsed.key}','format':'iframe','height':${H},'width':${W},'params':{}};`;
+    const zoneScript = document.createElement("script");
+    zoneScript.src = bust > 0 ? `${parsed.src}?r=${bust}` : parsed.src;
+    zoneScript.async = true;
+    host.appendChild(cfgScript);
+    host.appendChild(zoneScript);
+    const check = setTimeout(() => {
+      const ok = host.querySelectorAll("iframe, a[href], img, video").length > 0;
+      loadedRef.current = ok;
+      setReady((r) => r || ok);
+      beaconHealth(parsed.key, ok, "direct");
+      w2.__atDirectActive = false;
+    }, 8000);
+    return () => {
+      clearTimeout(check);
+      host.innerHTML = "";
+      w2.__atDirectActive = false;
+    };
+     
+  }, [mode, parsed, bust]);
 
   // retry ladder — Adsterra zones typically activate minutes…hours after
   // creation; each rung refetches the zone script with a fresh cache-bust
@@ -181,25 +238,29 @@ function AdsterraIframe({ code, w, h }: { code: string; w?: number; h?: number }
           </span>
         </div>
       ) : null}
-      <iframe
-        title="Advertisement"
-        srcDoc={srcdoc}
-        key={bust}
-        width={W}
-        height={H}
-        scrolling="no"
-        sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
-        loading="lazy"
-        referrerPolicy="no-referrer-when-downgrade"
-        style={{
-          border: 0,
-          position: "absolute",
-          top: 0,
-          left: 0,
-          transformOrigin: "top left",
-          transform: `scale(${scale || 1})`,
-        }}
-      />
+      {mode === "direct" ? (
+        <div ref={directRef} className="absolute inset-0 flex items-center justify-center overflow-hidden" />
+      ) : (
+        <iframe
+          title="Advertisement"
+          srcDoc={srcdoc}
+          key={bust}
+          width={W}
+          height={H}
+          scrolling="no"
+          sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+          loading="lazy"
+          referrerPolicy="no-referrer-when-downgrade"
+          style={{
+            border: 0,
+            position: "absolute",
+            top: 0,
+            left: 0,
+            transformOrigin: "top left",
+            transform: `scale(${scale || 1})`,
+          }}
+        />
+      )}
     </div>
   );
 }

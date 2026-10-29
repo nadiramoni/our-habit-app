@@ -14,11 +14,12 @@ import AdminPanel from "@/components/AdminPanel";
 import PermissionSetupFlow, { PERM_FLOW_KEY } from "@/components/PermissionSetupFlow";
 import { AtGlobalScripts } from "@/components/AdsBanner";
 import { dayPoints, dhikrTotal, computeStreaks, dayCompletion } from "@/lib/logic";
-import { getLog } from "@/lib/types";
+import { getLog, todayStr } from "@/lib/types";
 import { pushDay, ensureProfile, DaySummary } from "@/lib/cloud";
 import { APP_VERSION } from "@/lib/version";
 import { warmAudio, playChime } from "@/lib/audio";
-import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, NativeAlarm } from "@/lib/native";
+import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm } from "@/lib/native";
+import { waterAlarmTimes, shiftTime, randomMealMusic, PRAYER_KEYS } from "@/lib/types";
 
 type Tab = "home" | "notes" | "stats" | "friends" | "settings";
 
@@ -198,7 +199,7 @@ function PermFlowHost() {
 }
 
 function Shell() {
-  const { ready, state, t, today, fireNotif, setAccount, authOpen } = useStore();
+  const { ready, state, t, today, fireNotif, setAccount, authOpen, updateLog, updateSettings } = useStore();
   const [tab, setTab] = useState<Tab>("home");
   const [alarm, setAlarm] = useState<ActiveAlarm | null>(null);
   const [adminOpen, setAdminOpen] = useState(false);
@@ -290,6 +291,10 @@ function Shell() {
         state.settings.checkinTime,
         state.settings.ayatNotif,
         state.settings.sleepAlarm,
+        state.settings.waterAlarm,
+        state.settings.hourlyWater,
+        state.settings.habitsAlarm,
+        state.settings.mealPreAlert,
       ])
     : "";
   useEffect(() => {
@@ -304,14 +309,58 @@ function Shell() {
     });
     (["breakfast", "lunch", "dinner"] as const).forEach((mk) => {
       const c = s.settings.mealAlarms?.[mk];
-      if (c?.on) list.push({ id: `meal_${mk}`, time: c.time, title: `🍽 ${t(`meal_${mk}`)}`, body: t("mealAlarmMsg"), sound: "mealalarm.mp3" });
+      if (c?.on) {
+        // v2.5: RANDOM music — the owner's two tracks alternate (একটার পর একটা).
+        // Re-synced on every app open / settings change → real variety daily.
+        list.push({ id: `meal_${mk}`, time: c.time, title: `🍽 ${t(`meal_${mk}`)}`, body: t("mealAlarmMsg"), sound: randomMealMusic() });
+        // v2.4: 15-min EARLY heads-up (owner: নির্ধারিত সময়ের আগেই জানাবে)
+        if (s.settings.mealPreAlert !== false)
+          list.push({ id: `mealpre_${mk}`, time: shiftTime(c.time, -15), title: `🍽 ${t(`meal_${mk}`)}`, body: t("mealPreMsg"), sound: "alarm.wav" });
+      }
     });
+    // v2.4 WATER ALARM — interval-based, EVERY DAY, with ✓ Drink / 💤 Later
+    // buttons (owner showed the My Habito reference). Recurring exact alarms:
+    // they ring even when the app is closed.
+    const wa = s.settings.waterAlarm?.on
+      ? s.settings.waterAlarm
+      : s.settings.hourlyWater
+        ? { on: true, intervalMin: 60, from: "09:00", to: "22:00" }
+        : null;
+    if (wa?.on) {
+      for (const wt of waterAlarmTimes(wa)) {
+        list.push({ id: `water_${wt}`, time: wt, title: `💧 ${t("appName")}`, body: t("waterAlarmBody"), sound: "wateralarm.mp3" });
+      }
+    }
     if (s.settings.ayatNotif?.on)
       list.push({ id: "ayat", time: s.settings.ayatNotif.time, title: t("ayatNotifTitle"), body: t("dailyReminder") });
     if (s.settings.checkinTime) list.push({ id: "checkin", time: s.settings.checkinTime, title: `🌙 ${t("appName")}`, body: t("checkinMsg") });
     if (s.settings.sleepAlarm?.on) list.push({ id: "sleep", time: s.settings.sleepAlarm.time, title: `😴 ${t("sleep")}`, body: t("sleepAlarmMsg") });
+    // v2.4: daily Our Habit Reminder (owner: প্রতিদিন একটা করে অ্যালার্ট)
+    if (s.settings.habitsAlarm?.on) {
+      list.push({ id: "habits", time: s.settings.habitsAlarm.time, title: `🕌 ${t("appName")}`, body: t("habitsAlarmMsg") });
+      // v2.5 APP-OPEN NUDGES (owner round-7: বাজার আগে মাঝে মাঝে অ্যাপে ঢুকার
+      // রিমাইন্ডার — "কমপ্লিট করেছেন কিনা") — real notifications even when
+      // the app is closed.
+      list.push({ id: "nudge_morning", time: "10:00", title: `👋 ${t("appName")}`, body: t("nudgeBody") });
+      list.push({ id: "nudge_afternoon", time: "16:00", title: `👋 ${t("appName")}`, body: t("nudgeBody") });
+    }
     if (list.length) void nativeScheduleAlarms(list);
   }, [ready, alarmSig, t]);
+
+  // v2.4: notification ACTION buttons (water "✓ Drink" / "💤 Later") —
+  // tapping Drink logs a glass instantly; Later snoozes 15 minutes.
+  useEffect(() => {
+    if (!ready || !isNative()) return;
+    void listenWaterActions((ev) => {
+      if (ev.action === "waterDone") {
+        updateLog(today, (l) => ({ waterMl: l.waterMl + 250 }));
+        void nativeVibrate(30);
+        fireNotif(`💧 ${t("appName")}`, t("waterLogged"));
+      } else {
+        void nativeSnoozeWater(15, `💧 ${t("appName")}`, t("waterAlarmBody"));
+      }
+    });
+  }, [ready, today, fireNotif, t]);
 
   // snooze handling
   const dismissAlarm = useCallback(
@@ -325,7 +374,11 @@ function Shell() {
     [alarm]
   );
 
-  // auto prayer times on first load
+  // auto prayer times on first load — v2.5: ADHAN REMINDERS NOW AUTO-SET
+  // (owner round-7: "নামাজের রিমাইন্ডার এগুলো অটো সেট করে দিবা, অটো। এটা
+  // ওয়াক্ত হইলে যাতে সাথে সাথে অ্যালার্ম দেয়") — the FIRST successful fetch
+  // turns all five reminders ON with the real location times; after that the
+  // TIMES keep following the prayer times daily while on/off stay user-owned.
   useEffect(() => {
     if (!ready) return;
     const s = stateRef.current;
@@ -338,14 +391,68 @@ function Shell() {
         const lng = loc?.lng ?? 90.4125;
         const times = await fetchPrayerTimes(lat, lng);
         if (times) {
-          stateRef.current.settings.prayerTimes = times;
-          stateRef.current.settings.prayerTimesDate = today;
+          let firstTime = false;
+          try {
+            firstTime = localStorage.getItem("ourhabit_adhan_auto_done") !== "1";
+          } catch {
+            /* ignore */
+          }
+          const cur = stateRef.current.settings;
+          const adhanAlerts = { ...cur.adhanAlerts };
+          PRAYER_KEYS.forEach((pk) => {
+            adhanAlerts[pk] = { ...adhanAlerts[pk], time: times[pk], on: firstTime ? true : adhanAlerts[pk].on };
+          });
+          updateSettings({
+            prayerTimes: times,
+            prayerTimesDate: today,
+            adhanAlerts,
+            adhanAutoSet: true,
+          });
+          try {
+            localStorage.setItem("ourhabit_adhan_auto_done", "1");
+          } catch {
+            /* ignore */
+          }
         }
       } catch {
         /* offline */
       }
     })();
-  }, [ready, today]);
+  }, [ready, today, updateSettings]);
+
+  // v2.4 FIRST-OPEN LOCATION (owner round-6 #4: অ্যাপ প্রথমবার খুললেই
+  // লোকেশন পারমিশন নিয়ে নামাজের সময় স্বয়ংক্রিয়ভাবে নির্ধারণ). Runs once
+  // per device in the APK; on refusal the Dhaka fallback stays.
+  useEffect(() => {
+    if (!ready || !isNative()) return;
+    const s = stateRef.current;
+    if (s.settings.location) return;
+    try {
+      if (localStorage.getItem("ourhabit_locasked") === "1") return;
+    } catch {
+      /* ignore */
+    }
+    const id = setTimeout(async () => {
+      try {
+        localStorage.setItem("ourhabit_locasked", "1");
+      } catch {
+        /* ignore */
+      }
+      const pos = await getCurrentLocation();
+      if (!pos) return; // denied / no GPS — Dhaka default remains
+      try {
+        const { fetchPrayerTimes } = await import("@/lib/logic");
+        const times = await fetchPrayerTimes(pos.lat, pos.lng);
+        updateSettings({
+          location: { lat: pos.lat, lng: pos.lng, label: "My location" },
+          ...(times ? { prayerTimes: times, prayerTimesDate: todayStr() } : {}),
+        });
+      } catch {
+        /* offline — times refresh on next open */
+      }
+    }, 3000); // let the permission flow + splash finish first
+    return () => clearTimeout(id);
+  }, [ready]);
 
   // ensure the Firebase profile (invite code) exists once per signed-in user
   useEffect(() => {

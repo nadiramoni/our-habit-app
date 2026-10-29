@@ -5,16 +5,19 @@ import {
   Account,
   AppState,
   AppSettings,
+  CustomHabit,
   DayLog,
   PersonalNote,
   defaultState,
   emptyLog,
+  randomMealMusic,
   todayStr,
   uid,
 } from "./types";
 import { makeT, T } from "./i18n";
 import { reminderOfTheDay } from "./logic";
 import { isNative } from "./native";
+import { waterAlarmTimes, WaterAlarmCfg } from "./types";
 
 const KEY = "ourhabit_v1";
 
@@ -27,6 +30,10 @@ interface Ctx {
   updateLog: (date: string, patch: Partial<DayLog> | ((l: DayLog) => Partial<DayLog>)) => void;
   addPersonalNote: (title: string, text: string) => void;
   deletePersonalNote: (id: string) => void;
+  // v2.5: user-created habits (নতুন হ্যাবিট)
+  addCustomHabit: (name: string, icon: string) => void;
+  removeCustomHabit: (id: string) => void;
+  toggleCustomHabit: (date: string, id: string) => void;
   setAccount: (acc: AppState["account"]) => void;
   resetAll: () => void;
   importState: (s: AppState) => void;
@@ -49,6 +56,14 @@ function mergeSettings(saved: Partial<AppSettings> | undefined, base: AppSetting
     ...saved,
     fajrAlarm: { ...base.fajrAlarm, ...(saved.fajrAlarm || {}) },
     ayatNotif: { ...base.ayatNotif, ...(saved.ayatNotif || {}) },
+    // v2.4 migration: the legacy hourly toggle becomes the new interval alarm
+    waterAlarm: {
+      ...base.waterAlarm!,
+      ...(saved.waterAlarm || {}),
+      on: saved.waterAlarm ? saved.waterAlarm.on : Boolean(saved.hourlyWater),
+    },
+    habitsAlarm: { ...base.habitsAlarm!, ...(saved.habitsAlarm || {}) },
+    mealPreAlert: saved.mealPreAlert !== false,
     mealAlarms: {
       ...base.mealAlarms,
       ...(saved.mealAlarms || {}),
@@ -89,6 +104,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           settings: mergeSettings(parsed.settings, base.settings),
           logs: parsed.logs || {},
           personalNotes: parsed.personalNotes || [],
+          customHabits: Array.isArray(parsed.customHabits) ? parsed.customHabits : [],
           // legacy PIN accounts are retired — identity is Firebase now
           account:
             parsed.account && typeof (parsed.account as Partial<Account>).uid === "string"
@@ -183,6 +199,31 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setState((s) => ({ ...s, personalNotes: s.personalNotes.filter((n) => n.id !== id) }));
   }, []);
 
+  // ---------- v2.5: user-created habits (নতুন হ্যাবিট) ----------
+  const addCustomHabit = useCallback((name: string, icon: string) => {
+    const clean = name.trim().slice(0, 40);
+    if (!clean) return;
+    setState((s) => {
+      const list = s.customHabits || [];
+      if (list.length >= 12) return s; // sane cap
+      const h: CustomHabit = { id: uid(), name: clean, icon: icon || "✅" };
+      return { ...s, customHabits: [...list, h] };
+    });
+  }, []);
+
+  const removeCustomHabit = useCallback((id: string) => {
+    setState((s) => ({ ...s, customHabits: (s.customHabits || []).filter((h) => h.id !== id) }));
+  }, []);
+
+  const toggleCustomHabit = useCallback((date: string, id: string) => {
+    setState((s) => {
+      const cur = s.logs[date] ?? emptyLog();
+      const done = { ...(cur.customDone || {}) };
+      done[id] = !done[id];
+      return { ...s, logs: { ...s.logs, [date]: { ...cur, customDone: done } } };
+    });
+  }, []);
+
   const setAccount = useCallback((acc: AppState["account"]) => {
     setState((s) => ({ ...s, account: acc }));
   }, []);
@@ -208,6 +249,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       settings: mergeSettings(s.settings, base.settings),
       logs: s.logs || {},
       personalNotes: s.personalNotes || [],
+      customHabits: Array.isArray(s.customHabits) ? s.customHabits : [],
     });
   }, []);
 
@@ -271,6 +313,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     updateLog,
     addPersonalNote,
     deletePersonalNote,
+    addCustomHabit,
+    removeCustomHabit,
+    toggleCustomHabit,
     setAccount,
     resetAll,
     importState,
@@ -338,11 +383,38 @@ export function checkReminders(
     }
   }
   // meal alarms — direct music alarm (breakfast / lunch / dinner)
+  // v2.5: RANDOM music — the owner's two tracks alternate (একটার পর একটা)
   for (const mk of ["breakfast", "lunch", "dinner"] as const) {
     const cfg = s.mealAlarms?.[mk];
     if (cfg?.on && hm === cfg.time && !already(`meal_${mk}`)) {
-      alarm(`meal_${mk}`, t(`meal_${mk}`), t("mealAlarmMsg"));
+      fire(t(`meal_${mk}`), t("mealAlarmMsg"), randomMealMusic());
+      onAlarm({ key: `meal_${mk}`, title: t(`meal_${mk}`), body: t("mealAlarmMsg"), sound: true });
+      mark(`meal_${mk}`);
     }
+    // v2.4: a 15-minute EARLY heads-up (owner: নির্ধারিত সময়ের আগেই জানাবে).
+    // The APK schedules this natively too — the engine only covers web/app-open.
+    if (cfg?.on && s.mealPreAlert !== false) {
+      const [h, m] = cfg.time.split(":").map(Number);
+      const pre = ((h * 60 + m - 15) % 1440 + 1440) % 1440;
+      const preHM = `${String(Math.floor(pre / 60)).padStart(2, "0")}:${String(pre % 60).padStart(2, "0")}`;
+      if (hm === preHM && !already(`mealpre_${mk}`)) {
+        fire(t(`meal_${mk}`), t("mealPreMsg"));
+        mark(`mealpre_${mk}`);
+      }
+    }
+  }
+  // v2.4: daily "Our Habit Reminder" — one nudge a day (owner: প্রতিদিন একটা
+  // করে অ্যালার্ট দিও)
+  if (s.habitsAlarm?.on && hm === s.habitsAlarm.time && !already("habits")) {
+    alarm("habits", t("appName"), t("habitsAlarmMsg"), false);
+  }
+  // v2.5 APP-OPEN NUDGES (owner round-7: "বাজার আগে মাঝে মাঝে অ্যাপে ঢুকার
+  // রিমাইন্ডার দিতে হবে — কমপ্লিট করেছেন কিনা") — two gentle check-in nudges
+  // a day while the Our Habit Reminder is ON. The APK schedules them natively
+  // too (page.tsx), so they arrive even when the app is closed.
+  if (s.habitsAlarm?.on && (hm === "10:00" || hm === "16:00") && !already(`nudge_${hm}`)) {
+    fire(`👋 ${t("appName")}`, t("nudgeBody"));
+    mark(`nudge_${hm}`);
   }
   if (hm === s.checkinTime && !already("checkin")) {
     alarm("checkin", t("appName"), t("checkinMsg"), false);
@@ -351,12 +423,23 @@ export function checkReminders(
     fire(t("ayatNotifTitle"), reminderText(state, t));
     mark("ayat");
   }
-  if (s.hourlyWater && d.getMinutes() === 0 && d.getHours() >= 9 && d.getHours() <= 22 && !already(`water_${d.getHours()}`)) {
-    const l = state.logs[today];
-    if (!l || l.waterMl < s.waterGoalMl) {
-      fire(t("appName"), t("waterMsg"), "wateralarm.mp3"); // owner's music loop (round-5)
+  // v2.4 WATER ALARM — interval-based (owner round-6: নির্দিষ্ট সময় পরপর
+  // পানির নোটিফিকেশন, My Habito-স্টাইল). In the APK the OS delivers these
+  // even when the app is closed (recurring exact alarms with Done/Snooze
+  // buttons), so the engine fires only on the WEB to avoid doubles.
+  const wa: WaterAlarmCfg | null = s.waterAlarm?.on
+    ? s.waterAlarm
+    : s.hourlyWater
+      ? { on: true, intervalMin: 60, from: "09:00", to: "22:00" }
+      : null;
+  if (wa?.on && !isNative()) {
+    if (waterAlarmTimes(wa).includes(hm) && !already(`water_${hm}`)) {
+      const l = state.logs[today];
+      if (!l || l.waterMl < s.waterGoalMl) {
+        fire(t("appName"), t("waterAlarmBody"), "wateralarm.mp3"); // owner's music loop
+      }
+      mark(`water_${hm}`);
     }
-    mark(`water_${d.getHours()}`);
   }
   // Reels tracking notification (owner point 5) — independent of every other
   // toggle: when today's tracked/watched Reels minutes cross the daily limit,

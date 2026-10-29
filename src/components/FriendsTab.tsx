@@ -121,7 +121,6 @@ function PartnerCard({ p, meUid, onRemoved }: { p: FbProfile; meUid: string; onR
                   )}
                 </div>
               ) : null}
-              <DetailRow label={`💛 ${t("detailMood")}`} value={day.mood ? ["😞", "😕", "😐", "🙂", "😄"][day.mood - 1] : "—"} />
               <DetailRow label={`😴 ${t("detailSleep")}`} value={day.sleepBed && day.sleepWake ? `${day.sleepBed} → ${day.sleepWake}` : "—"} />
             </div>
           ) : null}

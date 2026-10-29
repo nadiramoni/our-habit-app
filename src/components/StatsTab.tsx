@@ -64,7 +64,6 @@ function TodayRing() {
       dhikr: dhikrTotal(log) >= 100,
       meditation: log.meditationMin >= 10,
       focus: log.focusMin >= 25,
-      mood: log.mood !== null,
       gratitude: log.gratitudes.filter((g) => g.trim()).length >= 3,
       sleep: Boolean(log.sleepBed && log.sleepWake),
     }),
@@ -78,7 +77,7 @@ function TodayRing() {
       <div className="flex items-center gap-4">
         <Ring pct={pct} size={120} stroke={11}>
           <span className="text-2xl font-extrabold">{Math.round(pct * 100)}%</span>
-          <span className="text-[10px] text-muted-foreground">{done}/10</span>
+          <span className="text-[10px] text-muted-foreground">{done}/{Object.keys(checks).length}</span>
         </Ring>
         <div className="flex-1 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
           {(
@@ -90,7 +89,6 @@ function TodayRing() {
               ["📿", "habit_dhikr", checks.dhikr],
               ["🧘", "habit_meditation", checks.meditation],
               ["🎯", "habit_focus", checks.focus],
-              ["💛", "habit_mood", checks.mood],
               ["🙏", "habit_gratitude", checks.gratitude],
               ["😴", "habit_sleep", checks.sleep],
             ] as [string, string, boolean][]
@@ -110,7 +108,7 @@ function TodayRing() {
 function WeeklyBars() {
   const { state, today, t } = useStore();
   const days = useMemo(() => {
-    const out = [];
+    const out: { d: string; pts: number }[] = [];
     for (let i = 6; i >= 0; i--) {
       const d = addDays(today, -i);
       const l = state.logs[d];
@@ -230,7 +228,6 @@ function HabitProgress() {
       { id: "habit_dhikr", f: (l: ReturnType<typeof getLog>) => dhikrTotal(l) >= 100 },
       { id: "habit_meditation", f: (l: ReturnType<typeof getLog>) => l.meditationMin >= 10 },
       { id: "habit_focus", f: (l: ReturnType<typeof getLog>) => l.focusMin >= 25 },
-      { id: "habit_mood", f: (l: ReturnType<typeof getLog>) => l.mood !== null },
       { id: "habit_gratitude", f: (l: ReturnType<typeof getLog>) => l.gratitudes.filter((g) => g.trim()).length >= 3 },
       { id: "habit_sleep", f: (l: ReturnType<typeof getLog>) => Boolean(l.sleepBed && l.sleepWake) },
     ];
@@ -392,7 +389,7 @@ function dayCompletionCached(state: ReturnType<typeof useStore>["state"], date: 
   const l = state.logs[date];
   if (!l) return 0;
   let done = 0;
-  const total = 10;
+  const total = 9;
   if (Object.values(l.prayers).every(Boolean)) done++;
   if (l.prayerWater.every(Boolean)) done++;
   if (l.waterMl >= goal) done++;
@@ -400,7 +397,6 @@ function dayCompletionCached(state: ReturnType<typeof useStore>["state"], date: 
   if (dhikrTotal(l) >= 100) done++;
   if (l.meditationMin >= 10) done++;
   if (l.focusMin >= 25) done++;
-  if (l.mood !== null) done++;
   if (l.gratitudes.filter((g) => g.trim()).length >= 3) done++;
   if (l.sleepBed && l.sleepWake) done++;
   return done / total;

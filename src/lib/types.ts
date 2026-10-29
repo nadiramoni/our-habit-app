@@ -31,11 +31,30 @@ export interface DayLog {
   sleepWake: string | null; // "05:30"
   gratitudes: string[]; // up to 3
   note: string;
+  // v2.5: user-created habits (নতুন হ্যাবিট) — habitId -> done today
+  customDone?: Record<string, boolean>;
+}
+
+// v2.5: a habit the user added themselves (owner round-7: ঘুমের পাশে
+// "নতুন হ্যাবিট" অপশন — নিজের মতো অ্যাক্টিভিটি যোগ করা যাবে)
+export interface CustomHabit {
+  id: string;
+  name: string;
+  icon: string;
 }
 
 export interface AlarmCfg {
   on: boolean;
   time: string; // "HH:MM"
+}
+
+// v2.4 Water Alarm — interval-based hydration reminders (owner round-6:
+// "নির্দিষ্ট সময় পরপর পানি পান করার নোটিফিকেশন")
+export interface WaterAlarmCfg {
+  on: boolean;
+  intervalMin: number; // 30 | 60 | 120 | 180 — gap between glasses
+  from: string; // active window start "HH:MM"
+  to: string; // active window end "HH:MM"
 }
 
 export type Lang = "bn" | "en";
@@ -50,12 +69,18 @@ export interface AppSettings {
   fajrAlarm: AlarmCfg;
   adhanAlerts: Record<PrayerKey, AlarmCfg>;
   mealAlarms: Record<MealKey, AlarmCfg>;
-  hourlyWater: boolean;
+  hourlyWater: boolean; // legacy v2.x toggle (kept for migration)
+  waterAlarm?: WaterAlarmCfg; // v2.4 interval-based water alarm
+  habitsAlarm?: AlarmCfg; // v2.4 daily "track your habits" reminder (owner: প্রতিদিন একটা করে অ্যালার্ট)
+  mealPreAlert?: boolean; // v2.4 notify 15 min BEFORE each meal (owner: নির্ধারিত সময়ের আগেই জানাবে)
   ayatNotif: AlarmCfg;
   reelsLimitMin: number; // daily Reels limit — crossing it fires a tracking notification (0 = off)
   prayerTimes: Record<PrayerKey, string> | null;
   prayerTimesDate: string | null;
   location: { lat: number; lng: number; label: string } | null;
+  // v2.5: নামাজের রিমাইন্ডার অটো সেট — once true, adhan alarm times ALWAYS
+  // follow the location's prayer times (on/off states stay user-controlled)
+  adhanAutoSet?: boolean;
 }
 
 // ---------- Server config (secret admin panel) ----------
@@ -202,6 +227,7 @@ export interface AppState {
   logs: Record<string, DayLog>; // date -> DayLog
   account: Account | null;
   personalNotes: PersonalNote[];
+  customHabits?: CustomHabit[]; // v2.5 user-created habits
 }
 
 export interface FriendSummary {
@@ -280,6 +306,7 @@ export function emptyLog(): DayLog {
     sleepWake: null,
     gratitudes: ["", "", ""],
     note: "",
+    customDone: {},
   };
 }
 
@@ -291,6 +318,9 @@ export function defaultSettings(): AppSettings {
     waterGoalMl: 3000,
     checkinTime: "21:00",
     sleepAlarm: { on: false, time: "22:30" },
+    waterAlarm: { on: false, intervalMin: 60, from: "09:00", to: "22:00" },
+    habitsAlarm: { on: false, time: "20:00" },
+    mealPreAlert: true,
     fajrAlarm: { on: true, time: "04:45" },
     adhanAlerts: {
       fajr: { on: false, time: "05:00" },
@@ -305,6 +335,7 @@ export function defaultSettings(): AppSettings {
     prayerTimes: null,
     prayerTimesDate: null,
     location: null,
+    adhanAutoSet: true,
     mealAlarms: {
       breakfast: { on: true, time: "08:00" },
       lunch: { on: true, time: "14:00" },
@@ -313,8 +344,45 @@ export function defaultSettings(): AppSettings {
   };
 }
 
+// v2.4: count of 250ml glasses logged today (water tile shows glasses,
+// owner round-6: "আমি কত গ্লাস পানি খেয়েছি")
+export function glassesOf(ml: number): number {
+  return Math.floor(ml / 250);
+}
+
+/** v2.4 water-alarm schedule: all reminder times (HH:MM) across today's window. */
+export function waterAlarmTimes(w: WaterAlarmCfg): string[] {
+  const out: string[] = [];
+  const toMin = (t: string) => {
+    const [h, m] = t.split(":").map(Number);
+    return h * 60 + m;
+  };
+  const from = toMin(w.from || "09:00");
+  const to = toMin(w.to || "22:00");
+  const step = Math.max(15, w.intervalMin || 60);
+  for (let m = from; m <= to; m += step) {
+    out.push(`${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`);
+  }
+  return out;
+}
+
+export function shiftTime(t: string, deltaMin: number): string {
+  const [h, m] = t.split(":").map(Number);
+  let total = h * 60 + m + deltaMin;
+  total = ((total % 1440) + 1440) % 1440;
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
 export function defaultState(): AppState {
-  return { settings: defaultSettings(), logs: {}, account: null, personalNotes: [] };
+  return { settings: defaultSettings(), logs: {}, account: null, personalNotes: [], customHabits: [] };
+}
+
+/** v2.5: the two REAL music files bundled in the APK for meal alarms —
+ *  the owner's request: খাওয়ার অ্যালার্মে র‍্যান্ডম মিউজিক বাজবে (একটার পর
+ *  একটা). Picked fresh every time the alarms re-sync. */
+export const MEAL_MUSIC = ["mealalarm.mp3", "mealmusic1.mp3"] as const;
+export function randomMealMusic(): string {
+  return MEAL_MUSIC[Math.floor(Math.random() * MEAL_MUSIC.length)];
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");

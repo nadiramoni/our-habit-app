@@ -7,7 +7,10 @@ import {
 } from "./types";
 
 // ---------- Points ----------
-export const MAX_POINTS = 41;
+// v2.4: mood removed from the tracked set (owner round-6: অপ্রয়োজনীয় মুড অপশন
+// সরানো) → 41 became 40. Prayer 5×2 +5 bonus, water 3, reels-free 5,
+// dhikr 2, meditation 3, focus 3, gratitude 2, sleep 1, note 1, prayer-water 5
+export const MAX_POINTS = 40;
 
 export function dayPoints(l: DayLog): number {
   let p = 0;
@@ -20,7 +23,6 @@ export function dayPoints(l: DayLog): number {
   if (dhikrTotal(l) >= 100) p += 2;
   if (l.meditationMin >= 10) p += 3;
   if (l.focusMin >= 25) p += 3;
-  if (l.mood !== null) p += 1;
   if (l.gratitudes.filter((g) => g.trim()).length >= 3) p += 2;
   if (l.sleepBed && l.sleepWake) p += 1;
   if (l.note.trim()) p += 1;
@@ -54,7 +56,6 @@ export function dayChecks(l: DayLog, goalMl: number): HabitCheck[] {
     { id: "dhikr", done: dhikrTotal(l) >= 100 },
     { id: "meditation", done: l.meditationMin >= 10 },
     { id: "focus", done: l.focusMin >= 25 },
-    { id: "mood", done: l.mood !== null },
     { id: "gratitude", done: l.gratitudes.filter((g) => g.trim()).length >= 3 },
     { id: "sleep", done: Boolean(l.sleepBed && l.sleepWake) },
   ];

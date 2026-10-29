@@ -24,6 +24,8 @@ import {
   nativeRequestNotifications,
   nativeOpenNotificationSettings,
   nativeRealTestNotification,
+  nativeExactAlarmStatus,
+  nativeOpenExactAlarmSettings,
   PermStatus,
 } from "@/lib/native";
 import { PERM_FLOW_KEY } from "@/components/PermissionSetupFlow";
@@ -68,10 +70,14 @@ export default function SettingsTab() {
 
   const acc = state.account;
   const [permStatus, setPermStatus] = useState<PermStatus | null>(null);
+  const [exactPerm, setExactPerm] = useState<"granted" | "denied" | "unsupported">("unsupported");
 
   const refreshPerm = useCallback(async () => {
     const s = await nativePermissionStatus();
     setPermStatus(s);
+    // v2.5: Fajr REAL fix — exact alarms are a special access on Android 12+;
+    // if denied, Fajr/adhan can be late or skipped in Doze.
+    setExactPerm(await nativeExactAlarmStatus());
   }, []);
 
   useEffect(() => {
@@ -247,6 +253,32 @@ export default function SettingsTab() {
               >
                 {t("permAllowBtn")}
               </button>
+            )}
+          </div>
+        ) : null}
+
+        {nativeOn ? (
+          <div className="flex items-center gap-3 py-2.5 border-t border-border">
+            <span className="icon-chip w-10 h-10 text-lg shrink-0">⏰</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium">{t("permExact")}</div>
+              <div className="text-xs text-muted-foreground">{t("permExactSub")}</div>
+            </div>
+            {exactPerm === "granted" ? (
+              <span className="text-xs font-bold text-primary shrink-0">✓ {t("on")}</span>
+            ) : exactPerm === "denied" ? (
+              <button
+                type="button"
+                onClick={async () => {
+                  await nativeOpenExactAlarmSettings();
+                  setTimeout(() => void refreshPerm(), 1500);
+                }}
+                className="rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-xs font-semibold px-3 py-2.5 min-h-[40px] shrink-0 active:scale-95 transition-transform"
+              >
+                ⚠️ {t("permExactAllow")}
+              </button>
+            ) : (
+              <span className="text-xs font-bold text-primary shrink-0">✓</span>
             )}
           </div>
         ) : null}

@@ -18,6 +18,12 @@ export interface UsageResult {
   instagram: number;
   other: number;
   granted: boolean;
+  /** v2.4 REAL shorts/reels count — every ACTIVITY_RESUMED of a shorts-style
+   *  activity counts as one short video opened (OS event data, no guessing). */
+  shortsCount: number;
+  shortsYt: number;
+  shortsFb: number;
+  shortsIg: number;
 }
 
 export function isNative(): boolean {
@@ -52,6 +58,10 @@ export async function nativeGetVideoUsage(): Promise<UsageResult | null> {
       instagram: Number(res?.instagram) || 0,
       other: Number(res?.other) || 0,
       granted: Boolean(res?.granted),
+      shortsCount: Number(res?.shortsCount) || 0,
+      shortsYt: Number(res?.shortsYt) || 0,
+      shortsFb: Number(res?.shortsFb) || 0,
+      shortsIg: Number(res?.shortsIg) || 0,
     };
   } catch {
     return null;
@@ -208,6 +218,34 @@ export async function nativeOpenAppInfo(): Promise<boolean> {
   }
 }
 
+// ==================== v2.5 EXACT ALARM permission (Fajr REAL fix) ====================
+// On Android 12+ the SCHEDULE_EXACT_ALARM permission is NOT granted by default
+// (Android 14 denies it outright until the user flips "Alarms & reminders" in
+// the app's system settings). Without it the plugin falls back to INEXACT
+// windows → Fajr/adhan can be delayed many minutes or skipped in Doze. These
+// helpers expose the live status + the exact system settings page.
+export async function nativeExactAlarmStatus(): Promise<"granted" | "denied" | "unsupported"> {
+  const p = permPlugin();
+  if (!p?.exactAlarmStatus) return "unsupported";
+  try {
+    const r = await p.exactAlarmStatus();
+    return r?.granted ? "granted" : "denied";
+  } catch {
+    return "unsupported";
+  }
+}
+
+export async function nativeOpenExactAlarmSettings(): Promise<boolean> {
+  const p = permPlugin();
+  if (!p?.openExactAlarmSettings) return false;
+  try {
+    await p.openExactAlarmSettings();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Open a URL OUTSIDE the app — the APK WebView blocks window.open(), so the
  * force-update "Download" button needs this native ACTION_VIEW intent.
@@ -275,6 +313,7 @@ const ALARM_CHANNELS: { id: string; name: string; sound: string }[] = [
   { id: "sound_adhan", name: "Adhan / prayer alarms", sound: "adhan.mp3" },
   { id: "sound_alarm", name: "Reminders", sound: "alarm.wav" },
   { id: "sound_mealalarm", name: "Meal alarms", sound: "mealalarm.mp3" },
+  { id: "sound_mealmusic1", name: "Meal music (track 2)", sound: "mealmusic1.mp3" },
   { id: "sound_wateralarm", name: "Water reminders", sound: "wateralarm.mp3" },
 ];
 
@@ -313,29 +352,108 @@ export async function nativeScheduleAlarms(alarms: NativeAlarm[]): Promise<boole
     const perm = await LocalNotifications.requestPermissions();
     if (perm.display !== "granted") return false;
     await ensureAlarmChannels();
+    await registerWaterActions();
     await LocalNotifications.cancelAll();
-    const now = new Date();
+    // ⚠️ v2.4 ROOT-CAUSE FIX (owner: "Fajr alarm does not ring"): the old code
+    // passed year/month/day in schedule.on → the plugin treats that as a ONE-SHOT
+    // date (its DateMatch.postponeTriggerIfNeeded even pushes a missed date one
+    // whole YEAR ahead). With ONLY {hour, minute} the plugin recurs DAILY —
+    // verified in the plugin source (unit=HOUR_OF_DAY → postponed by 1 day).
+    // Every alarm below now rings EVERY DAY until the user turns it off.
+    // ⚠️ ID SAFETY: a collision would silently REPLACE one alarm with another
+    // (the plugin keys by id) — the owner's "sometimes the alarm doesn't ring".
+    // Deterministic + collision-free: base hash, then skip ids already used.
+    const usedIds = new Set<number>();
     const list = alarms
       .filter((a) => /^\d{1,2}:\d{2}$/.test(a.time))
-      .map((a, i) => {
+      .map((a) => {
         const [h, m] = a.time.split(":").map(Number);
+        let nid = Math.abs(hashCode(a.id)) % 100000;
+        while (usedIds.has(nid)) nid = (nid + 1) % 100000;
+        usedIds.add(nid);
         return {
-          id: (Math.abs(hashCode(a.id)) % 100000) + i,
+          id: nid,
           title: a.title,
           body: a.body,
-          schedule: { on: { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate(), hour: h, minute: m }, allowWhileIdle: true },
+          schedule: { on: { hour: h, minute: m }, allowWhileIdle: true },
           sound: a.sound || "alarm.wav",
-          actionTypeId: "",
+          // water reminders get the "Mark as Done / Remind later" buttons
+          actionTypeId: a.id.startsWith("water_") ? "water" : "",
         };
-      })
-      .filter((n) => {
-        const sch = n.schedule.on as { hour: number; minute: number };
-        return sch.hour * 60 + sch.minute > now.getHours() * 60 + now.getMinutes();
       });
-    if (list.length) await LocalNotifications.schedule({ notifications: list });
+    if (list.length) {
+      const r = await LocalNotifications.schedule({ notifications: list });
+      if (r?.warning) console.warn("[alarms] scheduled (some inexact):", r.warning.message);
+    }
     return true;
   } catch {
     return false;
+  }
+}
+
+// ---------- v2.4: water-notification ACTION buttons ("Mark as Done / Remind later") ----------
+// The owner showed the My Habito reference: water notifications must have
+// action buttons. Registered once; page.tsx listens for the taps.
+let waterActionsRegistered = false;
+export async function registerWaterActions(): Promise<void> {
+  if (waterActionsRegistered) return;
+  try {
+    const { LocalNotifications } = await import("@capacitor/local-notifications");
+    await LocalNotifications.registerActionTypes({
+      types: [
+        {
+          id: "water",
+          actions: [
+            { id: "waterDone", title: "✓ Drink" },
+            { id: "waterSnooze", title: "💤 Later" },
+          ],
+        },
+      ],
+    });
+    waterActionsRegistered = true;
+  } catch {
+    /* plugin missing or Android < 7 — notifications still work, just no buttons */
+  }
+}
+
+export interface WaterActionEvent {
+  action: "waterDone" | "waterSnooze";
+}
+
+export async function listenWaterActions(handler: (ev: WaterActionEvent) => void): Promise<void> {
+  if (!isNative()) return;
+  try {
+    const { LocalNotifications } = await import("@capacitor/local-notifications");
+    await LocalNotifications.addListener("localNotificationActionPerformed", (ev) => {
+      const actionId = String(ev?.actionId || "");
+      if (actionId === "waterDone") handler({ action: "waterDone" });
+      else if (actionId === "waterSnooze") handler({ action: "waterSnooze" });
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Schedule ONE extra water notification N minutes from now (snooze). */
+export async function nativeSnoozeWater(minutes: number, title: string, body: string): Promise<void> {
+  if (!isNative()) return;
+  try {
+    const { LocalNotifications } = await import("@capacitor/local-notifications");
+    await registerWaterActions();
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          id: 424243,
+          title,
+          body,
+          schedule: { at: new Date(Date.now() + minutes * 60000), allowWhileIdle: true },
+          sound: "wateralarm.mp3",
+          actionTypeId: "water",
+        },
+      ],
+    });
+  } catch {
+    /* ignore */
   }
 }
 
@@ -400,5 +518,71 @@ export async function nativeHandleBackButton(handlers: BackHandlers): Promise<vo
     });
   } catch {
     /* plugin missing — stock WebView behaviour */
+  }
+}
+
+// ==================== v2.4: NATIVE SHARE SHEET (owner round-6 #9) ====================
+
+/**
+ * Open the REAL Android Share Sheet with beautifully formatted text.
+ * Uses the official @capacitor/share plugin (added in v2.4); falls back to
+ * navigator.share, then to clipboard. Returns how it was shared.
+ */
+export async function nativeShareText(title: string, text: string, dialogTitle: string): Promise<"native" | "web" | "copied" | "failed"> {
+  // 1) official native plugin — proper Android Share Sheet with app chooser
+  try {
+    const mod = await import("@capacitor/share");
+    const Share = mod.Share;
+    if (Share && typeof Share.canShare === "function") {
+      const can = await Share.canShare();
+      if (can?.value) {
+        await Share.share({ title, text, dialogTitle });
+        return "native";
+      }
+    }
+  } catch {
+    /* plugin missing (web build) → try the Web Share API */
+  }
+  // 2) Web Share API (works on mobile browsers)
+  try {
+    if (typeof navigator !== "undefined" && navigator.share) {
+      await navigator.share({ title, text });
+      return "web";
+    }
+  } catch {
+    /* user cancelled or unsupported */
+  }
+  // 3) last resort: copy to clipboard so nothing is lost
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return "copied";
+    }
+  } catch {
+    /* ignore */
+  }
+  return "failed";
+}
+
+/**
+ * v2.4: one-shot geolocation with a timeout — used for the FIRST-OPEN
+ * location request (owner round-6 #4: prayer times must follow the user's
+ * location automatically). Requires ACCESS_FINE_LOCATION in the manifest,
+ * which prepare-apk now adds WITHOUT the old maxSdkVersion=30 cap that
+ * silently disabled location on Android 12+.
+ */
+export async function getCurrentLocation(timeoutMs = 10000): Promise<{ lat: number; lng: number } | null> {
+  if (typeof navigator === "undefined" || !navigator.geolocation) return null;
+  try {
+    const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        timeout: timeoutMs,
+        maximumAge: 600000,
+        enableHighAccuracy: false,
+      });
+    });
+    return { lat: pos.coords.latitude, lng: pos.coords.longitude };
+  } catch {
+    return null;
   }
 }
