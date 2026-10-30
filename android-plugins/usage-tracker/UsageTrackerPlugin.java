@@ -14,20 +14,32 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import org.json.JSONObject;
+
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Map;
 
 /**
- * UsageTracker — REAL screen-time for video/Reels apps via Android
- * Usage Access (UsageStatsManager). The user cannot lie: the minutes come
- * straight from the OS.
+ * UsageTracker — REAL screen-time for video apps via Android Usage Access
+ * (UsageStatsManager). The user cannot lie: the numbers come straight from
+ * the OS.
  *
- * v2.3 (owner round-5): Shorts vs long is now detected per ACTIVITY class
- * name — YouTube Shorts (…shorts…), Instagram/Facebook Reels (…reel…) go to
- * the "ytshorts" bucket; the remaining YouTube time stays "ytlong".
- * Facebook minutes are ALSO reported separately (owner asked for a
- * per-app breakdown incl. minutes watched).
+ * v5.0 (owner round-19): the owner's own video-app list, each with its OWN
+ * bucket — এক্স (X/Twitter), কুকু টিভি (Kuku/Kuuk TV), মোজ (Moj), চরকি,
+ * হইচই, বঙ্গ, বায়োস্কোপ, টফি (packages verified from the Play Store
+ * listings). Twitter used to drown in "other" — now it is its own row.
+ *
+ * v5.0 SECONDS: getVideoUsage() now ALSO returns an `apps` map of per-app
+ * SECONDS (and `appsTotal`) so the web layer can show “৪৫ সেকেন্ড / ৫ মিনিট /
+ * ১ ঘণ্টা ১০ মিনিট”. The legacy minute keys are kept unchanged (backups,
+ * points and the admin tables all still read them).
+ *
+ * Honest measurement note (the owner's own rule): Android cannot detect each
+ * video's playback separately — the usage engine measures the time the app's
+ * screen is in the foreground, split by ACTIVITY class for Shorts/Reels where
+ * the class names are known. That is the most accurate approximation
+ * possible, and the UI labels it as আনুমানিক.
  */
 @CapacitorPlugin(name = "UsageTracker")
 public class UsageTrackerPlugin extends Plugin {
@@ -38,32 +50,54 @@ public class UsageTrackerPlugin extends Plugin {
         return c.contains("shorts") || c.contains("reel") || c.contains("tiktok") || c.contains("snack");
     }
 
-    private static final Map<String, String> PKG_MAP = new HashMap<>();
+    /** v5.0: package → app id. "youtube" is special-cased into ytshorts/ytlong
+     *  by the ACTIVITY class (Shorts vs the rest), exactly like before. */
+    private static final Map<String, String> PKG_APP = new HashMap<>();
     static {
         // facebook
-        PKG_MAP.put("com.facebook.katana", "facebook");
-        PKG_MAP.put("com.facebook.lite", "facebook");
-        PKG_MAP.put("com.facebook.groups", "facebook");
-        PKG_MAP.put("com.facebook.orca", "facebook");
-        // youtube (long videos; Shorts live in the same package)
-        PKG_MAP.put("com.google.android.youtube", "ytlong");
-        PKG_MAP.put("com.google.android.youtube.tv", "ytlong");
+        PKG_APP.put("com.facebook.katana", "facebook");
+        PKG_APP.put("com.facebook.lite", "facebook");
+        PKG_APP.put("com.facebook.groups", "facebook");
+        PKG_APP.put("com.facebook.orca", "facebook");
+        // youtube (long videos; Shorts live in the same package — split by class)
+        PKG_APP.put("com.google.android.youtube", "youtube");
+        PKG_APP.put("com.google.android.youtube.tv", "youtube");
         // tiktok
-        PKG_MAP.put("com.zhiliaoapp.musically", "tiktok");
-        PKG_MAP.put("com.zhiliaoapp.musically.go", "tiktok");
-        PKG_MAP.put("com.ss.android.ugc.trill", "tiktok");
+        PKG_APP.put("com.zhiliaoapp.musically", "tiktok");
+        PKG_APP.put("com.zhiliaoapp.musically.go", "tiktok");
+        PKG_APP.put("com.ss.android.ugc.trill", "tiktok");
         // instagram
-        PKG_MAP.put("com.instagram.android", "instagram");
-        PKG_MAP.put("com.instagram.lite", "instagram");
-        // other video platforms
-        PKG_MAP.put("com.vimeo.android.videoapp", "other");
-        PKG_MAP.put("com.kwai.video", "other");
-        PKG_MAP.put("video.likee", "other");
-        PKG_MAP.put("com.twitter.android", "other");
-        PKG_MAP.put("com.reddit.frontpage", "other");
-        PKG_MAP.put("com.snapchat.android", "other");
-        PKG_MAP.put("com.pinterest", "other");
-        PKG_MAP.put("com.uvideo", "other");
+        PKG_APP.put("com.instagram.android", "instagram");
+        PKG_APP.put("com.instagram.lite", "instagram");
+        // v5.0: X (Twitter) — used to sit inside "other"; now its own row
+        PKG_APP.put("com.twitter.android", "x");
+        // v5.0: Kuku TV / Kuuk TV (both spellings of the owner's কুকু টিভি)
+        PKG_APP.put("com.bongobd.kuuktv", "kukutv");   // Kuuk TV by Bongo BD
+        PKG_APP.put("com.vlv.aravali.reels", "kukutv"); // Kuku TV (short drama)
+        // v5.0: Moj (ShareChat's short-video app — the owner's মোস)
+        PKG_APP.put("in.mohalla.video", "moj");
+        // v5.0: BD drama/OTT apps
+        PKG_APP.put("com.prothomalo", "chorki");        // Chorki (Prothom Alo)
+        PKG_APP.put("com.viewlift.hoichoi", "hoichoi"); // Hoichoi
+        PKG_APP.put("com.bongo.bongobd", "bongo");      // Bongo
+        PKG_APP.put("com.bongo.bioscope", "bioscope");  // Bioscope+
+        PKG_APP.put("com.banglalink.toffee", "toffee"); // Toffee (Banglalink)
+        // other video platforms (unchanged)
+        PKG_APP.put("com.vimeo.android.videoapp", "other");
+        PKG_APP.put("com.kwai.video", "other");
+        PKG_APP.put("video.likee", "other");
+        PKG_APP.put("com.reddit.frontpage", "other");
+        PKG_APP.put("com.snapchat.android", "other");
+        PKG_APP.put("com.pinterest", "other");
+        PKG_APP.put("com.uvideo", "other");
+    }
+
+    /** v5.0: the FINAL app id of a package+activity (null = not a video app). */
+    private static String appIdOf(String pkg, boolean shorts) {
+        String app = PKG_APP.get(pkg);
+        if (app == null) return null;
+        if ("youtube".equals(app)) return shorts ? "ytshorts" : "ytlong";
+        return app;
     }
 
     @PluginMethod
@@ -73,7 +107,10 @@ public class UsageTrackerPlugin extends Plugin {
         JSObject res = new JSObject();
         res.put("granted", granted);
 
-        long fb = 0, ytShorts = 0, ytLong = 0, tiktok = 0, ig = 0, other = 0;
+        // v5.0: ONE source of truth — app id → accumulated MILLISECONDS.
+        // Minutes (legacy keys) = ms / 60000; seconds (the new `apps` map) =
+        // ms / 1000. Never two separate counters that can drift.
+        Map<String, Long> msAcc = new HashMap<>();
         long shortsCount = 0, shortsYt = 0, shortsFb = 0, shortsIg = 0;
         if (granted) {
             UsageStatsManager usm =
@@ -96,71 +133,88 @@ public class UsageTrackerPlugin extends Plugin {
                 while (events.hasNextEvent()) {
                     events.getNextEvent(ev);
                     String pkg = ev.getPackageName();
-                    if (!PKG_MAP.containsKey(pkg)) continue;
+                    if (!PKG_APP.containsKey(pkg)) continue;
                     int type = ev.getEventType();
                     if (type == UsageEvents.Event.ACTIVITY_RESUMED) {
                         String cls = ev.getClassName();
                         boolean shorts = isShortsActivity(cls);
                         // v2.4: EVERY resume of a shorts-style activity = one
-                        // short video/reel opened — REAL count from OS events,
-                        // no manual input, no estimation
+                        // short video/reel opened — REAL count from OS events
                         if (shorts) {
                             shortsCount++;
-                            String bucket = PKG_MAP.get(pkg);
-                            if ("ytlong".equals(bucket)) shortsYt++;
-                            else if ("facebook".equals(bucket)) shortsFb++;
-                            else if ("instagram".equals(bucket)) shortsIg++;
+                            String b = appIdOf(pkg, true);
+                            if ("ytshorts".equals(b)) shortsYt++;
+                            else if ("facebook".equals(b)) shortsFb++;
+                            else if ("instagram".equals(b)) shortsIg++;
                         }
-                        String sessionKey = pkg + "|" + (shorts ? "shorts" : "full");
-                        open.put(sessionKey, ev.getTimeStamp());
+                        open.put(pkg + "|" + (shorts ? "shorts" : "full"), ev.getTimeStamp());
                     } else if (type == UsageEvents.Event.ACTIVITY_PAUSED) {
                         String cls = ev.getClassName();
                         String sessionKey = pkg + "|" + (isShortsActivity(cls) ? "shorts" : "full");
                         Long began = open.remove(sessionKey);
                         if (began != null) {
-                            long mins = Math.max(0, (ev.getTimeStamp() - began) / 60000L);
-                            long[] acc = bucket(fb, ytShorts, ytLong, tiktok, ig, other, pkg, mins, isShortsActivity(cls));
-                            fb = acc[0]; ytShorts = acc[1]; ytLong = acc[2]; tiktok = acc[3]; ig = acc[4]; other = acc[5];
+                            addMs(msAcc, appIdOf(pkg, isShortsActivity(cls)),
+                                Math.max(0, ev.getTimeStamp() - began));
                         }
                     }
                 }
                 // apps still open → close at "now"
                 for (Map.Entry<String, Long> e : open.entrySet()) {
-                    long mins = Math.max(0, (end - e.getValue()) / 60000L);
                     boolean shortSession = e.getKey().endsWith("|shorts");
                     String pkg = e.getKey().substring(0, e.getKey().indexOf('|'));
-                    long[] acc = bucket(fb, ytShorts, ytLong, tiktok, ig, other, pkg, mins, shortSession);
-                    fb = acc[0]; ytShorts = acc[1]; ytLong = acc[2]; tiktok = acc[3]; ig = acc[4]; other = acc[5];
+                    addMs(msAcc, appIdOf(pkg, shortSession), Math.max(0, end - e.getValue()));
                 }
             }
         }
 
-        res.put("facebook", fb);
-        res.put("ytshorts", ytShorts);
-        res.put("ytlong", ytLong);
-        res.put("tiktok", tiktok);
-        res.put("instagram", ig);
-        res.put("other", other);
+        // ---------- legacy MINUTE keys (unchanged shape — backups, points,
+        // admin tables and old web builds all still read these) ----------
+        res.put("facebook", min(msAcc, "facebook"));
+        res.put("ytshorts", min(msAcc, "ytshorts"));
+        res.put("ytlong", min(msAcc, "ytlong"));
+        res.put("tiktok", min(msAcc, "tiktok"));
+        res.put("instagram", min(msAcc, "instagram"));
+        res.put("other", min(msAcc, "other"));
         res.put("shortsCount", shortsCount);
         res.put("shortsYt", shortsYt);
         res.put("shortsFb", shortsFb);
         res.put("shortsIg", shortsIg);
+        // v5.0: the new buckets as minutes too (parity for the web layer).
+        res.put("x", min(msAcc, "x"));
+        res.put("kukutv", min(msAcc, "kukutv"));
+        res.put("moj", min(msAcc, "moj"));
+        res.put("chorki", min(msAcc, "chorki"));
+        res.put("hoichoi", min(msAcc, "hoichoi"));
+        res.put("bongo", min(msAcc, "bongo"));
+        res.put("bioscope", min(msAcc, "bioscope"));
+        res.put("toffee", min(msAcc, "toffee"));
+
+        // ---------- v5.0: the PRECISE per-app SECONDS map ----------
+        JSONObject apps = new JSONObject();
+        long totalSec = 0;
+        for (Map.Entry<String, Long> e : msAcc.entrySet()) {
+            long sec = e.getValue() / 1000L;
+            if (sec <= 0) continue;
+            try {
+                apps.put(e.getKey(), sec);
+            } catch (Exception ignored) {
+            }
+            totalSec += sec;
+        }
+        res.put("apps", apps);
+        res.put("appsTotal", totalSec);
         call.resolve(res);
     }
 
-    /** acc = {facebook, ytShorts, ytLong, tiktok, instagram, other} */
-    private long[] bucket(long fb, long ytShorts, long ytLong, long tt, long ig, long other, String pkg, long mins, boolean shorts) {
-        switch (PKG_MAP.get(pkg)) {
-            case "facebook":  return new long[]{fb + mins, ytShorts, ytLong, tt, ig, other};
-            case "ytlong":
-                // v2.3: YouTube Shorts live inside the same package — activities
-                // with "shorts/reel/snack" in the class name go to the shorts bucket
-                if (shorts) return new long[]{fb, ytShorts + mins, ytLong, tt, ig, other};
-                return new long[]{fb, ytShorts, ytLong + mins, tt, ig, other};
-            case "tiktok":    return new long[]{fb, ytShorts, ytLong, tt + mins, ig, other};
-            case "instagram": return new long[]{fb, ytShorts, ytLong, tt, ig + mins, other};
-            default:          return new long[]{fb, ytShorts, ytLong, tt, ig, other + mins};
-        }
+    private static void addMs(Map<String, Long> acc, String appId, long ms) {
+        if (appId == null || ms <= 0) return;
+        Long prev = acc.get(appId);
+        acc.put(appId, (prev == null ? 0L : prev) + ms);
+    }
+
+    private static long min(Map<String, Long> acc, String appId) {
+        Long v = acc.get(appId);
+        return v == null ? 0L : v / 60000L;
     }
 
     @PluginMethod
@@ -171,7 +225,7 @@ public class UsageTrackerPlugin extends Plugin {
             getContext().startActivity(i);
             call.resolve();
         } catch (Exception e) {
-            call.reject("cannot_open_settings", e);
+            call.reject("cannot_open_settings", e.getMessage());
         }
     }
 
@@ -185,7 +239,7 @@ public class UsageTrackerPlugin extends Plugin {
             getContext().startActivity(i);
             call.resolve();
         } catch (Exception e) {
-            call.reject("cannot_open_app_settings", e);
+            call.reject("cannot_open_app_settings", e.getMessage());
         }
     }
 
@@ -200,8 +254,7 @@ public class UsageTrackerPlugin extends Plugin {
     /**
      * v2.9: today's SHORTS/REELS minutes so far — public static so the
      * background OhKeepAliveService can enforce the daily Reels limit EVEN
-     * WHILE THE APP IS CLOSED (owner: "রিলস দেখা বন্ধ করো — চোখের ক্ষতি
-     * হবে" warning must arrive while the user is doom-scrolling).
+     * WHILE THE APP IS CLOSED.
      */
     public static long todayReelsMinutes(Context ctx) {
         try {
@@ -226,7 +279,7 @@ public class UsageTrackerPlugin extends Plugin {
             while (events.hasNextEvent()) {
                 events.getNextEvent(ev);
                 String pkg = ev.getPackageName();
-                if (!PKG_MAP.containsKey(pkg)) continue;
+                if (!PKG_APP.containsKey(pkg)) continue;
                 int type = ev.getEventType();
                 if (type == UsageEvents.Event.ACTIVITY_RESUMED) {
                     boolean shorts = isShortsActivity(ev.getClassName());

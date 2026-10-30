@@ -30,9 +30,17 @@ import java.nio.charset.StandardCharsets;
  * OhKeepAliveService — v2.9: MESSENGER-LIKE CHAT NOTIFICATIONS (owner:
  * "মেসেঞ্জারের মত নোটিফিকেশন যাতে আসে — অ্যাপে ঢুকে দেখলে তো হবে না").
  *
- * A foreground service (specialUse) that keeps a HEADLESS WebView alive on
- * the SAME ORIGIN as the app (https://localhost). That WebView runs
- * chat-listener.html which:
+ * v4.0: A PLAIN BACKGROUND SERVICE — NO NOTIFICATION, EVER. Owner (round-15):
+ * "অ্যাপস থেকে বের হলে ওই খালি 'Our Habit' নোটিফিকেশনটা আসে — পুরাটাই
+ * উঠাই ফেলবা, এটা রাখবা না।" The old startForeground() call is GONE
+ * (Android forces a visible notification on every foreground service — the
+ * only way to show nothing is to not be a foreground service). The headless
+ * WebView + reels guard keep running; the app mutes its chat notifications
+ * while it is in the foreground. Android may stop the service when memory
+ * is needed — opening the app starts it again.
+ *
+ * Keeps a HEADLESS WebView alive on the SAME ORIGIN as the app
+ * (https://localhost). That WebView runs chat-listener.html which:
  *   • restores the Firebase session from the SHARED localStorage (the main
  *     app writes the session there via browserLocalPersistence — this is why
  *     v2.9 switched auth persistence from IndexedDB to localStorage)
@@ -40,8 +48,6 @@ import java.nio.charset.StandardCharsets;
  *     paired friend in real time
  *   • when a friend sends a message → OHNative.postNotification() → a REAL
  *     Android notification with sound + tap opens the chat
- * → messages reach the user like Messenger EVEN WHEN THE APP IS CLOSED
- *   (the process stays alive because this service is running).
  *
  * The service ALSO guards the daily Reels limit in the background: every
  * 5 minutes it reads today's Shorts/Reels minutes from UsageStatsManager
@@ -59,12 +65,18 @@ public class OhKeepAliveService extends Service {
   public static final String KEY_MUTED = "muted"; // main app in foreground → no chat notifs
   public static final String KEY_REELS_LIMIT = "reels_limit_min";
   public static final String KEY_REELS_WARN = "reels_warn_text";
+  public static final String KEY_REELS_WARN_EN = "reels_warn_text_en"; // v4.1: English fallback
   public static final String KEY_REELS_LANG = "reels_lang";
   public static final String KEY_LAST_REELS_WARN = "last_reels_warn_at";
-  /** v5.1: the last moment a notification was BLOCKED by the OS because the
-   * user never granted POST_NOTIFICATIONS — the friend-notification root
-   * cause #1. The admin panel surfaces the live permission state instead. */
-  public static final String KEY_NOTIF_BLOCKED_AT = "notif_blocked_at";
+  // v5.0: the service's OWN liveness heartbeat (30s). status() only reports
+  // running while this beat is fresh (≤90s) — a service Android killed
+  // silently must NOT count as running, so the in-app watchdog knows to take
+  // the notification over (no more double notifications).
+  public static final String KEY_LAST_BEAT = "last_beat_at";
+  // v5.0: the pending chat deep link saved by MainActivity when the user
+  // TAPS a chat notification (PendingIntent extras) — consumed once by
+  // ChatServicePlugin.pendingOpenChat() from the web layer.
+  public static final String KEY_PENDING_CHAT = "pending_chat";
 
   private static final String LISTENER_URL = "https://localhost/chat-listener.html";
   private static final String CHANNEL_FGS = "oh_keepalive";
@@ -74,6 +86,7 @@ public class OhKeepAliveService extends Service {
   private WebView webView;
   private Handler handler;
   private Runnable reelsCheck;
+  private Runnable beatLoop;
 
   @Override
   public IBinder onBind(Intent intent) {
@@ -82,16 +95,22 @@ public class OhKeepAliveService extends Service {
 
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
-    startForegroundSafely();
+    // v4.0: NO startForeground — a foreground service ALWAYS shows a
+    // notification on modern Android; a plain background service shows
+    // NOTHING. The listener WebView + reels guard run the same either way.
     startListenerWebView();
     startReelsGuard();
+    startBeat();
     return START_STICKY;
   }
 
   @Override
   public void onDestroy() {
     try {
-      if (handler != null && reelsCheck != null) handler.removeCallbacks(reelsCheck);
+      if (handler != null) {
+        if (reelsCheck != null) handler.removeCallbacks(reelsCheck);
+        if (beatLoop != null) handler.removeCallbacks(beatLoop);
+      }
       if (webView != null) {
         webView.stopLoading();
         webView.loadUrl("about:blank");
@@ -101,6 +120,31 @@ public class OhKeepAliveService extends Service {
     } catch (Exception ignored) {
     }
     super.onDestroy();
+  }
+
+  // ---------------- v5.0: liveness heartbeat ----------------
+  // Every 30s while the service is ALIVE. ChatServicePlugin.status() reads
+  // it; a fresh beat = the service really exists (not just "was started").
+  private void startBeat() {
+    try {
+      if (handler == null) handler = new Handler(Looper.getMainLooper());
+      if (beatLoop != null) handler.removeCallbacks(beatLoop);
+      final SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
+      sp.edit().putLong(KEY_LAST_BEAT, System.currentTimeMillis()).apply();
+      beatLoop = new Runnable() {
+        @Override
+        public void run() {
+          try {
+            getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit().putLong(KEY_LAST_BEAT, System.currentTimeMillis()).apply();
+          } catch (Exception ignored) {
+          }
+          if (handler != null) handler.postDelayed(this, 30 * 1000L);
+        }
+      };
+      handler.postDelayed(beatLoop, 30 * 1000L);
+    } catch (Exception ignored) {
+    }
   }
 
   // ---------------- the headless chat listener ----------------
@@ -165,29 +209,19 @@ public class OhKeepAliveService extends Service {
   /** JS bridge the listener page calls (window.OHNative.*). */
   private class ChatBridge {
 
+    /**
+     * v5.0: postNotification(title, body, tag, openUid, openName) — the
+     * last two are the DEEP-LINK payload: tapping the notification opens
+     * the app straight INTO that friend's chat (owner: "নোটিফিকেশনে ক্লিক
+     * করলে সরাসরি সংশ্লিষ্ট চ্যাটে প্রবেশ করতে পারবে")।
+     */
     @JavascriptInterface
-    public void postNotification(String title, String body, String tag) {
+    public void postNotification(String title, String body, String tag, String openUid, String openName) {
       try {
         SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
         if (sp.getBoolean(KEY_MUTED, false)) return; // app in foreground
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
-        NotificationManagerCompat nm2 = NotificationManagerCompat.from(getApplicationContext());
-        // v5.1 ROOT-CAUSE FIX #1 (owner: "বন্ধুর মোবাইলে কোনো নোটিফিকেশনই আসে
-        // নাই"): on Android 13+ notify() without the POST_NOTIFICATIONS runtime
-        // grant throws SecurityException — the old code SWALLOWED it silently,
-        // so the friend's phone never showed anything. Now it is checked up
-        // front, logged LOUDLY and recorded, so logcat shows exactly why.
-        if (!nm2.areNotificationsEnabled()) {
-          android.util.Log.w("OhKeepAlive", "NOTIF BLOCKED: POST_NOTIFICATIONS not granted — "
-              + "no chat/update notification can appear. Grant via the app's "
-              + "permission flow or the admin panel's 🔔 row.");
-          try {
-            sp.edit().putLong(KEY_NOTIF_BLOCKED_AT, System.currentTimeMillis()).apply();
-          } catch (Exception ignored) {
-          }
-          return;
-        }
         if (nm.getNotificationChannel(CHANNEL_CHAT) == null) {
           NotificationChannel ch = new NotificationChannel(CHANNEL_CHAT, "চ্যাট মেসেজ",
               NotificationManager.IMPORTANCE_HIGH);
@@ -204,8 +238,8 @@ public class OhKeepAliveService extends Service {
           }
           nm.createNotificationChannel(ch);
         }
-        PendingIntent pi = ExactAlarmPlugin.launchPendingIntent(getApplicationContext(), 7);
         int id = Math.abs(("chat" + tag).hashCode()) % 2000000000;
+        PendingIntent pi = chatPendingIntent(id, openUid, openName);
         NotificationCompat.Builder b = new NotificationCompat.Builder(getApplicationContext(), CHANNEL_CHAT)
             .setSmallIcon(android.R.drawable.sym_action_chat)
             .setContentTitle(title)
@@ -216,21 +250,38 @@ public class OhKeepAliveService extends Service {
             .setAutoCancel(true)
             .setContentIntent(pi)
             .setVibrate(new long[]{0, 120, 80, 120});
+        NotificationManagerCompat nm2 = NotificationManagerCompat.from(getApplicationContext());
         try {
           nm2.notify(id, b.build());
-          try {
-            sp.edit().remove(KEY_NOTIF_BLOCKED_AT).apply();
-          } catch (Exception ignored) {
-          }
-        } catch (SecurityException se) {
-          // permission revoked between the check and the post — record it
-          android.util.Log.w("OhKeepAlive", "SecurityException posting notification: " + se.getMessage());
-          try {
-            sp.edit().putLong(KEY_NOTIF_BLOCKED_AT, System.currentTimeMillis()).apply();
-          } catch (Exception ignored) {
-          }
+        } catch (SecurityException ignored) {
         }
       } catch (Exception ignored) {
+      }
+    }
+
+    /**
+     * v5.0: the app's launch intent + the chat deep-link extras. MainActivity
+     * reads the extras on create/newIntent and saves them to SharedPreferences
+     * (KEY_PENDING_CHAT); the web layer consumes them via
+     * ChatServicePlugin.pendingOpenChat().
+     */
+    private PendingIntent chatPendingIntent(int req, String uid, String name) {
+      try {
+        Context ctx = getApplicationContext();
+        Intent launch = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
+        if (launch == null) launch = new Intent(ctx, MainActivity.class);
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        if (uid != null && !uid.isEmpty()) {
+          launch.putExtra("oh_open_chat_uid", uid);
+          launch.putExtra("oh_open_chat_name", name == null ? "" : name);
+        }
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+          flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        return PendingIntent.getActivity(ctx, req, launch, flags);
+      } catch (Exception e) {
+        return ExactAlarmPlugin.launchPendingIntent(getApplicationContext(), req);
       }
     }
 
@@ -262,14 +313,15 @@ public class OhKeepAliveService extends Service {
             SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
             long limit = sp.getLong(KEY_REELS_LIMIT, 0L);
             String warn = sp.getString(KEY_REELS_WARN, "");
-            String lang = sp.getString(KEY_REELS_LANG, "bn");
+            String warnEn = sp.getString(KEY_REELS_WARN_EN, ""); // v4.1: English fallback
+            String lang = sp.getString(KEY_REELS_LANG, "en");
             if (limit > 0 && warn != null && !warn.isEmpty()) {
               long mins = UsageTrackerPlugin.todayReelsMinutes(getApplicationContext());
               long lastWarn = sp.getLong(KEY_LAST_REELS_WARN, 0L);
               if (mins >= limit && System.currentTimeMillis() - lastWarn > 30 * 60 * 1000L) {
                 sp.edit().putLong(KEY_LAST_REELS_WARN, System.currentTimeMillis()).apply();
                 // speak the warning out loud even with the app closed
-                AlarmSpeakService.startSpeakOnly(getApplicationContext(), warn, lang);
+                AlarmSpeakService.startSpeakOnly(getApplicationContext(), warn, lang, warnEn);
                 // plus a visible notification
                 try {
                   postReelsNotif(mins, limit);
@@ -309,46 +361,22 @@ public class OhKeepAliveService extends Service {
     }
   }
 
-  // ---------------- foreground plumbing ----------------
-
-  private void startForegroundSafely() {
-    try {
-      NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-      if (nm != null && nm.getNotificationChannel(CHANNEL_FGS) == null) {
-        NotificationChannel ch = new NotificationChannel(CHANNEL_FGS, "ব্যাকগ্রাউন্ড নোটিফিকেশন",
-            NotificationManager.IMPORTANCE_MIN);
-        ch.setSound(null, null);
-        ch.setShowBadge(false);
-        nm.createNotificationChannel(ch);
-      }
-      Notification n = new NotificationCompat.Builder(this, CHANNEL_FGS)
-          .setSmallIcon(android.R.drawable.stat_notify_chat)
-          .setContentTitle("Our Habit")
-          .setContentText("চ্যাট ও রিমাইন্ডার নোটিফিকেশন চালু")
-          .setPriority(NotificationCompat.PRIORITY_MIN)
-          .setOngoing(true)
-          .build();
-      if (Build.VERSION.SDK_INT >= 34) {
-        startForeground(FGS_ID, n, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
-      } else {
-        startForeground(FGS_ID, n);
-      }
-    } catch (Exception ignored) {
-    }
-  }
-
   // ---------------- lifecycle helpers ----------------
+  // v4.0: the whole foreground plumbing is GONE. A foreground service ALWAYS
+  // shows a notification on modern Android — the owner wants NO notification
+  // at all ("ওই খালি Our Habit নোটিফিকেশন পুরাটাই উঠাই ফেলবা, এটা রাখবা না"),
+  // so this is a plain background service now.
 
   static void start(Context ctx) {
     try {
       SharedPreferences sp = ctx.getSharedPreferences(PREFS, MODE_PRIVATE);
       sp.edit().putBoolean(KEY_ON, true).apply();
       Intent i = new Intent(ctx, OhKeepAliveService.class);
-      if (Build.VERSION.SDK_INT >= 26) {
-        ctx.startForegroundService(i);
-      } else {
-        ctx.startService(i);
-      }
+      // plain startService — NOT startForegroundService. Called from the app
+      // (foreground / onPause transition = allowed). If Android refuses
+      // (rare), it's swallowed here and the service returns on the next
+      // app open.
+      ctx.startService(i);
     } catch (Exception ignored) {
     }
   }

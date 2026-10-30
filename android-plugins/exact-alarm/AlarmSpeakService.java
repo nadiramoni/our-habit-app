@@ -23,17 +23,22 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
+// v3.3: Voice selection needs the Voice class from android.speech.tts
+import android.speech.tts.Voice;
+
 /**
  * AlarmSpeakService — v2.9: THE NAMED ALERT (owner: "আমার নাম আনোয়ারুল সন
  * সাকিব... আমাকে ডাকবে — আনোয়ারুল সন সাকিব, তোমার পানি খাওয়ার সময় হইছে,
  * পানি খাও, স্বাস্থ্য ঠিক থাকবে").
  *
- * A foreground service (mediaPlayback) that SPEAKS the alert with the user's
- * REGISTERED FULL NAME through the Android TextToSpeech engine on the ALARM
- * audio stream — so the phone literally calls the user by name, exactly like
- * a person would. Right after the voice finishes, the real alarm notification
- * fires with its own channel sound (water music / meal music / chime) →
- * the experience is: the app CALLS you, THEN the alarm rings.
+ * v4.0: a PLAIN background service (NO startForeground → NO notification
+ * at all — owner killed the visible "আপনাকে ডাকা হচ্ছে…" one too). It SPEAKS
+ * the alert with the user's name through the Android TextToSpeech engine on
+ * the ALARM audio stream — so the phone literally calls the user by name,
+ * exactly like a person would. Right after the voice finishes, the real
+ * alarm notification fires with its own channel sound (water music /
+ * meal music / chime) → the experience is: the app CALLS you, THEN the
+ * alarm rings.
  *
  * Adhan alarms NEVER use this (owner: "আজানের ক্ষেত্রে না ভাই — আজানটা আজানি
  * দিবে") — they go straight to the full-screen azan + adhan audio.
@@ -44,6 +49,7 @@ import java.util.Map;
 public class AlarmSpeakService extends Service {
 
   public static final String EXTRA_SPEAK = "speak";
+  public static final String EXTRA_SPEAK_EN = "speakEn"; // v4.1: English fallback call
   public static final String EXTRA_LANG = "lang";
   public static final String EXTRA_TITLE = "title";
   public static final String EXTRA_BODY = "body";
@@ -60,7 +66,8 @@ public class AlarmSpeakService extends Service {
   private boolean ttsReady = false;
   private boolean finished = false;
   private String pendingPayload = null;
-  private String lang = "bn";
+  private String lang = "bn"; // v4.2: BANGLA is the default call language again
+  private String speakEn = ""; // English copy for the no-bn-voice fallback
 
   @Override
   public IBinder onBind(Intent intent) {
@@ -72,7 +79,9 @@ public class AlarmSpeakService extends Service {
     try {
       final String speak = intent.getStringExtra(EXTRA_SPEAK);
       lang = intent.getStringExtra(EXTRA_LANG);
-      if (lang == null || lang.isEmpty()) lang = "bn";
+      if (lang == null || lang.isEmpty()) lang = "bn"; // v4.2: default BANGLA (owner round-17)
+      speakEn = intent.getStringExtra(EXTRA_SPEAK_EN);
+      if (speakEn == null) speakEn = "";
       final String title = intent.getStringExtra(EXTRA_TITLE);
       final String body = intent.getStringExtra(EXTRA_BODY);
       final String sound = intent.getStringExtra(EXTRA_SOUND);
@@ -81,7 +90,9 @@ public class AlarmSpeakService extends Service {
       final boolean notify = intent.getBooleanExtra(EXTRA_NOTIFY, false);
       final long firedAt = intent.getLongExtra(EXTRA_FIRED_AT, 0L);
 
-      startForegroundSafely(title == null ? "Our Habit" : title);
+      // v4.0: no startForeground — no notification of our own. The REAL
+      // alarm notification is posted AFTER the voice finishes
+      // (postAlarmNotification below).
 
       if (speak == null || speak.trim().isEmpty()) {
         if (notify) postAlarmNotification(title, body, sound, key, time, firedAt);
@@ -109,7 +120,7 @@ public class AlarmSpeakService extends Service {
         try {
           if (status == TextToSpeech.SUCCESS && tts != null) {
             ttsReady = true;
-            configureVoiceAndSpeak(speak);
+            configureVoiceAndSpeak(speak, speakEn);
           } else {
             // no TTS engine → go straight to the alarm sound
             ttsReady = false;
@@ -128,17 +139,38 @@ public class AlarmSpeakService extends Service {
     }
   }
 
-  private void configureVoiceAndSpeak(String speak) {
+  private void configureVoiceAndSpeak(String speak, String speakEn) {
     try {
-      // Bengali voice when the app language is Bangla (Google TTS ships bn-BD /
-      // bn-IN on virtually every phone sold in Bangladesh); fall back to the
-      // device default otherwise (English app language).
-      Locale target = "bn".equals(lang)
-          ? pickLocale("bn", "BD", "bn", "IN")
-          : new Locale("en", "US");
-      int r = tts.setLanguage(target);
-      if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
-        tts.setLanguage(new Locale("en", "US"));
+      // v4.2 (owner round-17): the VOICE language. "bn" (DEFAULT) = the
+      // ORIGINAL call — the name is called like before and the sentence is
+      // Bangla ("সাকিব, তোমার পানি খাওয়ার সময় হয়েছে…"). When this phone
+      // has NO Bangla TTS voice installed we fall back to the ENGLISH copy
+      // so the call is never silent. "en" = the optional English call for
+      // those who pick it in Settings.
+      String speakText = speak;
+      String spokenTag = "bn";
+      if ("bn".equals(lang)) {
+        int r = tts.setLanguage(new Locale("bn", "BD"));
+        if (langBad(r)) r = tts.setLanguage(new Locale("bn", "IN"));
+        if (langBad(r)) r = tts.setLanguage(new Locale("bn"));
+        if (langBad(r)) {
+          // NO Bangla voice on this phone → speak the ENGLISH copy instead
+          setEnglishLocale();
+          if (speakEn != null && !speakEn.trim().isEmpty()) speakText = speakEn;
+        } else {
+          spokenTag = "bn";
+        }
+      } else {
+        setEnglishLocale();
+      }
+      // v3.3 GENDER: try to pick a female voice for girls / a male voice for
+      // boys (owner: "মেয়ের নাম হলে একটা মেয়ে বলবে, ছেলের নাম হলে একটা ছেলে
+      // বলবে"). Best-effort — Android's Voice API has no official gender field,
+      // so we match engine voices whose name/features hint at the gender and
+      // silently keep the default voice when the engine exposes none.
+      try {
+        applyGenderedVoice(spokenTag);
+      } catch (Exception ignored) {
       }
       tts.setAudioAttributes(new AudioAttributes.Builder()
           .setUsage(AudioAttributes.USAGE_ALARM)
@@ -162,14 +194,28 @@ public class AlarmSpeakService extends Service {
       });
       // v2.9.1 FIX: 4-arg speak() needs a Bundle, NOT a HashMap — javac
       // error "HashMap cannot be converted to Bundle" broke the whole APK build.
-      tts.speak(speak, TextToSpeech.QUEUE_FLUSH, null, "ohAlert");
+      tts.speak(speakText, TextToSpeech.QUEUE_FLUSH, null, "ohAlert");
       // if the engine never calls back (some OEMs), the voice still ends →
       // estimate the duration and continue
-      long est = estimateSpeechMs(speak);
+      long est = estimateSpeechMs(speakText);
       new android.os.Handler(getMainLooper()).postDelayed(() -> onSpeakDone(), est + 6000);
     } catch (Exception e) {
       onSpeakDone();
     }
+  }
+
+  private static boolean langBad(int r) {
+    return r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED;
+  }
+
+  /** v4.1: the best English locale this engine has — en-US first, then en-IN
+   *  (very common on South-Asian phones and it pronounces Bangladeshi names
+   *  nicely), then en-GB, then the bare "en" tag. */
+  private void setEnglishLocale() {
+    int r = tts.setLanguage(new Locale("en", "US"));
+    if (langBad(r)) r = tts.setLanguage(new Locale("en", "IN"));
+    if (langBad(r)) r = tts.setLanguage(new Locale("en", "GB"));
+    if (langBad(r)) tts.setLanguage(new Locale("en"));
   }
 
   private static long estimateSpeechMs(String text) {
@@ -181,22 +227,66 @@ public class AlarmSpeakService extends Service {
     }
   }
 
-  private static Locale pickLocale(String l1, String c1, String l2, String c2) {
+  /**
+   * v3.3 GENDER-AWARE VOICE: try to switch to a female/male voice of the
+   * given language. The app writes the user's gender via ExactAlarmPlugin
+   * .setVoiceGender (SettingsTab effect). Android's Voice API has no
+   * official gender, so we look for engine voices whose NAME or FEATURES
+   * hint at the gender ("female"/"male", "f"/"m" word-bounded, some engines
+   * expose it in getFeatures()). If nothing matches we keep the current
+   * voice — the sentence still speaks in Bengali either way.
+   */
+  private void applyGenderedVoice(String langTag) {
     try {
-      Locale a = new Locale(l1, c1);
-      if (ttsSupports(a)) return a;
-      Locale b = new Locale(l2, c2);
-      if (ttsSupports(b)) return b;
+      final String gender = ExactAlarmPlugin.storedVoiceGender(getApplicationContext());
+      if (tts == null) return;
+      // v4.0: plus a soft pitch shift — most engines expose NO gendered
+      // Bangla voices, so this is what actually makes the difference
+      // audible (male = slightly deeper, female = slightly brighter).
+      try {
+        tts.setPitch("male".equals(gender) ? 0.9f : 1.05f);
+      } catch (Exception ignored) {
+      }
+      java.util.Set<Voice> voices;
+      try {
+        voices = tts.getVoices();
+      } catch (Exception e) {
+        return;
+      }
+      if (voices == null || voices.isEmpty()) return;
+      final String want = "female".equals(gender) ? "female" : "male";
+      final String other = "female".equals(want) ? "male" : "female";
+      Voice best = null;
+      for (Voice v : voices) {
+        if (v == null || v.getLocale() == null) continue;
+        if (!langTag.equalsIgnoreCase(v.getLocale().getLanguage())) continue;
+        String name = (v.getName() == null ? "" : v.getName()).toLowerCase();
+        StringBuilder feats = new StringBuilder();
+        try {
+          for (String f : v.getFeatures()) {
+            if (f != null) feats.append(f.toLowerCase()).append(' ');
+          }
+        } catch (Exception ignored) {
+        }
+        String hay = name + " " + feats;
+        if (hay.contains(want)) {
+          // a voice that explicitly matches the wanted gender wins immediately
+          if (!hay.contains(other) || best == null) {
+            best = v;
+            if (!hay.contains(other)) break; // clean match — stop searching
+          }
+        } else if (best == null && (name.startsWith("bn") || name.contains(langTag))) {
+          // remember the first plain bn voice as a neutral fallback (already
+          // the active language — setVoice below only fires on an explicit hit)
+        }
+      }
+      if (best != null) {
+        try {
+          tts.setVoice(best);
+        } catch (Exception ignored) {
+        }
+      }
     } catch (Exception ignored) {
-    }
-    return new Locale("bn");
-  }
-
-  private static boolean ttsSupports(Locale l) {
-    try {
-      return !l.toString().isEmpty(); // language data check happens in setLanguage result
-    } catch (Exception e) {
-      return false;
     }
   }
 
@@ -271,32 +361,6 @@ public class AlarmSpeakService extends Service {
     }
   }
 
-  private void startForegroundSafely(String title) {
-    try {
-      NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-      if (nm != null && nm.getNotificationChannel(CHANNEL_ID) == null) {
-        NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "কথা বলা রিমাইন্ডার",
-            NotificationManager.IMPORTANCE_LOW);
-        ch.setSound(null, null);
-        ch.setShowBadge(false);
-        nm.createNotificationChannel(ch);
-      }
-      Notification n = new NotificationCompat.Builder(this, CHANNEL_ID)
-          .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-          .setContentTitle(title)
-          .setContentText("আপনাকে ডাকা হচ্ছে…")
-          .setPriority(NotificationCompat.PRIORITY_LOW)
-          .setOngoing(true)
-          .build();
-      if (Build.VERSION.SDK_INT >= 34) {
-        startForeground(FGS_ID, n, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
-      } else {
-        startForeground(FGS_ID, n);
-      }
-    } catch (Exception ignored) {
-    }
-  }
-
   private void stopSelfSafely() {
     try {
       if (tts != null) {
@@ -312,7 +376,6 @@ public class AlarmSpeakService extends Service {
       }
     } catch (Exception ignored) {
     }
-    stopForeground(true);
     stopSelf();
   }
 
@@ -328,12 +391,13 @@ public class AlarmSpeakService extends Service {
   // ---------------- entry points ----------------
 
   /** Speak + then post the alarm notification (used by AlarmFireReceiver). */
-  static void startForAlarm(Context ctx, String speak, String lang, String title, String body,
+  static void startForAlarm(Context ctx, String speak, String lang, String speakEn, String title, String body,
                             String sound, String key, String time) {
     try {
       Intent i = new Intent(ctx, AlarmSpeakService.class);
       i.putExtra(EXTRA_SPEAK, speak);
       i.putExtra(EXTRA_LANG, lang);
+      i.putExtra(EXTRA_SPEAK_EN, speakEn == null ? "" : speakEn);
       i.putExtra(EXTRA_TITLE, title);
       i.putExtra(EXTRA_BODY, body);
       i.putExtra(EXTRA_SOUND, sound);
@@ -341,11 +405,11 @@ public class AlarmSpeakService extends Service {
       i.putExtra(EXTRA_TIME, time);
       i.putExtra(EXTRA_NOTIFY, true);
       i.putExtra(EXTRA_FIRED_AT, System.currentTimeMillis());
-      if (Build.VERSION.SDK_INT >= 26) {
-        ctx.startForegroundService(i);
-      } else {
-        ctx.startService(i);
-      }
+      // v4.0: plain startService — no foreground service, no notification of
+      // our own. From AlarmFireReceiver.onReceive / the open app (both are
+      // allowed contexts); if Android still refuses, the catch below posts a
+      // plain notification so the alarm is never lost.
+      ctx.startService(i);
     } catch (Exception ignored) {
       // fall back to a plain notification so the alarm is never lost
       try {
@@ -366,17 +430,15 @@ public class AlarmSpeakService extends Service {
   }
 
   /** Speak only — no notification (in-app / Reels-limit warnings). */
-  static void startSpeakOnly(Context ctx, String speak, String lang) {
+  static void startSpeakOnly(Context ctx, String speak, String lang, String speakEn) {
     try {
       Intent i = new Intent(ctx, AlarmSpeakService.class);
       i.putExtra(EXTRA_SPEAK, speak);
       i.putExtra(EXTRA_LANG, lang);
+      i.putExtra(EXTRA_SPEAK_EN, speakEn == null ? "" : speakEn);
       i.putExtra(EXTRA_NOTIFY, false);
-      if (Build.VERSION.SDK_INT >= 26) {
-        ctx.startForegroundService(i);
-      } else {
-        ctx.startService(i);
-      }
+      // v4.0: plain startService — no foreground service, no notification.
+      ctx.startService(i);
     } catch (Exception ignored) {
     }
   }
