@@ -169,17 +169,22 @@ export default function ChatScreen() {
         createdAt: Date.now(),
       };
       setBusy(true);
-      const ok = await fbSendChat(pairKey, msg, cfg);
+      const result = await fbSendChat(pairKey, msg, cfg);
       setBusy(false);
-      if (!ok) {
-        // v3.3 OFFLINE: message is queued in localStorage — tell the user
-        const qn = chatQueueSize();
-        setOfflineStatus(qn > 0 ? `📨 অফলাইন — ${qn} মেসেজ সারিতে আছে, নেট এলে অটো যাবে` : "📨 অফলাইন — মেসেজ সেভ হয়েছে, নেট এলে যাবে");
-        setTimeout(() => setOfflineStatus(""), 4000);
-      } else {
+      if (result === "sent") {
         setText("");
         setOfflineStatus("");
         void nativeVibrate(15);
+      } else if (result === "queued-offline") {
+        const qn = chatQueueSize();
+        setOfflineStatus(qn > 0 ? `📨 অফলাইন — ${qn} মেসেজ সারিতে আছে, নেট এলে অটো যাবে` : "📨 অফলাইন — মেসেজ সেভ হয়েছে, নেট এলে যাবে");
+        setTimeout(() => setOfflineStatus(""), 4000);
+      } else if (result === "failed-permission") {
+        setOfflineStatus("⚠️ Firestore অনুমতি নেই — Firebase Console → Firestore Database → Rules এ গাইডের rules পেস্ট করে Publish করো");
+        setTimeout(() => setOfflineStatus(""), 6000);
+      } else {
+        setOfflineStatus("⚠️ মেসেজ পাঠানো যায়নি — আবার চেষ্টা করো");
+        setTimeout(() => setOfflineStatus(""), 4000);
       }
     },
     [acc?.uid, acc?.name, pairKey, cfg, state.settings.name]
@@ -407,29 +412,37 @@ export function ChatWatchdog() {
      
   }, [acc?.uid, acc?.verified, cfg]);
 
-  // start/stop the background service + foreground mute
+  // v3.3: STOP the background service when the app is foreground (so no
+  // "চ্যাট ও রিমাইন্ডার নোটিফিকেশন চালু" notification shows). The in-app
+  // ChatWatchdog listens to chat while the app is open. The background service
+  // starts ONLY when the app goes to background → it then posts chat notifs.
+  // Owner: "অ্যাপসে ঢুকলে এই নোটিফিকেশনটা বারবারই আসে — যাতে না আসে এটা ফিক্স করে দো।"
   useEffect(() => {
     if (!acc?.uid || !acc.verified || !chatNotifOn) {
       void import("@/lib/native").then(({ nativeChatServiceStop }) => nativeChatServiceStop());
       return;
     }
-    void (async () => {
-      const { nativeChatServiceStart, nativeChatServiceSetMuted, isNative } = await import("@/lib/native");
-      if (!isNative()) return;
-      await nativeChatServiceStart();
-      await nativeChatServiceSetMuted(true); // app is in the foreground now
-    })();
+    // App is in foreground → STOP the background service (no notification shown)
+    void import("@/lib/native").then(({ nativeChatServiceStop }) => nativeChatServiceStop());
   }, [acc?.uid, acc?.verified, chatNotifOn]);
 
-  // mute/unmute the background service on app foreground/background
+  // v3.3: On app background → start service (notification appears + chat notifs);
+  // On app foreground → stop service (notification disappears, no annoyance).
+  // The service is the ONLY way to get chat notifications when the app is closed.
   useEffect(() => {
     let un: (() => void) | null = null;
     void (async () => {
       try {
         const { App: CapApp } = await import("@capacitor/app");
-        const { nativeChatServiceSetMuted } = await import("@/lib/native");
+        const { nativeChatServiceStart, nativeChatServiceStop } = await import("@/lib/native");
         const l = await CapApp.addListener("appStateChange", (s: { isActive: boolean }) => {
-          void nativeChatServiceSetMuted(s.isActive);
+          if (s.isActive) {
+            // app back to foreground → STOP service, no notification
+            void nativeChatServiceStop();
+          } else {
+            // app went to background → START service, chat notifs come through
+            void nativeChatServiceStart();
+          }
         });
         un = () => void l.remove();
       } catch {
