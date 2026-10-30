@@ -284,7 +284,7 @@ const bn: Dict = {
   waterLogged: "দারুণ! ১ গ্লাস পানি যোগ হয়েছে ✓",
   habitsReminder: "আমাদের অভ্যাস রিমাইন্ডার 🕌",
   habitsReminderSub: "প্রতিদিন একবার — আজকের অভ্যাসগুলো ট্র্যাক করতে বলবে",
-  habitsAlarmMsg: "আজকের অভ্যাসগুলো ট্র্যাক করলে? নামাজ, পানি, জিকির — সব এক জায়গায় 🕌",
+  habitsAlarmMsg: "তোমার অভ্যাসের রিমাইন্ডার চালু হয়েছে — কাজগুলো কমপ্লিট করো, একটু জিকির করে নাও 🕌",
   alarmOnToast: "আপনার অ্যালার্মটি সফলভাবে চালু হয়েছে",
   alarmOffToast: "অ্যালার্ম বন্ধ করা হয়েছে",
   alarmPermWarn: "⚠️ নোটিফিকেশন পারমিশন নেই — অ্যালার্ম বাজবে না! সেটিংস খুলছি…",
@@ -596,14 +596,22 @@ const bn: Dict = {
   chatRecording: "🔴 রেকর্ড হচ্ছে…",
 
   // ---------- v2.9: নাম ধরে ডাকা অ্যালার্ট (TTS) ----------
+  // v4.2 (owner round-17): আগের মতই পুরো ডাক বাংলায় — নাম আগের মতো ডাকবে,
+  // কথাটাও বাংলায় বলবে। পানির বার্তাটা আগের পুরো লম্বা বাক্যই থাকবে।
   speakWater: ", তোমার পানি খাওয়ার সময় হয়েছে। পানি খাও, স্বাস্থ্য ঠিক থাকবে।",
-  speakSleep: ", ঘুমানোর সময় হয়েছে। ঘুমিয়ে পড়ো, সকালে ভালো লাগবে।",
-  speakHabits: ", আজকের অভ্যাসগুলো একবার চেক করে নাও।",
+  speakSleep: ", ঘুমানোর সময় হয়েছে। ঘুমিয়ে পড়ো। তবে সময়মতো ঘুম থেকে উঠো — বেশি ঘুমালে শরীরের জন্য ক্ষতি হবে।",
+  speakHabits: ", তোমার অভ্যাসের রিমাইন্ডার চালু হয়েছে। তোমার কাজগুলো এখন কমপ্লিট করো। আর একটু জিকির করে নাও।",
   speakMealPre15: "খাওয়ার সময় হতে আর মাত্র ১৫ মিনিট বাকি।",
   speakMeal: "খাওয়ার সময় হয়েছে। হাত ধুয়ে খেয়ে নাও।",
   speakCheckin: ", আজকের দিনটা কেমন গেল একবার দেখে নাও।",
   speakAyat: ", আজকের আয়াতটা একবার পড়ে নাও।",
-  speakReelsWarn: ", রিলস দেখা এখনই বন্ধ করো! আজ অনেক বেশি রিলস দেখেছো — চোখের বড় ক্ষতি হচ্ছে।",
+  speakReelsWarn: ", রিলস দেখা এখনই বন্ধ করো! বেশি রিলস দেখলে চোখের জন্য আর শরীরের জন্য ক্ষতি হবে।",
+  // v4.2 (owner round-17): আজানের ১৫ মিনিট পরের নামাজের ডাক —
+  // "নামাজে যান, নামাজ পড়ার সময় হইছে" (আজানের অনেকক্ষণ পরে না)
+  speakNamaz: ", নামাজ পড়ার সময় হয়েছে। নামাজে যান।",
+  namazTitle: "নামাজের রিমাইন্ডার",
+  namazBody: "নামাজ পড়ার সময় হয়েছে — নামাজে যান 🕌",
+  sleepAlarmMsg: "ঘুমানোর সময় হয়েছে — ঘুমিয়ে পড়ো, সকালে সময়মতো উঠো 😴",
 
   // ---------- v4.0: ভয়েস (অ্যালার্মে নাম ধরে ডাকা) ----------
   voiceGenderTitle: "ভয়েস (অ্যালার্মে নাম ধরে ডাকা)",
@@ -613,11 +621,11 @@ const bn: Dict = {
   voiceGenderNote: "মেয়ে নাম হলে মেয়ে কণ্ঠ, ছেলে নাম হলে ছেলে কণ্ঠ বসাও। নাম একবার সেভ করলে পরের অ্যালার্ম থেকেই নতুন কণ্ঠে ডাকবে।",
   // ---------- v4.1: ভয়েসের ভাষা (English default / বাংলা optional) ----------
   voiceLangTitle: "ডাকটা কোন ভাষায় হবে?",
-  voiceLangEnOpt: "🇬🇧 English (সব ফোনে চলে)",
-  voiceLangBnOpt: "🇧🇩 বাংলা (বাংলা ভয়েস লাগবে)",
-  voiceLangExEn: "— এভাবেই ডাকবে।",
+  voiceLangBnOpt: "🇧🇩 বাংলা (ডিফল্ট — আগের মতোই)",
+  voiceLangEnOpt: "🇬🇧 English (যারা ইংলিশে ডাক চায়)",
   voiceLangExBn: "— এভাবেই ডাকবে।",
-  voiceLangNote: "English দিলে কোনো এক্সট্রা সেটিং লাগবে না — সব ফোনে কাজ করবে। বাংলা দিলে ফোনে বাংলা TTS ভয়েস ইনস্টল থাকতে হবে (Settings → Text-to-speech)। বাংলা ভয়েস না থাকলে অ্যাপ নিজে থেকেই ইংলিশে ডাকবে — তাই ডাক কখনো বন্ধ হয়ে যাবে না।",
+  voiceLangExEn: "— এভাবেই ডাকবে।",
+  voiceLangNote: "ডিফল্টে ফোন বাংলায় ডাকবে — বাংলাদেশি উচ্চারণে (নাম ইংলিশেই থাকবে, কিন্তু ডাকবে বাংলা ঢঙে)। কারো ফোনে বাংলা TTS ভয়েস না থাকলে অ্যাপ নিজে থেকেই ইংলিশে ডাকবে — তাই ডাক কখনো নীরব হবে না। ইংলিশে ডাক চাইলে উপরের অপশনটা বেছে নাও।",
   voiceAlertsOn: "নাম ধরে ডাক",
   voiceAlertsSub: "অ্যালার্মে তোমার নাম ধরে ডেকে মনে করাবে (আজান অপরিবর্তিত)",
 
@@ -1031,7 +1039,7 @@ const en: Dict = {
   waterLogged: "Great! 1 glass of water added ✓",
   habitsReminder: "Our Habit Reminder 🕌",
   habitsReminderSub: "Once a day — nudges you to track today's habits",
-  habitsAlarmMsg: "Tracked today's habits yet? Prayers, water, dhikr — all in one place 🕌",
+  habitsAlarmMsg: "Your habit reminder is on — complete your tasks, and do a little dhikr 🕌",
   alarmOnToast: "Your alarm has been successfully turned on",
   alarmOffToast: "Alarm turned off",
   alarmPermWarn: "⚠️ Notification permission missing — alarms cannot ring! Opening settings…",
@@ -1339,14 +1347,20 @@ const en: Dict = {
   chatRecording: "🔴 Recording…",
 
   // ---------- v2.9: named voice alerts (TTS) ----------
+  // v4.2 (owner round-17): Bangla is the DEFAULT call again — like before.
   speakWater: ", it's your time to drink water. Drink up, stay healthy.",
-  speakSleep: ", it's bedtime. Go to sleep, you'll feel great in the morning.",
-  speakHabits: ", time to check today's habits.",
+  speakSleep: ", it's bedtime. Go to sleep — but wake up on time; oversleeping harms your body.",
+  speakHabits: ", your habit reminder is on. Complete your tasks now — and do a little dhikr.",
   speakMealPre15: " is in just 15 minutes.",
   speakMeal: " time — wash your hands and eat.",
   speakCheckin: ", take a moment to review how today went.",
   speakAyat: ", read today's verse.",
-  speakReelsWarn: ", stop watching reels right now! You've watched way too many today — it's hurting your eyes.",
+  speakReelsWarn: ", stop watching reels right now! Too many reels harm your eyes and your body.",
+  speakNamaz: ", it's time to pray. Please go to the masjid.",
+  namazTitle: "Prayer reminder",
+  namazBody: "It's prayer time — please go to the masjid 🕌",
+  sleepAlarmMsg: "It's bedtime — sleep now, wake up on time 😴",
+
 
   // ---------- v4.0: voice (name call in alarms) ----------
   voiceGenderTitle: "Voice (name call in alarms)",
@@ -1354,13 +1368,13 @@ const en: Dict = {
   voiceGenderExample: "— that's how the alarm calls you.",
   voiceGenderEn: "The name stays English, but it is CALLED in Bangla pronunciation.",
   voiceGenderNote: "Pick a girl's voice for a girl's name, a boy's voice for a boy's name. Save once — every alarm after that uses the new voice.",
-  // ---------- v4.1: voice language (English default / Bangla optional) ----------
+  // ---------- v4.1: voice language (v4.2: Bangla is the default again) ----------
   voiceLangTitle: "Which language should the call be in?",
-  voiceLangEnOpt: "🇬🇧 English (works on every phone)",
-  voiceLangBnOpt: "🇧🇩 Bangla (needs Bangla voice)",
-  voiceLangExEn: "— that's how the alarm calls you.",
+  voiceLangBnOpt: "🇧🇩 Bangla (default — like before)",
+  voiceLangEnOpt: "🇬🇧 English (for those who prefer it)",
   voiceLangExBn: "— that's how the alarm calls you.",
-  voiceLangNote: "English needs zero extra setup and works on every phone. Bangla needs the phone's Bangla TTS voice installed (Settings → Text-to-speech). If the Bangla voice is missing, the app automatically calls in English instead — the call never goes silent.",
+  voiceLangExEn: "— that's how the alarm calls you.",
+  voiceLangNote: "By default the phone calls in BANGLA with a Bangladeshi accent (the name stays in English letters but is pronounced Bangla-style). If a phone has no Bangla TTS voice installed, the app automatically calls in English instead — the call never goes silent. Want the English call? Just pick the option above.",
   voiceAlertsOn: "Call me by name",
   voiceAlertsSub: "Alarms call your name out loud (adhan stays unchanged)",
 

@@ -198,35 +198,36 @@ export default function SettingsTab() {
               </div>
             )}
 
-            {/* v4.1: অ্যালার্মের কণ্ঠ — ভাষা (English ডিফল্ট) + লিঙ্গ।
-                Owner (round-16): "আগের যেটা ইংলিশে ডাকত ওইটাই থাকবে —
-                বাংলাটাও থাকবে, সেটিংসে। অনেকে বাংলা ভয়েসের সেটিং করতে
-                পারবে না।" So the English call ("Sakib, it's your time to
-                drink water…") is the DEFAULT — works on every phone, zero
-                setup. বাংলা is right here as an option; when the phone has
-                no Bangla TTS voice the app auto-falls back to English. */}
+            {/* v4.2 (owner round-17): অ্যালার্মের কণ্ঠ — বাংলা ডিফল্ট (আগের
+                সিস্টেম) + লিঙ্গ। Owner: "আগের সিস্টেম — ঐরকম নাম ধরে ডাকবে
+                কিন্তু কথাটা বলবে বাংলায়। ম্যানুয়ালে সিলেক্ট না থাকলেও
+                বাংলায়ই বলবে।" So the BANGLA call ("সাকিব, তোমার পানি খাওয়ার
+                সময় হয়েছে…") is the DEFAULT — like before, zero setup. When the
+                phone has no Bangla TTS voice the app auto-falls back to
+                English. English is right here as an option for those who
+                prefer it. */}
             <div className="mt-3 rounded-xl bg-background/60 border border-border p-2.5">
               <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">🗣️ {t("voiceGenderTitle")}</div>
               <div className="text-[11px] font-semibold mb-1.5">{t("voiceLangTitle")}</div>
               <Seg<"en" | "bn">
-                value={s.voiceLang === "bn" ? "bn" : "en"}
+                value={s.voiceLang === "en" ? "en" : "bn"}
                 onChange={(v) => updateSettings({ voiceLang: v })}
                 options={[
-                  { value: "en", label: t("voiceLangEnOpt") },
                   { value: "bn", label: t("voiceLangBnOpt") },
+                  { value: "en", label: t("voiceLangEnOpt") },
                 ]}
               />
               {(s.name || "").trim() ? (
                 <div className="text-[11px] text-muted-foreground mt-2 leading-relaxed">
                   {"\""}
                   <b>
-                    {s.voiceLang === "bn"
-                      ? (s.nameBn || "").trim() || banglaNameFromEnglish(s.name) || s.name
-                      : s.name.trim()}
-                    {s.voiceLang === "bn" ? makeT("bn")("speakWater") : makeT("en")("speakWater")}
+                    {s.voiceLang === "en"
+                      ? s.name.trim()
+                      : (s.nameBn || "").trim() || banglaNameFromEnglish(s.name) || s.name}
+                    {s.voiceLang === "en" ? makeT("en")("speakWater") : makeT("bn")("speakWater")}
                   </b>
                   {"\" "}
-                  {s.voiceLang === "bn" ? t("voiceLangExBn") : t("voiceLangExEn")}
+                  {s.voiceLang === "en" ? t("voiceLangExEn") : t("voiceLangExBn")}
                 </div>
               ) : null}
               <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">{t("voiceLangNote")}</p>

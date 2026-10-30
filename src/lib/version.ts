@@ -1,6 +1,25 @@
 // App version — bump this when you ship an update.
 // The admin panel's "latest version" is compared against this to trigger auto-update.
-// v4.1.0 — owner round-16 (the "build it MYSELF" release):
+// v4.2.0 — owner round-17 (the "totally fix it" release):
+//           (1) THE BANGLA VOICE CALL IS THE DEFAULT AGAIN — the ORIGINAL
+//           system (owner: "আগের সিস্টেম — ঐরকম নাম ধরে ডাকবে কিন্তু কথাটা
+//           বলবে বাংলায়। ম্যানুয়ালে সিলেক্ট না থাকলেও বাংলায়ই বলবে")। No
+//           settings needed; the no-bn-TTS-voice → English fallback stays, so
+//           the call is never silent. English remains an option in Settings.
+//           (2) EVERY REMINDER NOW SPEAKS — namaz (NEW: ~15 min AFTER each
+//           azan, never long after it: "নামাজ পড়ার সময় হয়েছে, নামাজে যান"),
+//           water (the old FULL sentence), sleep ("ঘুমাও + সময়মতো উঠো —
+//           বেশি ঘুমালে শরীরের ক্ষতি"), daily habits ("রিমাইন্ডার চালু হয়েছে,
+//           কাজ কমপ্লিট করো, জিকির করে নাও"), reels ("চোখ + শরীর ক্ষতি").
+//           Azan time still plays ONLY the azan (never a voice call).
+//           (3) THE UPDATE-SAVE ROOT-CAUSE FIX — the in-app admin panel's Save
+//           was silently permission-denied under the v4.0 Firestore rules (it
+//           never claimed adminUid), which is exactly why the owner saw
+//           "সমস্যা হয়েছে — আবার চেষ্টা করো" and why NO user ever received
+//           the update. The panel now writes the adminUid claim with the cfg
+//           and shows a precise, actionable Bengali error for every failure.
+// v4.1.0 — owner round-16: English default call + build numbers + manual-only
+//           builds (superseded by v4.2's Bangla default; the rest stays).
 //           (1) THE ENGLISH VOICE CALL IS BACK AS THE DEFAULT — the phone
 //           calls the English name in English ("Sakib, it's your time to
 //           drink water…") exactly like before, works on EVERY phone with
@@ -128,7 +147,7 @@
 //           minutes + start sound, sleep tracker + bedtime alert, points moved
 //           to Settings profile (full name), YouTube Shorts vs Long split
 // v2.2.1 — REAL Adsterra banners + REAL adhan recording wired end-to-end
-export const APP_VERSION = "4.1.0";
+export const APP_VERSION = "4.2.0";
 
 // v4.1: BUILD NUMBER — 0 in the repo; GitHub CI overwrites it with the
 // workflow run number (27, 28, 29…) before every APK build. It lands in the

@@ -314,14 +314,14 @@ export function ChatWatchdog() {
 
   const chatNotifOn = state.settings.chatNotif !== false;
 
-  // v4.1: the SPOKEN reels warning — follows the VOICE language setting
-  // (default ENGLISH: "Sakib, stop watching reels right now!…" — the old way
-  // that works on every phone). বাংলা mode = Bangla-script name + Bangla
-  // sentence. reelsWarnTextEn is the English copy the native side speaks when
-  // the phone has no Bangla TTS voice installed — the warning never goes
-  // silent. (Also fixes a v4.0 latent bug: banglaNameFromEnglish was used
-  // here without being imported — the reels warning crashed at runtime.)
-  const vlang: "en" | "bn" = state.settings.voiceLang === "bn" ? "bn" : "en";
+  // v4.1→v4.2 (owner round-17): the SPOKEN reels warning — follows the VOICE
+  // language setting, which is BANGLA by default again (the ORIGINAL system:
+  // name called like before + Bangla sentence). reelsWarnTextEn is the English
+  // copy the native side speaks when the phone has no Bangla TTS voice
+  // installed — the warning never goes silent. (Also fixes a v4.0 latent
+  // bug: banglaNameFromEnglish was used here without being imported — the
+  // reels warning crashed at runtime.)
+  const vlang: "en" | "bn" = state.settings.voiceLang === "en" ? "en" : "bn";
   const reelsWarnText = useCallback(
     () =>
       `${

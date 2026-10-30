@@ -6,7 +6,7 @@ import { useServerCfg } from "@/lib/cfg";
 import { Card, SectionTitle, ToggleRow } from "@/components/ui-bits";
 import { AtCfg, AtZone, ServerCfg } from "@/lib/types";
 import { extractScriptUrl } from "@/components/AdsBanner";
-import { mirrorMeta, readRawMeta, writeRawMeta } from "@/lib/cloud";
+import { mirrorMeta, readRawMeta, writeRawMeta, panelSaveCfg, PanelSaveResult } from "@/lib/cloud";
 import { isNative } from "@/lib/native";
 import { APP_VERSION, APP_BUILD } from "@/lib/version";
 
@@ -78,11 +78,45 @@ async function remotePinHash(): Promise<string | null> {
   return (raw?.adminPin as string) || null;
 }
 
-/** Write adminPin and/or cfg in one Firestore hit. */
-async function remoteWriteMeta(cfg: ServerCfg | null, pinHash?: string): Promise<boolean> {
+/** v4.2: turn a panelSaveCfg result into a REAL, actionable Bengali message —
+ *  the owner was stuck on the generic “সমস্যা হয়েছে — আবার চেষ্টা করো” with no
+ *  hint of the actual fix; now every failure says exactly what to do. */
+function panelSaveErrText(r: PanelSaveResult, t: (k: string) => string): string {
+  switch (r.reason) {
+    case "no-account":
+      return "সেভ করতে হলে অ্যাপে লগইন থাকতে হবে — তোমার অ্যাকাউন্ট দিয়ে ঢুকে আবার চেষ্টা করো।";
+    case "not-configured":
+      return "Firebase কানেক্ট হচ্ছে না — ইন্টারনেট দেখে আবার চেষ্টা করো।";
+    case "claimed-other":
+      return `অ্যাডমিন দখল করা আছে অন্য অ্যাকাউন্টের নামে${r.adminEmail ? ` (${r.adminEmail})` : ""}। ওই অ্যাকাউন্ট দিয়ে লগইন করে সেভ করো — অথবা নিজের অ্যাকাউন্টকে অ্যাডমিন বানাতে: Firebase Console → Firestore Database → app/meta → adminUid ফিল্ডটা মুছে দাও → এখানে আবার Save চাপো।`;
+    case "denied":
+      return "Firebase এ লিখতে অনুমতি পাচ্ছি না। Firebase Console → Firestore → Rules-এ গিয়ে আমার দেওয়া নতুন রুল (FIRESTORE-RULES-FOR-PASTE) পেস্ট করে Publish দাও — তারপর আবার Save চাপো।";
+    default:
+      return t("error");
+  }
+}
+
+/** v4.2: the PIN-write equivalent (PinGate setup / changePin) — same rules
+ *  root cause, same real fix. */
+function nativeWriteErr(): string {
+  return "সেভ হয়নি — Firebase এ লিখতে অনুমতি পাচ্ছি না। Firebase Console → Firestore → Rules-এ নতুন রুল পেস্ট করে Publish দাও; আর adminUid যদি অন্য অ্যাকাউন্টের নামে দখল করা থাকে, app/meta থেকে adminUid ফিল্ডটা মুছে দাও — তারপর আবার চেষ্টা করো।";
+}
+
+/** Write adminPin and/or cfg in one Firestore hit. v4.2: also writes the
+ *  adminUid claim — without it every write to app/meta was permission-denied
+ *  under the v4.0 rules (the “সমস্যা হয়েছে” root cause). */
+async function remoteWriteMeta(
+  cfg: ServerCfg | null,
+  pinHash?: string,
+  me?: { uid: string; email?: string } | null
+): Promise<boolean> {
   const fields: Record<string, unknown> = {};
   if (cfg) fields.cfg = JSON.parse(JSON.stringify(cfg));
   if (pinHash) fields.adminPin = pinHash;
+  if (me?.uid) {
+    fields.adminUid = me.uid;
+    if (me.email) fields.adminEmail = me.email;
+  }
   if (!Object.keys(fields).length) return false;
   return writeRawMeta(fields);
 }
@@ -113,6 +147,7 @@ function writeLock(l: { count: number; until: number }) {
 
 function PinGate({ onUnlock, onClose }: { onUnlock: (pin: string) => void; onClose: () => void }) {
   const { t } = useStore();
+  const acc = useStore().state.account;
   const [mode, setMode] = useState<Mode>("loading");
   const [pin, setPin] = useState("");
   const [pin2, setPin2] = useState("");
@@ -159,9 +194,11 @@ function PinGate({ onUnlock, onClose }: { onUnlock: (pin: string) => void; onClo
         }
         if (isNative()) {
           const hash = await sha256Hex(`${pin}::${PIN_SALT}`);
-          const ok = await remoteWriteMeta(null, hash);
+          // v4.2: pass the signed-in account — the adminUid claim rides along
+          // (without it the write is permission-denied under the v4.0 rules).
+          const ok = await remoteWriteMeta(null, hash, acc ? { uid: acc.uid, email: acc.email } : null);
           if (ok) onUnlock(pin);
-          else setErr(t("error"));
+          else setErr(nativeWriteErr());
           setBusy(false);
           return;
         }
@@ -339,14 +376,22 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
     setBusy(true);
     try {
       if (isNative()) {
-        // APK: save DIRECTLY to the owner's Firestore (same doc fetchRemoteMeta
-        // reads) — no server needed; every install picks it up within 5 min.
-        const ok = await mirrorMeta(draft);
-        if (ok) {
+        // v4.2 (owner round-17): THE UPDATE-SAVE FIX. The old mirrorMeta()
+        // write was silently permission-denied under the v4.0 Firestore rules
+        // (the in-app panel never claimed adminUid) — that is exactly why the
+        // owner saw "সমস্যা হয়েছে — আবার চেষ্টা করো" and why NO user ever got
+        // the update. panelSaveCfg writes the cfg AND the adminUid claim, and
+        // returns a precise reason so the REAL fix can be shown.
+        const r = await panelSaveCfg(draft, acc ? { uid: acc.uid, email: acc.email } : null);
+        if (r.reason === "ok") {
+          setErr("");
           setSaved(true);
           setTimeout(() => setSaved(false), 2500);
           await refresh();
-        } else setErr(t("error"));
+        } else {
+          setSaved(false);
+          setErr(panelSaveErrText(r, t));
+        }
         setBusy(false);
         return;
       }
@@ -374,8 +419,9 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
     try {
       if (isNative()) {
         const hash = await sha256Hex(`${newPin}::${PIN_SALT}`);
-        const ok = await remoteWriteMeta(null, hash);
-        alert(ok ? t("adminSaved") : t("error"));
+        // v4.2: the adminUid claim rides along (same rules fix as save()).
+        const ok = await remoteWriteMeta(null, hash, acc ? { uid: acc.uid, email: acc.email } : null);
+        alert(ok ? t("adminSaved") : nativeWriteErr());
         setNewPin("");
         return;
       }
@@ -533,13 +579,16 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
           <ToggleRow label={t("admForce")} checked={draft.forceUpdate} onChange={(v) => setDraft({ ...draft, forceUpdate: v })} />
           <p className="text-[11px] text-muted-foreground mt-2 leading-relaxed">{t("admWebNote")}</p>
           <div className="mt-2 rounded-xl bg-secondary/60 border border-border p-3">
-            <p className="text-[11px] font-bold mb-1">📦 নতুন আপডেট কীভাবে পাঠাবেন (৪ ধাপ):</p>
+            <p className="text-[11px] font-bold mb-1">📦 নতুন আপডেট পাঠানোর নিয়ম (৪ ধাপ):</p>
             <ol className="text-[10px] text-muted-foreground leading-relaxed list-decimal list-inside space-y-0.5">
-              <li>GitHub-এ নতুন ZIP আপলোড → <b>Run workflow</b> → নতুন APK নামাও</li>
-              <li>নিচে <b>ভার্সন</b>-এ নতুন নাম্বার লেখো (যেমন 1.4.0)</li>
-              <li><b>APK URL</b>-এ নতুন APK-র ডাউনলোড লিংক বসাও</li>
-              <li>💾 Save চাপো — <b>Force update</b> চালু রাখলে সবার অ্যাপ আটকে যাবে যতক্ষণ না আপডেট করে</li>
+              <li>কোড রিপোতে নতুন <b>our-habit-github-upload.zip</b> আপলোড করো (Add file → Upload files → Commit) — বিল্ড এখন অটো হবে না</li>
+              <li><b>Actions</b> → “Build Android APK (manual — Run workflow)” → সবুজ <b>Run workflow</b> চাপো — ১০–১৫ মিনিটে নতুন APK রিলিজ হয়ে যাবে (nadiramoni/our-habit-apk)</li>
+              <li>নিচে <b>ভার্সন</b>-এ নতুন নাম্বার লেখো (আগের চেয়ে <b>বড়</b> — যেমন 4.2.0), <b>APK URL</b>-এ <b>https://github.com/nadiramoni/our-habit-apk/releases/latest</b> বসাও (একবার দিলেই আর বদলাতে হবে না)</li>
+              <li>💾 <b>Save</b> চাপো — ৫ মিনিটের মধ্যে সবার অ্যাপে “নতুন আপডেট” দেখাবে; <b>Force update</b> চালু রাখলে সবার অ্যাপ আটকে যাবে যতক্ষণ না আপডেট করে</li>
             </ol>
+            <p className="text-[10px] text-muted-foreground mt-1.5 leading-relaxed">
+              💡 ভার্সন নাম্বার অবশ্যই ইউজারদের ইনস্টল করা ভার্সনের চেয়ে <b>বড়</b> হতে হবে — সেই কারণেই কেউ আপডেট দেখতো না। আর APK URL-এর লিংকটা একবার দিলেই সবসময় সর্বশেষ রিলিজ খুলবে।
+            </p>
           </div>
         </Card>
 

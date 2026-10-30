@@ -584,7 +584,7 @@ export interface ExactAlarmSpec {
    * user picked the বাংলা voice but the phone has no Bangla TTS voice
    * installed (the call must never go silent/garbled). */
   speakEn?: string;
-  /** TTS language for the spoken sentence ("en" default | "bn"). */
+  /** TTS language for the spoken sentence ("bn" default, v4.2 | "en"). */
   lang?: string;
 }
 
@@ -614,7 +614,7 @@ export async function nativeScheduleExactAlarms(alarms: ExactAlarmSpec[]): Promi
         sound: a.sound,
         speak: a.speak || "",
         speakEn: a.speakEn || "",
-        lang: a.lang || "en",
+        lang: a.lang || "bn",
       })),
     });
     return { scheduled: Number(res?.scheduled) || 0 };
@@ -714,7 +714,7 @@ export async function nativeOpenFullScreenSettings(): Promise<boolean> {
  * (throttled per key) — used by the Reels-limit warning while the app is
  * open (the background guard covers app-closed).
  */
-export async function nativeSpeakOnce(key: string, text: string, lang = "en", throttleMin = 30, textEn = ""): Promise<boolean> {
+export async function nativeSpeakOnce(key: string, text: string, lang = "bn", throttleMin = 30, textEn = ""): Promise<boolean> {
   if (!isNative()) return false;
   const p = exactPlugin();
   if (!p?.speakOnce) return false;

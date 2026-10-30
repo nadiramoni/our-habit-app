@@ -446,6 +446,70 @@ export async function writeRawMeta(fields: Record<string, unknown>): Promise<boo
   }
 }
 
+// ---------- v4.2 (owner round-17): THE UPDATE-SAVE ROOT-CAUSE FIX ----------
+// Symptom: opening the in-app admin panel and hitting Save on the auto-update
+// card showed "সমস্যা হয়েছে — আবার চেষ্টা করো" and NO user ever received the
+// update. Root cause: under the v4.0 Firestore rules, updating app/meta is
+// only allowed for the CLAIMED admin (adminUid == the signed-in uid) — and
+// the in-app panel never wrote adminUid (only the retired GitHub-Pages panel
+// did), so every mirrorMeta() write was silently permission-denied.
+// Fix: the panel now writes its own adminUid claim TOGETHER with the cfg
+// (the rules' "first-claim" branch allows exactly that while adminUid is
+// missing), and reports a precise reason so the UI can show a real fix
+// instead of the generic error.
+export type PanelSaveReason =
+  | "ok"
+  | "no-account" // not signed in — request.auth would be null
+  | "not-configured" // Firebase config unavailable
+  | "claimed-other" // admin already claimed by a DIFFERENT account
+  | "denied" // rules rejected the write (old rules deployed?)
+  | "offline";
+
+export interface PanelSaveResult {
+  reason: PanelSaveReason;
+  adminEmail?: string; // who holds the claim (claimed-other)
+}
+
+export async function panelSaveCfg(
+  cfg: ServerCfg,
+  me: { uid: string; email?: string } | null
+): Promise<PanelSaveResult> {
+  if (!me?.uid) return { reason: "no-account" };
+  const st = await ensureFirebase();
+  if (!st.configured || !fsDb) return { reason: "not-configured" };
+  try {
+    const { doc, setDoc, serverTimestamp } = await import("firebase/firestore");
+    await setDoc(
+      doc(fsDb, "app", "meta"),
+      {
+        cfg: JSON.parse(JSON.stringify(cfg)),
+        adminUid: me.uid, // claim (or re-confirm) THIS account as the admin
+        adminEmail: me.email || "",
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return { reason: "ok" };
+  } catch (e) {
+    const msg = String((e as { code?: string })?.code || (e as { message?: string })?.message || e || "");
+    if (/permission|unauthorized/i.test(msg)) {
+      // Reads are public — see who actually holds the claim.
+      try {
+        const raw = await readRawMeta();
+        const claimedUid = raw && typeof raw.adminUid === "string" ? raw.adminUid : "";
+        if (claimedUid && claimedUid !== me.uid) {
+          const adminEmail = raw && typeof raw.adminEmail === "string" ? raw.adminEmail : "";
+          return { reason: "claimed-other", adminEmail };
+        }
+      } catch {
+        /* ignore */
+      }
+      return { reason: "denied" };
+    }
+    return { reason: "offline" };
+  }
+}
+
 // ---------- Real-time shared notes (works even without our server) ----------
 
 export function pairKeyOf(a: string, b: string): string {

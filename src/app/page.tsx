@@ -358,13 +358,15 @@ function Shell() {
     // সময় হইছে…" (owner's exact request). Adhan alarms NEVER speak —
     // "আজানের ক্ষেত্রে না ভাই, আজানটা আজানি দিবে".
     const myName = (s.settings.name || "").trim();
-    // v4.1: the VOICE language is now its OWN setting (default ENGLISH) —
-    // completely separate from the UI language. Owner (round-16): "আগের যেটা
-    // ইংলিশে ডাকত ওইটাই থাকবে — বাংলাটাও থাকবে, সেটিংসে। অনেকে বাংলা TTS-এর
-    // সেটিং করতে পারবে না।" So: en (default) = the phone CALLS the English
-    // name in English ("Sakib, it's your time to drink water…") — works on
-    // EVERY phone, zero setup. bn = Bangla-script name + Bangla sentence.
-    const vlang: "en" | "bn" = s.settings.voiceLang === "bn" ? "bn" : "en";
+    // v4.2 (owner round-17): the VOICE language is BANGLA by default again —
+    // the ORIGINAL system (owner: "আগের সিস্টেম — ঐরকম নাম ধরে ডাকবে কিন্তু
+    // কথাটা বলবে বাংলায়। ম্যানুয়ালে সিলেক্ট না থাকলেও বাংলায়ই বলবে।").
+    // bn (default) = Bangla-script name + Bangla sentence — the name STAYS
+    // English in every display, the voice says it Bangla-style; if the phone
+    // has no Bangla TTS voice the native side auto-falls back to the English
+    // copy (speakEn) so the call is never silent. en = the optional English
+    // call for those who pick it in Settings → প্রোফাইল।
+    const vlang: "en" | "bn" = s.settings.voiceLang === "en" ? "en" : "bn";
     const lang = vlang; // passed to the native TTS engine
     const tv = makeT(vlang); // spoken sentences in the VOICE language
     const te = makeT("en"); // English fallback — used by the native side when
@@ -420,6 +422,37 @@ function Shell() {
           azanSound
         );
     });
+    // v4.2 (owner round-17): নামাজের ডাক — the azan itself NEVER speaks
+    // (owner's standing rule: "শুধু আজান — আজানের সময় আজান দিবে, ঐটা বাদে"),
+    // but ~15 minutes AFTER each azan the voice calls the name and says
+    // "নামাজ পড়ার সময় হয়েছে, নামাজে যান" — NOT long after the azan (owner:
+    // "আজানের পর একটা ধরে নিবা… আজান দেওয়ার অনেকক্ষণ পর বলে না").
+    // One call per prayer: if the Fajr alarm and the Fajr adhan-reminder are
+    // both on, their +15 slots land close together → keep ONE (the real
+    // prayer-time one wins; the other is silently skipped).
+    const namazSlots: { time: string; pk: string }[] = [];
+    (["fajr", "dhuhr", "asr", "maghrib", "isha"] as const).forEach((pk) => {
+      const c = s.settings.adhanAlerts?.[pk];
+      if (c?.on) namazSlots.push({ time: shiftTime(c.time, 15), pk });
+    });
+    if (s.settings.fajrAlarm?.on) namazSlots.push({ time: shiftTime(s.settings.fajrAlarm.time, 15), pk: "fajr" });
+    const namazTaken: number[] = [];
+    for (const ns of namazSlots) {
+      if (!/^\d{1,2}:\d{2}$/.test(ns.time)) continue;
+      const [nh, nm] = ns.time.split(":").map(Number);
+      const nmins = nh * 60 + nm;
+      if (namazTaken.some((x) => Math.abs(x - nmins) < 20)) continue;
+      namazTaken.push(nmins);
+      pushExact(
+        `namaz_${ns.pk}`,
+        ns.time,
+        `🕌 ${t("namazTitle")}`,
+        t("namazBody"),
+        "alarm.wav",
+        named("speakNamaz"),
+        namedEn("speakNamaz")
+      );
+    }
     // meals: the phone CALLS the user by name, then the owner's music rings
     (["breakfast", "lunch", "dinner"] as const).forEach((mk) => {
       const c = s.settings.mealAlarms?.[mk];
