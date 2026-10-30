@@ -472,18 +472,20 @@ export interface ChatMsg {
 }
 
 /** Send a chat message (text and/or photo) to a paired friend. */
+export type ChatSendResult = "sent" | "queued-offline" | "failed-permission" | "failed-other";
 export async function fbSendChat(
   pairKey: string,
   msg: ChatMsg,
   serverCfg?: Partial<ServerCfg> | null
-): Promise<boolean> {
+): Promise<ChatSendResult> {
+  // v3.3: only show "offline" when the network is actually down. Permission-
+  // denied and other errors get their own message so the user knows the real
+  // reason instead of being told "offline" when they have signal.
+  const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
   const st = await ensureFirebase(serverCfg);
   if (!st.configured) {
-    // v3.3 OFFLINE: queue the message — the app will retry when the network
-    // returns. Without this, an offline send returned `false` and the user
-    // had to manually retype everything. Now it's saved and flushed later.
-    queueChatMessage(pairKey, msg);
-    return false;
+    if (isOffline) queueChatMessage(pairKey, msg);
+    return isOffline ? "queued-offline" : "failed-other";
   }
   try {
     const { doc, setDoc } = await import("firebase/firestore");
@@ -492,13 +494,22 @@ export async function fbSendChat(
       JSON.parse(JSON.stringify(msg)),
       { merge: true }
     );
-    return true;
+    return "sent";
   } catch (e: any) {
-    // offline / network error → queue for later flush
-    if (String(e?.code || e || "").match(/unavailable|offline|network|failed-precondition/i)) {
+    const code = String(e?.code || e || "");
+    if (code.match(/unavailable|offline|network|failed-precondition/i)) {
       queueChatMessage(pairKey, msg);
+      return "queued-offline";
     }
-    return false;
+    if (code.includes("permission-denied") || code.includes("PERMISSION_DENIED")) {
+      return "failed-permission";
+    }
+    // network truly down → queue for later (catches offline between ensureFirebase and setDoc)
+    if (isOffline) {
+      queueChatMessage(pairKey, msg);
+      return "queued-offline";
+    }
+    return "failed-other";
   }
 }
 
