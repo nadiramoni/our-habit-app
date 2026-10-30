@@ -17,12 +17,30 @@
  *   • "oh_chat_state" — written by the main app: {cfg, myUid, pairs, …}
  *   • "firebase:authUser:<apiKey>:[DEFAULT]" — the signed-in session, written
  *     by the main app's auth (browserLocalPersistence — v2.9's persistence fix)
+ *   • "oh_chat_last_{pairKey}" — v5.0: the SAME per-pair last-seen key the
+ *     main app's watchdog writes. The service and the app are ONE inbox.
  *
  * It restores the session, subscribes to every pair's chat messages
  * (pairs/{pairKey}/notes where kind=="chat") and calls
  * OHNative.postNotification() (the Android bridge) when a message from a
  * FRIEND arrives → a REAL Android notification with sound, even when the
  * main app is closed. The service mutes itself while the app is foreground.
+ *
+ * v5.0 (owner round-19):
+ *   • NO MORE 2-MINUTE SWALLOW — the old "createdAt older than 120s → skip"
+ *     rule dropped messages that arrived while the recipient's internet was
+ *     OFF (they arrive "stale" the moment the network returns). Now each
+ *     pair keeps a last-seen baseline in the SHARED localStorage
+ *     (oh_chat_last_{key}): anything NEWER than the baseline notifies, so a
+ *     reconnect after minutes/hours offline still fires the notification —
+ *     while a service restart never re-notifies old history.
+ *   • DEEP LINK — the notification carries the friend's uid+name; tapping it
+ *     opens the app straight INTO that chat (MainActivity → pendingOpenChat).
+ *   • hiddenBy — messages the user deleted "for me only" never notify.
+ *   • PRESENCE HEARTBEAT — every ~45s the page merge-writes
+ *     usersIndex/{myUid}.lastSeen, so friends see the user ONLINE even while
+ *     the app is CLOSED (a real server connection — exactly the owner's
+ *     rule). If the connection dies the writes stop → the dot goes red.
  *
  * Loaded from assets by the service; NEVER shown to the user.
  */
@@ -36,6 +54,7 @@
 
   var FB_VER = "10.12.2";
   var app = null, db = null, auth = null, unsubs = {}, myUid = "", booted = false;
+  var lastPresenceBeat = 0;
 
   function readState() {
     try {
@@ -56,23 +75,46 @@
       loadMod("firebase-firestore.js").then(function (fs) {
         try {
           var q = fs.query(fs.collection(db, "pairs", pair.key, "notes"), fs.orderBy("createdAt", "asc"));
-          var seen = {};
           unsubs[pair.key] = fs.onSnapshot(q, function (snap) {
-            snap.docChanges().forEach(function (ch) {
-              if (ch.type !== "added") return;
-              var d = ch.doc.data();
+            // v5.0: walk the WHOLE (small) snapshot and find the newest
+            // message that is VISIBLE to me (kind:chat, not hiddenBy me,
+            // not my own) — then compare with the shared last-seen baseline.
+            var maxAt = 0, latest = null;
+            snap.forEach(function (doc) {
+              var d = doc.data();
               if (!d || d.kind !== "chat") return;
-              seen[ch.doc.id] = true;
+              if ((d.hiddenBy || []).indexOf(myUid) >= 0) return; // v5.0: deleted from my side
               if (d.from === myUid) return; // my own message — no notification
-              if (d.createdAt && Date.now() - d.createdAt > 120000) return; // stale (cold start)
-              var title = "💬 " + (d.fromName || pair.name || "Our Habit");
-              var body = d.text || "📷 " + (window.__hasBn ? "একটা ছবি পাঠিয়েছে" : "sent a photo");
-              try {
-                if (window.OHNative && window.OHNative.postNotification) {
-                  window.OHNative.postNotification(title, body, pair.key);
-                }
-              } catch (e) { log("notify failed: " + e); }
+              if (d.createdAt && d.createdAt > maxAt) { maxAt = d.createdAt; latest = d; }
             });
+            var seenKey = "oh_chat_last_" + pair.key;
+            var seen = 0;
+            try { seen = Number(localStorage.getItem(seenKey) || 0); } catch (e) {}
+            if (maxAt > 0) {
+              if (!seen) {
+                // FIRST snapshot of this pair (service cold start): the whole
+                // history becomes the baseline — silent, no re-notify spam.
+                try { localStorage.setItem(seenKey, String(maxAt)); } catch (e) {}
+              } else if (maxAt > seen) {
+                // NEW message → update the baseline + post the notification.
+                // Works for messages that arrived while we were OFFLINE too
+                // (the v5.0 fix — the old 120s staleness rule is gone).
+                try { localStorage.setItem(seenKey, String(maxAt)); } catch (e) {}
+                var name = (latest.fromName || pair.name || "Our Habit");
+                var title = "💬 " + name;
+                var body = latest.text
+                  || (latest.image ? "📷 " + (window.__hasBn ? "একটা ছবি পাঠিয়েছে" : "sent a photo")
+                  : (latest.audio ? "🎙️ " + (window.__hasBn ? "একটা ভয়েস মেসেজ পাঠিয়েছে" : "sent a voice message")
+                  : (window.__hasBn ? "নতুন মেসেজ" : "New message")));
+                try {
+                  if (window.OHNative && window.OHNative.postNotification) {
+                    // v5.0: the last two args are the DEEP LINK — tapping the
+                    // notification opens this exact chat.
+                    window.OHNative.postNotification(title, body, pair.key, pair.uid || "", name);
+                  }
+                } catch (e) { log("notify failed: " + e); }
+              }
+            }
           }, function (err) {
             log("listener error " + pair.key + ": " + (err && err.code ? err.code : err));
             // rules/permission problem or offline — retry later via the state poll
@@ -88,6 +130,26 @@
     } catch (e) {
       log("subscribe error: " + e);
     }
+  }
+
+  // ==================== v5.0: PRESENCE HEARTBEAT ====================
+  // Owner round-19: "শুধু মোবাইলের ইন্টারনেট চালু থাকলেই সব সময় ব্যবহারকারীকে
+  // অনলাইন দেখানো যাবে না — অ্যাপের সার্ভারের সঙ্গে তার প্রকৃত সংযোগ যাচাই
+  // হতে হবে।" While the app is CLOSED this headless page IS that real
+  // connection: every ~45s it merge-writes usersIndex/{myUid}.lastSeen.
+  // If the internet dies the write fails → the friends' dots go red ≤2 min.
+  function presenceBeat() {
+    try {
+      if (!db || !myUid) return;
+      if (Date.now() - lastPresenceBeat < 45000) return;
+      loadMod("firebase-firestore.js").then(function (fs) {
+        try {
+          fs.setDoc(fs.doc(db, "usersIndex", myUid), { lastSeen: Date.now() }, { merge: true })
+            .then(function () { lastPresenceBeat = Date.now(); })
+            .catch(function (e) { log("presence write failed (offline?)"); });
+        } catch (e) { log("presence err"); }
+      }).catch(function () {});
+    } catch (e) {}
   }
 
   function boot() {
@@ -129,7 +191,7 @@
     var st = readState();
     if (!st || !st.pairs) return;
     myUid = st.myUid || (auth.currentUser && auth.currentUser.uid) || "";
-    // subscribe to every pair (items are {key, name} objects from oh_chat_state)
+    // subscribe to every pair ({key, name, uid} objects from oh_chat_state)
     (st.pairs || []).forEach(function (p) { subscribePair(p); });
     // unsubscribe removed pairs
     Object.keys(unsubs).forEach(function (k) {
@@ -206,7 +268,7 @@
             var body = (window.__hasBn ? "v" : "v") + latest + (meta.changelog ? (" — " + meta.changelog) : (window.__hasBn ? " — অ্যাপ খুলে আপডেট করো" : " — open the app to update"));
             try {
               if (window.OHNative && window.OHNative.postNotification) {
-                window.OHNative.postNotification(title, body, "app_update_" + latest);
+                window.OHNative.postNotification(title, body, "app_update_" + latest, "", "Our Habit");
               }
               log("update notif posted for v" + latest);
             } catch (e) { log("update notif failed: " + e); }
@@ -225,10 +287,12 @@
     boot();
   }, 5000);
 
-  // poll the state so new/removed friends are followed without a reload
+  // poll the state so new/removed friends are followed without a reload;
+  // v5.0: the same poll carries the presence heartbeat.
   setInterval(function () {
     if (!booted) return;
     resubscribe();
+    presenceBeat();
     checkAppUpdate();
   }, 30000);
 
