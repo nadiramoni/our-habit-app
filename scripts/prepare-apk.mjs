@@ -408,17 +408,48 @@ if (fs.existsSync(resSrc)) {
   log("no android-res/ folder — skipping custom icons (DEFAULT capacitor icon would be used!)");
 }
 
-// 5. version stamp
+// 5. version stamp — v4.1: APP_VERSION + APP_BUILD (CI writes the workflow
+//    run number into APP_BUILD before building). versionName carries the
+//    build ("4.1.0-b27") so Android's App Info shows exactly which build is
+//    installed; versionCode = <major><minor><patch><build as 3 digits> so
+//    every build is a real UPDATE (Android refuses same/lower versionCode).
 const versionTs = fs.readFileSync(path.join(ROOT, "src", "lib", "version.ts"), "utf8");
 const version = (versionTs.match(/APP_VERSION\s*=\s*"([^"]+)"/) || [])[1] || "1.0.0";
-const versionCode = version.split(".").map((n) => String(parseInt(n, 10) || 0)).join("");
+const build = parseInt((versionTs.match(/APP_BUILD\s*=\s*(\d+)/) || [])[1] || "0", 10) || 0;
+const baseDigits = version.split(".").map((n) => parseInt(n, 10) || 0).join("");
+const versionCode = parseInt(`${baseDigits}${String(build).padStart(3, "0")}`, 10) || 1;
+const versionName = build > 0 ? `${version}-b${build}` : version;
 const gradlePath = path.join(ROOT, "android", "app", "build.gradle");
 let gradle = fs.readFileSync(gradlePath, "utf8");
 gradle = gradle
   .replace(/versionCode\s+\d+/, `versionCode ${versionCode}`)
-  .replace(/versionName\s+"[^"]*"/, `versionName "${version}"`);
+  .replace(/versionName\s+"[^"]*"/, `versionName "${versionName}"`);
 fs.writeFileSync(gradlePath, gradle);
-log(`version ${version} (code ${versionCode}) stamped`);
+log(`version ${versionName} (code ${versionCode}) stamped`);
+
+// 5.5 v4.1 BUILD STAMP ASSET — a tiny build_info.txt inside the APK. Every
+// build is byte-unique (timestamp + build number inside), so two APKs can
+// never be silently identical again; the release notes also print this file's
+// content + the exact APK size + SHA256.
+try {
+  const assetsDir = path.join(ROOT, "android", "app", "src", "main", "assets");
+  fs.mkdirSync(assetsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(assetsDir, "build_info.txt"),
+    [
+      "Our Habit build stamp",
+      `version: ${version}`,
+      `build: ${build}`,
+      `versionName: ${versionName}`,
+      `builtAt: ${new Date().toISOString()}`,
+      `channel: ${process.env.CI ? "github-actions" : "local"}`,
+      "",
+    ].join("\n")
+  );
+  log(`build_info.txt written (build ${build})`);
+} catch (e) {
+  log(`build_info.txt skipped: ${e?.message || e}`);
+}
 
 // 6. sync
 sh("npx cap sync android");
