@@ -18,8 +18,9 @@ import { dayPoints, dhikrTotal, computeStreaks, dayCompletion } from "@/lib/logi
 import { getLog, todayStr } from "@/lib/types";
 import { pushDay, ensureProfile, fbIsBanned, fbSignOut, DaySummary } from "@/lib/cloud";
 import { APP_VERSION } from "@/lib/version";
+import { banglaNameFromEnglish } from "@/lib/translit";
 import { warmAudio, playChime } from "@/lib/audio";
-import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm, AlarmSyncResult, nativeScheduleExactAlarms, nativeCancelExactAlarms, nativeExactPending, nativeConsumeAlarmLaunch, ExactAlarmSpec } from "@/lib/native";
+import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm, AlarmSyncResult, nativeScheduleExactAlarms, nativeCancelExactAlarms, nativeSetVoiceGender, nativeExactPending, nativeConsumeAlarmLaunch, ExactAlarmSpec } from "@/lib/native";
 import { waterAlarmTimes, shiftTime, randomMealMusic, PRAYER_KEYS, dateAtHM, addDays } from "@/lib/types";
 
 type Tab = "home" | "notes" | "stats" | "friends" | "settings";
@@ -357,7 +358,21 @@ function Shell() {
     // "আজানের ক্ষেত্রে না ভাই, আজানটা আজানি দিবে".
     const myName = (s.settings.name || "").trim();
     const lang = s.settings.language || "bn";
-    const named = (suffix: string) => (myName ? `${myName}${suffix}` : "");
+    // v4.0: the SPOKEN name — Bangla TTS reads a Bangla-script name like a
+    // Bangladeshi person would say it. Priority: (1) a manually saved Bangla
+    // spelling (settings.nameBn), (2) AUTO-TRANSLITERATION of the English
+    // name (Nadiramoni → নাদিরামনি, Md. Tahmid Jamil → মোঃ তাহমিদ জামিল).
+    // Every DISPLAY everywhere still uses the English name — only the VOICE
+    // gets the Bangla spelling.
+    // Owner (round-15): "নাম টোটালি ইংলিশেই থাকবে, বাট কথাটা বলবে বাংলাদেশি
+    // উচ্চারণে — ইংলিশ প্রনাউন্স (ব্রিটিশ ইত্যাদি) দিয়ে নাম সুন্দর শোনায় না।"
+    const spokenName =
+      lang === "bn" && (s.settings.nameBn || "").trim()
+        ? (s.settings.nameBn || "").trim()
+        : lang === "bn"
+          ? banglaNameFromEnglish(myName) || myName
+          : myName;
+    const named = (suffix: string) => (spokenName ? `${spokenName}${suffix}` : "");
 
     // ---------- v2.8/v2.9 EXACT ALARMS (azan / Fajr / meals / water / sleep) ----------
     const exact: ExactAlarmSpec[] = [];
@@ -402,7 +417,7 @@ function Shell() {
           `🍽 ${t(`meal_${mk}`)}`,
           t("mealAlarmMsg"),
           randomMealMusic(),
-          myName ? `${myName}, ${t(`meal_${mk}`)} ${t("speakMeal")}` : ""
+          spokenName ? `${spokenName}, ${t(`meal_${mk}`)} ${t("speakMeal")}` : ""
         );
         // v2.4: 15-min EARLY heads-up — spoken with the name
         if (s.settings.mealPreAlert !== false)
@@ -412,7 +427,7 @@ function Shell() {
             `🍽 ${t(`meal_${mk}`)}`,
             t("mealPreMsg"),
             "alarm.wav",
-            myName ? `${myName}, ${t(`meal_${mk}`)} ${t("speakMealPre15")}` : ""
+            spokenName ? `${spokenName}, ${t(`meal_${mk}`)} ${t("speakMealPre15")}` : ""
           );
       }
     });
@@ -499,6 +514,19 @@ function Shell() {
       );
     })();
   }, [ready, alarmSig, t, resumeTick]);
+
+  // ---------- v4.0: push the user's GENDER to the alarm voice ----------
+  // AlarmSpeakService reads it (ExactAlarmPlugin prefs) and tries to pick a
+  // female voice for girls / a male voice for boys when the TTS engine
+  // exposes gendered voices (plus a soft pitch shift as fallback).
+  // Default = FEMALE (owner: "একটা বাংলা মেয়ের ভয়েস এড করবে") — male users
+  // switch it to ছেলে কণ্ঠ from Settings → প্রোফাইল.
+  useEffect(() => {
+    if (!ready || !isNative()) return;
+    const s = stateRef.current;
+    if (!s?.account?.verified) return;
+    void nativeSetVoiceGender(s.settings.gender === "male" ? "male" : "female");
+  }, [ready, state.settings.gender, state.settings.language, state.account?.verified]);
 
   // ---------- v2.8: the alarm that LAUNCHED the app (full-screen azan) ----------
   // When the exact alarm fires with the screen off/locked, Android launches

@@ -443,6 +443,11 @@ export function NameCapture() {
   // prefill from whatever name we already have (Google name split, etc.)
   const [first, setFirst] = useState("");
   const [last, setLast] = useState("");
+  // v3.3: Bengali spelling of the name (for the alarm VOICE) + gender
+  // (the voice tries to pick a female voice for girls / male for boys).
+  // Owner: "নাম ইংলিশে থাকবে, কিন্তু কথা বলবে বাংলাতে — বাংলাদেশি উচ্চারণ"
+  const [nameBn, setNameBn] = useState("");
+  const [gender, setGender] = useState<"" | "male" | "female">("");
 
   useEffect(() => {
     if (!acc) return;
@@ -465,7 +470,13 @@ export function NameCapture() {
     const full = `${first.trim()}${last.trim() ? ` ${last.trim()}` : ""}`;
     if (!first.trim()) return;
     setBusy(true);
-    updateSettings({ name: full, nameSet: true });
+    updateSettings({
+      name: full,
+      nameSet: true,
+      // v3.3: optional Bengali spelling + gender for the spoken alarm
+      ...(nameBn.trim() ? { nameBn: nameBn.trim() } : {}),
+      ...(gender ? { gender } : {}),
+    });
     setAccount({ ...acc, name: full });
     await fbUpdateProfileName(full); // Firebase displayName + usersIndex
     setBusy(false);
@@ -505,6 +516,37 @@ export function NameCapture() {
           />
         </div>
         <p className="text-[10px] text-muted-foreground mb-3 leading-relaxed">{t("yourNameNote")}</p>
+        {/* v3.3: Bengali spelling — the alarm VOICE reads THIS so the name is
+            pronounced perfectly in Bangladeshi Bengali, while every display keeps
+            the English name. Optional; if empty the Bengali TTS voice reads the
+            English letters Bengali-style. */}
+        <input
+          value={nameBn}
+          onChange={(e) => setNameBn(e.target.value)}
+          placeholder={t("nameBnPh")}
+          className="w-full bg-muted rounded-xl px-4 py-3 text-sm border border-border outline-none focus:ring-2 focus:ring-ring/50 mb-2"
+        />
+        {/* v3.3: gender — the alarm voice tries female for girls, male for boys */}
+        <div className="flex gap-2 mb-1">
+          {([
+            ["male", `👦 ${t("genderBoy")}`],
+            ["female", `👧 ${t("genderGirl")}`],
+          ] as const).map(([g, label]) => (
+            <button
+              key={g}
+              type="button"
+              onClick={() => setGender(gender === g ? "" : (g as "male" | "female"))}
+              className={`flex-1 rounded-xl text-xs font-bold py-2.5 min-h-[40px] border transition-colors ${
+                gender === g
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-muted text-muted-foreground border-border"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-muted-foreground mb-3 leading-relaxed">{t("nameBnNote")}</p>
         <div className="flex gap-2">
           <button
             type="button"

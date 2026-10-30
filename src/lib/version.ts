@@ -1,5 +1,30 @@
 // App version — bump this when you ship an update.
 // The admin panel's "latest version" is compared against this to trigger auto-update.
+// v4.0.0 — owner round-15 (the "one-shot total fix" release):
+//           (1) THE NAME CALL IS NOW FULLY BANGLA — the name STAYS English in
+//           every display, but the voice says it with BANGLADESHI
+//           pronunciation: the English spelling is auto-transliterated to
+//           Bangla script for the SPOKEN sentence only (Nadiramoni →
+//           "নাদিরামনি", তোমার পানি খাওয়ার সময় হয়েছে…). No more foreign
+//           English pronunciation of Bangladeshi names.
+//           (2) VOICE GENDER — a new Settings → প্রোফাইল picker (মেয়ে কণ্ঠ /
+//           ছেলে কণ্ঠ): female names get a female voice, male names a male
+//           voice (engine voice pick + pitch shift, best-effort).
+//           (3) THE "Our Habit" STATUS-BAR NOTIFICATION IS GONE COMPLETELY —
+//           OhKeepAliveService no longer calls startForeground at all (zero
+//           notifications, inside or outside the app); it keeps listening
+//           headless and is muted while the app is in the foreground.
+//           (4) CHAT "Firestore অনুমতি নেই" ROOT CAUSE — the old rules only
+//           matched pairs/{pairKey} documents, NOT the pairs/{key}/notes
+//           SUBCOLLECTION the chat writes to; v4 rules use {x=**} recursive
+//           wildcards (pairs + backups day reads) — chat sends + friend
+//           day-status now work.
+//           (5) NOTES SHARE TAB REMOVED (v3.3) — personal notes only; the
+//           messenger chat in the Friends tab is the only sharing channel.
+//           (6) ADMIN — updates are controlled ONLY from the in-app panel
+//           (long-press + PIN); the separate GitHub-Pages panel is retired
+//           (owner: "আমি কাউকে কন্ট্রোল করার দরকার নাই").
+// v3.3.0 — silent keep-alive + bn-BD TTS locale groundwork + listener fixes.
 // v3.2.0 — owner round-13 (2 requests in one): (1) APK BUILD FIXED — the two
 //           Java compile errors (duplicate throttleMs in ExactAlarmPlugin,
 //           wrong android.s.tts package in AlarmSpeakService) that broke the
@@ -81,4 +106,4 @@
 //           minutes + start sound, sleep tracker + bedtime alert, points moved
 //           to Settings profile (full name), YouTube Shorts vs Long split
 // v2.2.1 — REAL Adsterra banners + REAL adhan recording wired end-to-end
-export const APP_VERSION = "3.2.0";
+export const APP_VERSION = "4.0.0";

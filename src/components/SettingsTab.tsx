@@ -15,6 +15,7 @@ import AdsBanner from "@/components/AdsBanner";
 import { AppState, Lang } from "@/lib/types";
 import { APP_VERSION } from "@/lib/version";
 import { SmartlinkButton } from "@/components/AdsBanner";
+import { banglaNameFromEnglish } from "@/lib/translit";
 import { backupState, ensureFirebase, fbSignOut, fbUpdateProfileName, restoreState } from "@/lib/cloud";
 import { totalPoints, levelInfo } from "@/lib/logic";
 import {
@@ -195,6 +196,36 @@ export default function SettingsTab() {
                 {nameSaved ? <span className="text-[11px] font-bold text-primary">✓ {t("nameSavedOk")}</span> : null}
               </div>
             )}
+
+            {/* v4.0: ভয়েসের লিঙ্গ (alarm TTS) — মেয়ে নাম হলে মেয়ে কণ্ঠ, ছেলে
+                নাম হলে ছেলে কণ্ঠ। Android TTS engines rarely expose gendered
+                Bangla voices, so we ALSO shift the pitch as a best-effort.
+                The SPOKEN name is auto-transliterated to Bangla
+                (Nadiramoni → নাদিরামনি) so the bn voice pronounces it the
+                Bangladeshi way — the DISPLAY name stays English everywhere. */}
+            <div className="mt-3 rounded-xl bg-background/60 border border-border p-2.5">
+              <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">🗣️ {t("voiceGenderTitle")}</div>
+              <div className="text-[11px] text-muted-foreground mb-2 leading-relaxed">
+                {t("voiceGenderSub")}{" "}
+                {s.language === "bn" && (s.name || "").trim() ? (
+                  <>
+                    {"\""}
+                    <b>{(s.nameBn || "").trim() || banglaNameFromEnglish(s.name) || s.name}</b>
+                    {"\" "}
+                    {t("voiceGenderExample")}
+                  </>
+                ) : t("voiceGenderEn")}
+              </div>
+              <Seg<"female" | "male">
+                value={s.gender === "male" ? "male" : "female"}
+                onChange={(v) => updateSettings({ gender: v })}
+                options={[
+                  { value: "female", label: "👩 মেয়ে কণ্ঠ" },
+                  { value: "male", label: "👨 ছেলে কণ্ঠ" },
+                ]}
+              />
+              <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">{t("voiceGenderNote")}</p>
+            </div>
 
             {/* round-5: points LIVE here now (moved off the home header) */}
             <div className="mt-3 rounded-xl bg-background/60 border border-border px-3 py-2.5 flex items-center justify-between gap-2">

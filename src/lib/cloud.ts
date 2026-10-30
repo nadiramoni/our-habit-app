@@ -1,4 +1,5 @@
- "use client";
+ 
+"use client";
 
 /**
  * cloud.ts — the owner's OWN Firebase bridge.

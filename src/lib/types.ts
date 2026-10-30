@@ -87,6 +87,14 @@ export interface AppSettings {
   // single source of truth for every name display + share — the Google/Gmail
   // account name never overwrites it (owner: "ওর জিমেইলের নামটা থাকবে না")
   nameSet?: boolean;
+  // v3.3: the same name written in BENGALI script (optional). The alarm VOICE
+  // reads this when the app language is Bangla → perfect Bangladeshi
+  // pronunciation, while every DISPLAY keeps the English name.
+  // Owner: "নাম ইংলিশে থাকবে, কিন্তু কথা বলবে বাংলাতে — বাংলাদেশি উচ্চারণ"
+  nameBn?: string;
+  // v3.3: the user's gender — the alarm voice TRIES to pick a female voice for
+  // girls and a male voice for boys (depends on the phone's TTS engine).
+  gender?: "male" | "female";
   // v2.9: messenger-like chat notifications — the background service keeps
   // listening even when the app is closed (Settings toggle)
   chatNotif?: boolean;

@@ -628,6 +628,19 @@ export async function nativeCancelExactAlarms(): Promise<void> {
   }
 }
 
+/** v3.3: store the user's gender for the alarm VOICE — AlarmSpeakService tries
+ *  a female voice for girls / a male voice for boys (best-effort: depends on
+ *  the TTS engine exposing gendered voices). */
+export async function nativeSetVoiceGender(gender: "male" | "female"): Promise<void> {
+  const p = exactPlugin();
+  if (!p?.setVoiceGender) return;
+  try {
+    await p.setVoiceGender({ gender });
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function nativeExactPending(): Promise<{ count: number; nextAt: number; nextTitle: string }> {
   const p = exactPlugin();
   if (!p) return { count: 0, nextAt: 0, nextTitle: "" };

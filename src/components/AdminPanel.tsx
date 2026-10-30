@@ -8,6 +8,7 @@ import { AtCfg, AtZone, ServerCfg } from "@/lib/types";
 import { extractScriptUrl } from "@/components/AdsBanner";
 import { mirrorMeta, readRawMeta, writeRawMeta } from "@/lib/cloud";
 import { isNative } from "@/lib/native";
+import { APP_VERSION } from "@/lib/version";
 
 /**
  * v2.4: LIVE banner health — reads window.__atHealth (written by AdsBanner
@@ -503,6 +504,14 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
         {/* ---- Auto-update ---- */}
         <Card className="mb-4">
           <SectionTitle title={`🔄 ${t("admUpdate")}`} sub={t("admUpdateSub")} />
+          {/* v4.0: the owner kept seeing "same version 3.2.0 again and again"
+              (round-15) — the version field below is the number USERS get
+              pushed to, and it was pre-filled from Firestore. Show what's
+              INSTALLED on this phone right next to it so the two can never be
+              confused again. */}
+          <p className="text-[11px] text-muted-foreground mb-2 leading-relaxed">
+            📱 এই ফোনে এখন ইনস্টল হয়ে আছে: <b>v{APP_VERSION}</b> — নতুন APK বানালে নিচের ঘরে নতুন নাম্বারটা (যেমন 4.1.0) বসাও।
+          </p>
           <input
             value={draft.latestVersion}
             onChange={(e) => setDraft({ ...draft, latestVersion: e.target.value.trim() })}

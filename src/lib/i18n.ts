@@ -505,6 +505,10 @@ const bn: Dict = {
   yourNameQ: "তোমার নাম কী?",
   yourNameSub: "যে নামে সবাই তোমাকে চেনে — সেটাই অ্যাপে ও শেয়ারে দেখাবে",
   yourNameNote: "এই নামটাই শেয়ার করা নোট ও বন্ধুদের কাছে দেখাবে — জিমেইল অ্যাকাউন্টের নাম নয়।",
+  nameBnPh: "নামের বাংলা বানান (ঐচ্ছিক) — যেমন: নাদিরা মণি",
+  nameBnNote: "বানানটা দিলে অ্যালার্মে তোমার নাম শুদ্ধ বাংলা উচ্চারণে ডাকবে। না দিলে ইংরেজি অক্ষর বাংলা ঢঙে পড়বে।",
+  genderBoy: "ছেলে",
+  genderGirl: "মেয়ে",
   saveBtn: "সেভ করো",
   later: "পরে",
   cancel: "বাতিল",
@@ -586,6 +590,10 @@ const bn: Dict = {
   chatNotifSub: "অ্যাপ বন্ধ থাকলেও মেসেজ এলে নোটিফিকেশন আসবে (মেসেঞ্জারের মতো)",
   chatNewMsg: "নতুন মেসেজ",
   chatImageMsg: "📷 একটা ছবি পাঠিয়েছে",
+  chatAudioMsg: "🎙️ একটা ভয়েস মেসেজ পাঠিয়েছে",
+  chatAudio: "🎙️ ভয়েস",
+  chatRecordHold: "ধরে রেখে বলো",
+  chatRecording: "🔴 রেকর্ড হচ্ছে…",
 
   // ---------- v2.9: নাম ধরে ডাকা অ্যালার্ট (TTS) ----------
   speakWater: ", তোমার পানি খাওয়ার সময় হয়েছে। পানি খাও, স্বাস্থ্য ঠিক থাকবে।",
@@ -596,6 +604,13 @@ const bn: Dict = {
   speakCheckin: ", আজকের দিনটা কেমন গেল একবার দেখে নাও।",
   speakAyat: ", আজকের আয়াতটা একবার পড়ে নাও।",
   speakReelsWarn: ", রিলস দেখা এখনই বন্ধ করো! আজ অনেক বেশি রিলস দেখেছো — চোখের বড় ক্ষতি হচ্ছে।",
+
+  // ---------- v4.0: ভয়েস (অ্যালার্মে নাম ধরে ডাকা) ----------
+  voiceGenderTitle: "ভয়েস (অ্যালার্মে নাম ধরে ডাকা)",
+  voiceGenderSub: "নাম ইংলিশেই থাকবে, বাট ডাকবে বাংলা উচ্চারণে। অ্যালার্মে শুনবে —",
+  voiceGenderExample: "— এভাবেই ডাকবে।",
+  voiceGenderEn: "নাম ইংলিশেই থাকবে, বাট ডাকবে বাংলা উচ্চারণে।",
+  voiceGenderNote: "মেয়ে নাম হলে মেয়ে কণ্ঠ, ছেলে নাম হলে ছেলে কণ্ঠ বসাও। নাম একবার সেভ করলে পরের অ্যালার্ম থেকেই নতুন কণ্ঠে ডাকবে।",
   voiceAlertsOn: "নাম ধরে ডাক",
   voiceAlertsSub: "অ্যালার্মে তোমার নাম ধরে ডেকে মনে করাবে (আজান অপরিবর্তিত)",
 
@@ -1224,6 +1239,10 @@ const en: Dict = {
   firstNameNeeded: "Enter your first name",
   // v2.8: name capture + editor (registered full name — never the Gmail name)
   yourNameQ: "What's your name?",
+  nameBnPh: "Bengali spelling (optional) — e.g. নাদিরা মণি",
+  nameBnNote: "With this, the alarm calls your name in perfect Bengali pronunciation. Without it, English letters are read Bengali-style.",
+  genderBoy: "Boy",
+  genderGirl: "Girl",
   yourNameSub: "The name everyone knows you by — shown across the app and shares",
   yourNameNote: "This is the name friends and shared notes will see — not your Gmail account name.",
   saveBtn: "Save",
@@ -1307,6 +1326,10 @@ const en: Dict = {
   chatNotifSub: "Messages arrive like Messenger even when the app is closed",
   chatNewMsg: "New message",
   chatImageMsg: "📷 sent a photo",
+  chatAudioMsg: "🎙️ sent a voice message",
+  chatAudio: "🎙️ Voice",
+  chatRecordHold: "Hold to record",
+  chatRecording: "🔴 Recording…",
 
   // ---------- v2.9: named voice alerts (TTS) ----------
   speakWater: ", it's your time to drink water. Drink up, stay healthy.",
@@ -1317,6 +1340,13 @@ const en: Dict = {
   speakCheckin: ", take a moment to review how today went.",
   speakAyat: ", read today's verse.",
   speakReelsWarn: ", stop watching reels right now! You've watched way too many today — it's hurting your eyes.",
+
+  // ---------- v4.0: voice (name call in alarms) ----------
+  voiceGenderTitle: "Voice (name call in alarms)",
+  voiceGenderSub: "The name stays English, but it is CALLED in Bangla pronunciation —",
+  voiceGenderExample: "— that's how the alarm calls you.",
+  voiceGenderEn: "The name stays English, but it is CALLED in Bangla pronunciation.",
+  voiceGenderNote: "Pick a girl's voice for a girl's name, a boy's voice for a boy's name. Save once — every alarm after that uses the new voice.",
   voiceAlertsOn: "Call me by name",
   voiceAlertsSub: "Alarms call your name out loud (adhan stays unchanged)",
 

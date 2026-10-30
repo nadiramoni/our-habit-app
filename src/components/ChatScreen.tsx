@@ -27,6 +27,7 @@ import { ChatMsg, FbProfile, chatQueueSize, fbSendChat, listenNotes, listenProfi
 import { uid as newId } from "@/lib/types";
 import { nativeVibrate } from "@/lib/native";
 import { APP_VERSION } from "@/lib/version";
+import { banglaNameFromEnglish } from "@/lib/translit";
 
 export interface ChatTarget {
   uid: string;
@@ -312,6 +313,22 @@ export function ChatWatchdog() {
 
   const chatNotifOn = state.settings.chatNotif !== false;
 
+  // v4.0: the SPOKEN reels warning — the BANGLA spelling of the name (same as
+  // the alarms) so the bn TTS voice says it the Bangladeshi way.
+  // "Nadiramoni" → "নাদিরামনি"; a manually saved Bangla spelling (nameBn)
+  // always wins; English app language keeps the English name.
+  const reelsWarnText = useCallback(
+    () =>
+      `${
+        state.settings.language === "bn" && (state.settings.nameBn || "").trim()
+          ? (state.settings.nameBn || "").trim()
+          : state.settings.language === "bn"
+            ? banglaNameFromEnglish(state.settings.name || "") || (state.settings.name || "")
+            : state.settings.name || ""
+      }${t("speakReelsWarn")}`,
+    [state.settings.language, state.settings.name, state.settings.nameBn, t]
+  );
+
   // per-pair listeners + last-seen bookkeeping
   useEffect(() => {
     if (!acc?.uid || !acc.verified) return;
@@ -352,7 +369,7 @@ export function ChatWatchdog() {
           pairs: pairs.map((p) => ({ key: p.key, name: p.name })),
           lang: state.settings.language || "bn",
           reelsLimitMin: state.settings.reelsLimitMin || 0,
-          reelsWarn: `${state.settings.name || ""}${t("speakReelsWarn")}`,
+          reelsWarn: reelsWarnText(), // v4.0: Bangla-spelled name → bn voice
           buildVersion: APP_VERSION, // v3.3: background listener fires update notifs against this
         });
       } catch {
@@ -410,38 +427,46 @@ export function ChatWatchdog() {
       unsubs = [];
     };
      
-  }, [acc?.uid, acc?.verified, cfg]);
+  }, [acc?.uid, acc?.verified, cfg, reelsWarnText]);
 
-  // v3.3: STOP the background service when the app is foreground (so no
-  // "চ্যাট ও রিমাইন্ডার নোটিফিকেশন চালু" notification shows). The in-app
-  // ChatWatchdog listens to chat while the app is open. The background service
-  // starts ONLY when the app goes to background → it then posts chat notifs.
-  // Owner: "অ্যাপসে ঢুকলে এই নোটিফিকেশনটা বারবারই আসে — যাতে না আসে এটা ফিক্স করে দো।"
+  // v4.0: THE SERVICE NOW RUNS HEADLESS — NO NOTIFICATION AT ALL.
+  // Owner (round-15): "অ্যাপস থেকে বের হলে ওই খালি 'Our Habit' নোটিফিকেশনটা
+  // আসে — পুরাটাই উঠাই ফেলবা, এটা রাখবা না।"
+  // OhKeepAliveService is now a PLAIN background service (no startForeground
+  // → Android never shows anything). It keeps listening while the app is
+  // open AND after the user leaves; while the app is in the FOREGROUND its
+  // chat notifications are MUTED (the in-app ChatWatchdog handles those —
+  // no doubles). Android may stop it when memory is needed; opening the
+  // app restarts it — that's the honest trade-off for zero notifications.
   useEffect(() => {
     if (!acc?.uid || !acc.verified || !chatNotifOn) {
       void import("@/lib/native").then(({ nativeChatServiceStop }) => nativeChatServiceStop());
       return;
     }
-    // App is in foreground → STOP the background service (no notification shown)
-    void import("@/lib/native").then(({ nativeChatServiceStop }) => nativeChatServiceStop());
+    // logged in + toggle ON → make sure the headless service is running
+    // (idempotent) and muted while we're in the foreground
+    void import("@/lib/native").then(async ({ nativeChatServiceStart, nativeChatServiceSetMuted }) => {
+      await nativeChatServiceStart();
+      await nativeChatServiceSetMuted(true);
+    });
   }, [acc?.uid, acc?.verified, chatNotifOn]);
 
-  // v3.3: On app background → start service (notification appears + chat notifs);
-  // On app foreground → stop service (notification disappears, no annoyance).
-  // The service is the ONLY way to get chat notifications when the app is closed.
+  // v4.0: app foreground → MUTE the service's notifications (in-app watchdog
+  // already shows/sounds them); app background → UNMUTE (real notifications
+  // while the user is away). The service itself keeps running the whole time —
+  // there is no notification to show or hide anymore.
   useEffect(() => {
     let un: (() => void) | null = null;
     void (async () => {
       try {
         const { App: CapApp } = await import("@capacitor/app");
-        const { nativeChatServiceStart, nativeChatServiceStop } = await import("@/lib/native");
+        const { nativeChatServiceStart, nativeChatServiceSetMuted } = await import("@/lib/native");
         const l = await CapApp.addListener("appStateChange", (s: { isActive: boolean }) => {
           if (s.isActive) {
-            // app back to foreground → STOP service, no notification
-            void nativeChatServiceStop();
+            void nativeChatServiceSetMuted(true); // in-app watchdog takes over
           } else {
-            // app went to background → START service, chat notifs come through
-            void nativeChatServiceStart();
+            void nativeChatServiceStart(); // ensure running (e.g. after a kill)
+            void nativeChatServiceSetMuted(false); // real chat notifs now
           }
         });
         un = () => void l.remove();
@@ -459,12 +484,12 @@ export function ChatWatchdog() {
     void import("@/lib/native").then(({ nativeSetReelsLimit }) =>
       nativeSetReelsLimit(
         state.settings.reelsLimitMin || 0,
-        `${state.settings.name || ""}${t("speakReelsWarn")}`,
+        reelsWarnText(),
         state.settings.language || "bn"
       )
     );
-     
-  }, [state.settings.reelsLimitMin, state.settings.name, state.settings.language]);
+
+  }, [state.settings.reelsLimitMin, reelsWarnText, state.settings.language]);
 
   // SPEAK the reels warning when the app itself sees the limit crossed
   useEffect(() => {
@@ -474,11 +499,11 @@ export function ChatWatchdog() {
     const mins = log?.reelsMin ?? 0;
     if (limit > 0 && mins >= limit && acc?.uid) {
       void import("@/lib/native").then(({ nativeSpeakOnce }) =>
-        nativeSpeakOnce("reelsWarn", `${state.settings.name || ""}${t("speakReelsWarn")}`, state.settings.language || "bn", 30)
+        nativeSpeakOnce("reelsWarn", reelsWarnText(), state.settings.language || "bn", 30)
       );
     }
-     
-  }, [state.logs[new Date().toISOString().slice(0, 10)]?.reelsMin, state.settings.reelsLimitMin]);
+
+  }, [state.logs[new Date().toISOString().slice(0, 10)]?.reelsMin, state.settings.reelsLimitMin, reelsWarnText]);
 
   return null;
 }
