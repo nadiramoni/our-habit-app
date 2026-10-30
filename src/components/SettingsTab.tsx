@@ -2,7 +2,7 @@
 
 /**
  * SettingsTab — clean & reorganized:
- *   Profile (Firebase account) → Language & Theme → Water goal →
+ *   Profile (Firebase account) → Theme → Water goal →
  *   Permissions → Data & Backup (file + Firebase cloud) → About (English)
  * Meal alarms & reminder alarms now live on the HOME (alarms layer), not here.
  */
@@ -12,7 +12,7 @@ import { useStore } from "@/lib/store";
 import { useServerCfg } from "@/lib/cfg";
 import { Card, SectionTitle, Seg, ToggleRow } from "@/components/ui-bits";
 import AdsBanner from "@/components/AdsBanner";
-import { AppState, Lang } from "@/lib/types";
+import { AppState } from "@/lib/types";
 import { APP_VERSION, APP_BUILD } from "@/lib/version";
 import { SmartlinkButton } from "@/components/AdsBanner";
 import { banglaNameFromEnglish } from "@/lib/translit";
@@ -302,20 +302,15 @@ export default function SettingsTab() {
         ) : null}
       </Card>
 
-      {/* ---------- Language & Theme ---------- */}
+      {/* ---------- v5.0: THEME (language picker REMOVED — owner round-19:
+          "অ্যাপের সেটিংসে গিয়ে আলাদাভাবে বাংলা ভাষা নির্বাচন করার বর্তমান
+          ব্যবস্থাটি বাদ দিতে হবে") — the app now follows the DEVICE language:
+          বাংলা ডিভাইস → পুরো অ্যাপ বাংলায়, English ডিভাইস → English। ---------- */}
       <Card className="mb-4">
-        <SectionTitle title={`🌍 ${t("language")} & ${t("theme")}`} />
-        <div className="text-xs text-muted-foreground mb-1">{t("language")}</div>
-        <Seg<Lang>
-          value={s.language}
-          onChange={(v) => updateSettings({ language: v })}
-          options={[
-            { value: "bn", label: "বাংলা" },
-            { value: "en", label: "English" },
-          ]}
-          className="mb-3"
-        />
-        <div className="text-xs text-muted-foreground mb-1">{t("theme")}</div>
+        <SectionTitle title={`🎨 ${t("theme")}`} />
+        <div className="text-[10px] text-muted-foreground mb-2 leading-relaxed">
+          🌍 {t("langDeviceNote")}
+        </div>
         <Seg<"dark" | "light">
           value={s.theme}
           onChange={(v) => updateSettings({ theme: v })}

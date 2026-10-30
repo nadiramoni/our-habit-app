@@ -14,31 +14,38 @@ export const MAX_POINTS = 40;
 
 export function dayPoints(l: DayLog): number {
   let p = 0;
-  const prayersDone = PRAYER_KEYS.filter((k) => l.prayers[k]).length;
+  // v5.0 HARDENING: a partially-written day log (older builds, interrupted
+  // writes, injected states) must never crash the streak/points engine —
+  // every list/object field gets a fallback.
+  const prayers = l.prayers || {};
+  const prayerWater = l.prayerWater || [];
+  const dhikr = l.dhikr || {};
+  const gratitudes = l.gratitudes || ["", "", ""];
+  const prayersDone = PRAYER_KEYS.filter((k) => prayers[k]).length;
   p += prayersDone * 2;
   if (prayersDone === 5) p += 5;
-  p += l.prayerWater.filter(Boolean).length;
+  p += prayerWater.filter(Boolean).length;
   if (waterGoalMet(l)) p += 3;
   if (l.reelsMin !== null && l.reelsMin === 0) p += 5;
   if (dhikrTotal(l) >= 100) p += 2;
   if (l.meditationMin >= 10) p += 3;
   if (l.focusMin >= 25) p += 3;
-  if (l.gratitudes.filter((g) => g.trim()).length >= 3) p += 2;
+  if (gratitudes.filter((g) => g.trim()).length >= 3) p += 2;
   if (l.sleepBed && l.sleepWake) p += 1;
-  if (l.note.trim()) p += 1;
+  if (String(l.note || "").trim()) p += 1;
   return p;
 }
 
 export function dhikrTotal(l: DayLog): number {
-  return Object.values(l.dhikr).reduce((a, b) => a + b, 0);
+  return Object.values(l.dhikr || {}).reduce((a, b) => a + b, 0);
 }
 
 export function prayersDone(l: DayLog): number {
-  return PRAYER_KEYS.filter((k) => l.prayers[k]).length;
+  return PRAYER_KEYS.filter((k) => (l.prayers || {})[k]).length;
 }
 
 export function waterGoalMet(l: DayLog): boolean {
-  return l.waterMl >= 3000; // replaced by settings-aware wrapper below
+  return (Number(l.waterMl) || 0) >= 3000; // v5.0 hardened; replaced by settings-aware wrapper below
 }
 
 // ---------- 10 tracked items for the daily ring ----------
@@ -48,15 +55,18 @@ export interface HabitCheck {
 }
 
 export function dayChecks(l: DayLog, goalMl: number): HabitCheck[] {
+  const prayers = l.prayers || {};
+  const prayerWater = l.prayerWater || [];
+  const gratitudes = l.gratitudes || ["", "", ""];
   return [
     { id: "prayers", done: prayersDone(l) === 5 },
-    { id: "prayerWater", done: l.prayerWater.every(Boolean) },
-    { id: "water", done: l.waterMl >= goalMl },
+    { id: "prayerWater", done: prayerWater.every(Boolean) },
+    { id: "water", done: (Number(l.waterMl) || 0) >= goalMl },
     { id: "reels", done: l.reelsMin !== null && l.reelsMin === 0 },
     { id: "dhikr", done: dhikrTotal(l) >= 100 },
-    { id: "meditation", done: l.meditationMin >= 10 },
-    { id: "focus", done: l.focusMin >= 25 },
-    { id: "gratitude", done: l.gratitudes.filter((g) => g.trim()).length >= 3 },
+    { id: "meditation", done: (Number(l.meditationMin) || 0) >= 10 },
+    { id: "focus", done: (Number(l.focusMin) || 0) >= 25 },
+    { id: "gratitude", done: gratitudes.filter((g) => g.trim()).length >= 3 },
     { id: "sleep", done: Boolean(l.sleepBed && l.sleepWake) },
   ];
 }

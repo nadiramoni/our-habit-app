@@ -1,5 +1,69 @@
 // App version — bump this when you ship an update.
 // The admin panel's "latest version" is compared against this to trigger auto-update.
+// v5.1.0 (owner round-21 — admin panel এখন পুরোটা অ্যাপের ভেতরে):
+//           GitHub Pages-এর আলাদা স্ট্যাটাস প্যানেল সম্পূর্ণ বাদ — owner:
+//           “আলাদাভাবে করার প্রয়োজন নাই, অ্যাপসেই সব সিস্টেম দিয়ে দাও”।
+//           (1) হোম-স্ক্রিনের উপরের নাম/অ্যাভাটার ৩ সেকেন্ড চেপে ধরলেই অ্যাডমিন
+//           প্যানেল খোলে → PIN → অ্যাডমিন যাচাই → আলাদা ফুল-স্ক্রিন লেয়াউট।
+//           (2) প্যানেলের ভেতরে দুই ট্যাব: 📊 স্ট্যাটাস (সব ইউজারের নাম/অ্যাকাউন্ট/
+//           অনলাইন ডট/বন্ধু/আজকের ভিডিও/আজকের কাজ — আগের GitHub-Pages প্যানেলের
+//           সফলা, এখন অ্যাপেই) + ⚙️ সেটিংস (বিজ্ঞাপন + Firebase + অ্যাপ আপডেট +
+//           PIN বদল — আগের সবকিছু)।
+//           (3) ডেটা সোর্স: নিজের Firebase-ই (usersIndex + backups) — কোনো
+//           সার্ভার বা admin-sdk-key লাগে না, তাই APK-তে যেকোনো ফোন থেকেই চলে।
+//           ৩০ সেকেন্ড পরপর নিজে নিজে রিফ্রেশ হয়।
+//           (4) সব GitHub-Pages ফাইল (admin-panel.html, admin-panel.zip, গাইড)
+//           আর /api/admin/status সার্ভার রুট মুছে দেওয়া হয়েছে।
+// v5.0 (owner round-19 — the full-round release):
+//           (1) MESSAGE DELETE, TWO MODES — hold a bubble → একটা শিট:
+//           “আমার কাছ থেকে” (hiddenBy me — বন্ধুর ফোনে মেসেজটা থেকে যায়)
+//           আর “উভয় পক্ষ থেকে” (শুধু নিজের পাঠানো মেসেজে — দুই ফোন থেকেই
+//           মুছে যায়)। অন্যের পাঠানো মেসেজে শুধু নিজের কাছ থেকেই ডিলিট
+//           করা যায়। পুরো চ্যাট মুছলেও একই নিয়ম কাজ করে।
+//           (2) CLOSED-APP NOTIFICATIONS FIXED + DEEP LINK — the background
+//           listener no longer swallows messages older than 2 min (the
+//           offline-arrival case); per-pair last-seen baselines are shared
+//           with the main app through localStorage. Tapping a notification
+//           now opens that EXACT chat (PendingIntent extras → MainActivity →
+//           pendingOpenChat → oh:open-chat). The watchdog also defers to
+//           the service whenever it is alive — no more double notifications.
+//           (3) PRESENCE — green/red dots on Friends + chat headers. A 45s
+//           heartbeat (app open OR the headless service while closed) writes
+//           usersIndex.lastSeen; the dot goes red ≤2 min after the real
+//           connection dies — internet-on alone never shows online.
+//           (4) VIDEO TIME — the owner's own app list with separate buckets
+//           (X, Kuku TV, Moj, Chorki, Hoichoi, Bongo, Bioscope, Toffee),
+//           PRECISE per-app seconds + the “৪৫ সেকেন্ড / ৫ মিনিট / ১ ঘণ্টা
+//           ১০ মিনিট” format + a real countdown (used/left/over-limit),
+//           honestly labeled আনুমানিক (Android cannot detect each playback).
+//           (5) BANGLA 12-HOUR CLOCKS — রাত ১২:৩০, সকাল ১:৩০ (মধ্যরাতের পর
+//           সকাল!), দুপুর ১২:৩০, বিকাল ৪:৩০ — Bengali digits everywhere a
+//           time is shown; English devices get AM/PM; every country keeps
+//           its own local time.
+//           (6) MAGHRIB +3 — মাগরিবের নামাজের ডাক আজানের ~৩ মিনিট পরে;
+//           বাকি সব নামাজ ~১৫ মিনিট পরে। Plus the owner's exact Bengali
+//           sentences for পানি/খাবার/ঘুম/রিলস/নামাজ।
+//           (7) LANGUAGE FOLLOWS THE DEVICE — the manual picker is GONE;
+//           bn* → বাংলা, else English. New installs' voice language starts
+//           on the device language too.
+//           (8) ADMIN — the GitHub-Pages panel is back as a READ-ONLY status
+//           panel (pin 72542, no email login, /api/admin/status); the FULL
+//           panel (in-app) now does SERVER-LEVEL admin verification after
+//           the PIN (app/meta.adminUid claim + inline admin sign-in — works
+//           from any phone, exactly like the owner asked).
+// v4.3.0 — owner round-18: TWO chat powers (everything else untouched):
+//           (1) MESSAGE DELETE — press-and-HOLD any chat bubble (or
+//           right-click on a computer) → confirm → the message disappears
+//           from BOTH phones in real time (owner: "এতগুলো মেসেজ আছে — চাইলে
+//           ডিলিট করতে পারো")। The header 🗑️ button wipes the WHOLE
+//           conversation in one tap (shared notes in the same Firestore
+//           collection are never touched).
+//           (2) MESSENGER-STYLE HEADS-UP POPUP — when a message arrives while
+//           the app is open, a banner slides down from the top with the
+//           sender's name + message preview + a short "টুট" pop sound +
+//           vibration (owner: "মেসেঞ্জারে দেখো না টুট করে একটা পপ আপ এসে
+//           মেসেজটা সিন হয়")। Tap it → straight into the chat. App closed →
+//           the background service still fires the system notification.
 // v4.2.0 — owner round-17 (the "totally fix it" release):
 //           (1) THE BANGLA VOICE CALL IS THE DEFAULT AGAIN — the ORIGINAL
 //           system (owner: "আগের সিস্টেম — ঐরকম নাম ধরে ডাকবে কিন্তু কথাটা
@@ -147,7 +211,7 @@
 //           minutes + start sound, sleep tracker + bedtime alert, points moved
 //           to Settings profile (full name), YouTube Shorts vs Long split
 // v2.2.1 — REAL Adsterra banners + REAL adhan recording wired end-to-end
-export const APP_VERSION = "4.2.0";
+export const APP_VERSION = "5.1.0";
 
 // v4.1: BUILD NUMBER — 0 in the repo; GitHub CI overwrites it with the
 // workflow run number (27, 28, 29…) before every APK build. It lands in the

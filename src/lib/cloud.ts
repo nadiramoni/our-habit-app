@@ -533,6 +533,10 @@ export interface ChatMsg {
   audio?: string; // v3.3: voice message — base64 dataURL of an .webm/.opus clip
   audioDur?: number; // v3.3: voice duration in seconds (for UI display)
   createdAt: number;
+  // v5.0 (owner round-19): per-user “delete for me” — uids that hid this
+  // message on their own phone. The doc STAYS (the friend still sees it);
+  // every client filters out docs whose hiddenBy contains its own uid.
+  hiddenBy?: string[];
 }
 
 /** Send a chat message (text and/or photo) to a paired friend. */
@@ -642,6 +646,100 @@ if (typeof window !== "undefined") {
 /** Public helper: returns how many messages are currently queued (offline). */
 export function chatQueueSize(): number { return readQueue().length; }
 
+// ---------- v4.3→v5.0: MESSAGE DELETE — TWO MODES (owner round-19) ----------
+// Owner: “নিজের কাছ থেকে ডিলিট করলে বন্ধুর চ্যাট থেকে সেই মেসেজ ডিলিট হবে না” +
+// “নিজের পাঠানো মেসেজ উভয় পক্ষের কাছ থেকে ডিলিট করতে পারবে — অন্যের
+// পাঠানোটা শুধু নিজের কাছ থেকে”।
+//   fbHideChat  = FOR ME ONLY → arrayUnion(myUid) on hiddenBy; the doc lives
+//                  on the friend's phone exactly as before.
+//   fbDeleteChat = FOR BOTH SIDES → deleteDoc (only allowed by the UI for
+//                  messages the user SENT — enforced in the sheet, and the
+//                  listener/headless page applies the same rule).
+export type ChatDeleteResult = "deleted" | "hidden" | "failed-offline" | "failed-other";
+
+/** Hide ONE message on MY phone only (owner round-19 ক). */
+export async function fbHideChat(
+  pairKey: string,
+  msgId: string,
+  myUid: string,
+  serverCfg?: Partial<ServerCfg> | null
+): Promise<ChatDeleteResult> {
+  const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return isOffline ? "failed-offline" : "failed-other";
+  if (!myUid) return "failed-other";
+  try {
+    const { doc, updateDoc, arrayUnion } = await import("firebase/firestore");
+    await updateDoc(doc(fsDb!, "pairs", pairKey, "notes", msgId), {
+      hiddenBy: arrayUnion(myUid),
+    });
+    return "hidden";
+  } catch {
+    return isOffline ? "failed-offline" : "failed-other";
+  }
+}
+
+/**
+ * Delete ONE chat message for BOTH sides (owner round-19 খ) — only offered
+ * for messages the user SENT. Deleting the doc removes it from both phones
+ * in real time (the pairs listener fires on delete).
+ */
+export async function fbDeleteChat(
+  pairKey: string,
+  msgId: string,
+  serverCfg?: Partial<ServerCfg> | null
+): Promise<ChatDeleteResult> {
+  const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return isOffline ? "failed-offline" : "failed-other";
+  try {
+    const { doc, deleteDoc } = await import("firebase/firestore");
+    await deleteDoc(doc(fsDb!, "pairs", pairKey, "notes", msgId));
+    return "deleted";
+  } catch {
+    return isOffline ? "failed-offline" : "failed-other";
+  }
+}
+
+/**
+ * Clear the WHOLE conversation with the v5.0 permission rules built in
+ * (owner round-19): the messages *I* sent are deleted from BOTH phones;
+ * the friend's messages are only hidden from MY phone (arrayUnion me on
+ * hiddenBy — they stay untouched on the friend's side). One writeBatch —
+ * Firestore allows 500 ops per batch; only kind:"chat" docs are touched.
+ */
+export async function fbClearChat(
+  pairKey: string,
+  msgs: ChatMsg[],
+  myUid: string,
+  serverCfg?: Partial<ServerCfg> | null
+): Promise<{ deleted: number; hidden: number }> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured || !msgs.length) return { deleted: 0, hidden: 0 };
+  const out = { deleted: 0, hidden: 0 };
+  try {
+    const { doc, writeBatch, arrayUnion } = await import("firebase/firestore");
+    const items = msgs.filter((m) => (m as unknown as { kind?: string }).kind === "chat");
+    for (let i = 0; i < items.length; i += 400) {
+      const batch = writeBatch(fsDb!);
+      for (const m of items.slice(i, i + 400)) {
+        const ref = doc(fsDb!, "pairs", pairKey, "notes", m.id);
+        if (m.from === myUid) {
+          batch.delete(ref); // mine → both phones
+          out.deleted++;
+        } else {
+          batch.update(ref, { hiddenBy: arrayUnion(myUid) }); // theirs → my phone only
+          out.hidden++;
+        }
+      }
+      await batch.commit();
+    }
+  } catch {
+    /* partial failure — return what we got; the listener resyncs the rest */
+  }
+  return out;
+}
+
 /**
  * The state the background OhKeepAliveService listener page needs — the MAIN
  * app writes it to localStorage (same https://localhost origin → the headless
@@ -651,7 +749,7 @@ export function chatQueueSize(): number { return readQueue().length; }
 export function writeChatListenerState(data: {
   cfg: AnyRec | null;
   myUid: string;
-  pairs: { key: string; name: string }[];
+  pairs: { key: string; name: string; uid?: string }[];
   lang: string;
   reelsLimitMin: number;
   reelsWarn: string;
@@ -781,6 +879,38 @@ export function listenNotes(
   };
 }
 
+// ==================== v5.0: PRESENCE (online/offline, green/red) ====================
+// Owner round-19: “বন্ধু অনলাইনে আছে কি না সেটি বোঝার জন্য একটি স্ট্যাটাস
+// ইন্ডিকেটর” — green = the user's app (or its headless background service)
+// REALLY holds a live connection to OUR server; red = no heartbeat within
+// the freshness window. The heartbeat is a tiny merge-write of
+// usersIndex/{uid}.lastSeen — done every 45s by the app while open AND by
+// the OhKeepAliveService listener page while the app is closed (owner:
+// “শুধু ইন্টারনেট চালু থাকলেই সব সময় অনলাইন দেখানো যাবে না — সার্ভারের
+// সঙ্গে প্রকৃত সংযোগ যাচাই হতে হবে”)। If the internet dies the writes
+// fail silently → lastSeen goes stale → every friend sees RED within the
+// 120s window — never stuck green for long after a disconnect.
+export const PRESENCE_ONLINE_MS = 120_000; // fresh heartbeat window
+
+/** Is a lastSeen timestamp “online” right now? */
+export function isPresenceOnline(lastSeen?: number | null, now = Date.now()): boolean {
+  return typeof lastSeen === "number" && lastSeen > 0 && now - lastSeen < PRESENCE_ONLINE_MS;
+}
+
+/** Heartbeat: merge-write usersIndex/{uid}.lastSeen (throttle at the caller). */
+export async function touchPresence(myUid: string, serverCfg?: Partial<ServerCfg> | null): Promise<boolean> {
+  if (!myUid) return false;
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return false;
+  try {
+    const { doc, setDoc } = await import("firebase/firestore");
+    await setDoc(doc(fsDb!, "usersIndex", myUid), { lastSeen: Date.now() }, { merge: true });
+    return true;
+  } catch {
+    return false; // offline / rules — the dot just goes red on its own
+  }
+}
+
 // ==================== AUTH: Email/Password + verification ====================
 
 export interface FbUser { uid: string; name: string; email: string; emailVerified: boolean; provider: "google" | "password" }
@@ -906,6 +1036,8 @@ export interface DaySummary {
   waterMl: number;
   waterGoalMl: number;
   reels: Record<string, number>;
+  // v5.0: precise per-app seconds (optional — old days lack it).
+  reelsSec?: Record<string, number>;
   reelsMin: number;
   dhikrTotal: number;
   meditationMin: number;
@@ -1099,4 +1231,162 @@ export function listenDay(uid: string, date: string, cb: (d: DaySummary | null) 
     cancelled = true;
     try { if (realUnsub) realUnsub(); } catch { /* ignore */ }
   };
+}
+
+// ==================== v5.1: in-app ADMIN STATUS (round-21) ====================
+// The GitHub-Pages status panel is RETIRED — the owner asked for everything
+// INSIDE the app (“অ্যাপসেই অ্যাডমিন প্যানেল দিয়ে দাও, আলাদা করার দরকার নাই”).
+// Data source is the OWNER'S OWN Firebase, read with the normal signed-in
+// client (the v4.0 rules allow auth read on usersIndex + backups), so this
+// works in the APK with NO server and NO admin-sdk-key — anywhere.
+// NO passwords or login credentials are ever shown: name, friends, video
+// time and habit status only (same privacy line the old panel kept).
+
+export interface FbStatusUser {
+  uid: string;
+  name: string;
+  email: string;
+  provider: "google" | "password";
+  banned: boolean;
+  lastSeen: number | null; // presence heartbeat (usersIndex.lastSeen)
+  online: boolean;
+  friendsCount: number;
+  friendNames: string[];
+  days: number; // logged day count (backups.days)
+  streak: number;
+  points: number;
+  lastActive: number | null; // backups.updatedAt (ms)
+  videoToday: Record<string, number> | null; // per-app minutes (days[today].reels)
+  videoTotalMin: number | null; // days[today].reelsMin
+  habitsToday: {
+    prayers: number;
+    waterMl: number;
+    dhikr: number;
+    meditationMin: number;
+    focusMin: number;
+  } | null;
+}
+
+export interface FbStatusSnapshot {
+  stats: {
+    total: number;
+    google: number;
+    email: number;
+    banned: number;
+    activeToday: number;
+    onlineNow: number;
+  };
+  users: FbStatusUser[];
+  app: { latestVersion: string | null; changelog: string | null };
+  fetchedAt: number;
+}
+
+/** Read the whole user status snapshot from Firestore (client SDK).
+ *  Requires a signed-in account (rules). Returns null when Firebase isn't
+ *  reachable — the panel then shows its offline card. */
+export async function fbReadStatus(serverCfg?: Partial<ServerCfg> | null): Promise<FbStatusSnapshot | null> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return null;
+  try {
+    const { collection, getDocs, doc, getDoc } = await import("firebase/firestore");
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const now = Date.now();
+    const ONLINE_MS = 120_000; // same freshness window as presence (PRESENCE_ONLINE_MS)
+
+    // 1) every profile
+    const profiles = await getDocs(collection(fsDb!, "usersIndex"));
+    const users: FbStatusUser[] = profiles.docs.map((d) => {
+      const p = d.data() as Record<string, unknown>;
+      const friends = Array.isArray(p.friends) ? (p.friends as { name?: string }[]) : [];
+      const lastSeen = typeof p.lastSeen === "number" && p.lastSeen > 0 ? p.lastSeen : null;
+      return {
+        uid: d.id,
+        name: String(p.name || ""),
+        email: String(p.email || ""),
+        provider: p.provider === "google" ? "google" : "password",
+        banned: Boolean(p.banned),
+        lastSeen,
+        online: lastSeen !== null && now - lastSeen < ONLINE_MS,
+        friendsCount: friends.length,
+        friendNames: friends.map((f) => String(f?.name || "")).filter(Boolean).slice(0, 20),
+        days: 0,
+        streak: 0,
+        points: 0,
+        lastActive: null,
+        videoToday: null,
+        videoTotalMin: null,
+        habitsToday: null,
+      };
+    });
+
+    // 2) each user's backup (days/streak/points) — batched in parallel chunks
+    const CHUNK = 10;
+    for (let i = 0; i < users.length; i += CHUNK) {
+      const slice = users.slice(i, i + CHUNK);
+      await Promise.all(
+        slice.map(async (u) => {
+          try {
+            const snap = await getDoc(doc(fsDb!, "backups", u.uid));
+            if (!snap.exists()) return;
+            const data = snap.data() as {
+              days?: Record<string, DaySummary>;
+              state?: { points?: number; logs?: Record<string, { streak?: number }> };
+              updatedAt?: { toDate?: () => Date } | number;
+            };
+            const days = data.days || {};
+            u.days = Object.keys(days).length;
+            const d = days[todayKey];
+            if (d) {
+              u.streak = Number(d.streak) || 0;
+              u.points = Number(d.points) || 0;
+              u.videoTotalMin = typeof d.reelsMin === "number" ? d.reelsMin : null;
+              const reels = (d.reels || {}) as Record<string, number>;
+              if (reels && typeof reels === "object" && Object.keys(reels).length) u.videoToday = reels;
+              u.habitsToday = {
+                prayers: Object.values(d.prayers || {}).filter(Boolean).length,
+                waterMl: Number(d.waterMl) || 0,
+                dhikr: Number(d.dhikrTotal) || 0,
+                meditationMin: Number(d.meditationMin) || 0,
+                focusMin: Number(d.focusMin) || 0,
+              };
+            } else if (typeof data.state?.points === "number") {
+              u.points = data.state.points;
+            }
+            const ua = data.updatedAt;
+            if (ua && typeof ua === "object" && typeof ua.toDate === "function") u.lastActive = ua.toDate().getTime();
+            else if (typeof ua === "number") u.lastActive = ua;
+          } catch {
+            /* one bad doc never kills the snapshot */
+          }
+        })
+      );
+    }
+
+    // 3) app version line (from app/meta — public read)
+    let app: FbStatusSnapshot["app"] = { latestVersion: null, changelog: null };
+    try {
+      const raw = await readRawMeta();
+      const cfg = (raw?.cfg || {}) as { latestVersion?: string; changelog?: string };
+      app = { latestVersion: cfg.latestVersion || null, changelog: cfg.changelog || null };
+    } catch {
+      /* version line is optional */
+    }
+
+    return {
+      stats: {
+        total: users.length,
+        google: users.filter((u) => u.provider === "google").length,
+        email: users.filter((u) => u.provider === "password").length,
+        banned: users.filter((u) => u.banned).length,
+        activeToday: users.filter((u) => u.habitsToday !== null).length,
+        onlineNow: users.filter((u) => u.online).length,
+      },
+      users,
+      app,
+      fetchedAt: Date.now(),
+    };
+  } catch (e) {
+    console.warn("[fbReadStatus]", (e as Error)?.message || e);
+    return null;
+  }
 }

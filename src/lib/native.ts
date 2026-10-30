@@ -24,6 +24,21 @@ export interface UsageResult {
   shortsYt: number;
   shortsFb: number;
   shortsIg: number;
+  // v5.0 (owner round-19): the owner's video-app list as separate buckets —
+  // এক্স, কুকু টিভি, মোজ + BD drama/OTT apps (minutes, legacy compat).
+  x?: number;
+  kukutv?: number;
+  moj?: number;
+  chorki?: number;
+  hoichoi?: number;
+  bongo?: number;
+  bioscope?: number;
+  toffee?: number;
+  /** v5.0: PRECISE per-app SECONDS (appid → seconds) + the day total — the
+   *  display source for the “৪৫ সেকেন্ড / ৫ মিনিট / ১ ঘণ্টা ১০ মিনিট”
+   *  format. Undefined on builds without the new engine. */
+  apps?: Record<string, number>;
+  appsTotal?: number;
 }
 
 export function isNative(): boolean {
@@ -50,18 +65,31 @@ export async function nativeGetVideoUsage(): Promise<UsageResult | null> {
   if (!p) return null;
   try {
     const res = await p.getVideoUsage();
+    const num = (v: unknown): number => Number(v) || 0;
+    const numOrU = (v: unknown): number | undefined => (v === undefined || v === null ? undefined : Number(v) || 0);
     return {
-      facebook: Number(res?.facebook) || 0,
-      ytshorts: Number(res?.ytshorts) || 0,
-      ytlong: Number(res?.ytlong) || 0,
-      tiktok: Number(res?.tiktok) || 0,
-      instagram: Number(res?.instagram) || 0,
-      other: Number(res?.other) || 0,
+      facebook: num(res?.facebook),
+      ytshorts: num(res?.ytshorts),
+      ytlong: num(res?.ytlong),
+      tiktok: num(res?.tiktok),
+      instagram: num(res?.instagram),
+      other: num(res?.other),
       granted: Boolean(res?.granted),
-      shortsCount: Number(res?.shortsCount) || 0,
-      shortsYt: Number(res?.shortsYt) || 0,
-      shortsFb: Number(res?.shortsFb) || 0,
-      shortsIg: Number(res?.shortsIg) || 0,
+      shortsCount: num(res?.shortsCount),
+      shortsYt: num(res?.shortsYt),
+      shortsFb: num(res?.shortsFb),
+      shortsIg: num(res?.shortsIg),
+      // v5.0: the new buckets + the precise seconds map (optional).
+      x: numOrU(res?.x),
+      kukutv: numOrU(res?.kukutv),
+      moj: numOrU(res?.moj),
+      chorki: numOrU(res?.chorki),
+      hoichoi: numOrU(res?.hoichoi),
+      bongo: numOrU(res?.bongo),
+      bioscope: numOrU(res?.bioscope),
+      toffee: numOrU(res?.toffee),
+      apps: res?.apps && typeof res.apps === "object" ? (res.apps as Record<string, number>) : undefined,
+      appsTotal: numOrU(res?.appsTotal),
     };
   } catch {
     return null;
@@ -788,9 +816,29 @@ export async function nativeChatServiceRunning(): Promise<boolean> {
   if (!p?.status) return false;
   try {
     const r = await p.status();
+    // v5.0: `running` now means ALIVE — the service writes a 30s heartbeat
+    // (KEY_LAST_BEAT) and the plugin only reports true while the beat is
+    // fresh (≤ 90s). A service Android killed silently no longer counts as
+    // running, so the in-app watchdog takes the notification over.
     return Boolean(r?.running);
   } catch {
     return false;
+  }
+}
+
+/** v5.0: consume the pending chat deep link (a background notification tap —
+ * MainActivity saved the friend's uid+name from the PendingIntent extras).
+ * Returns {uid, name} once, then null until the next tap. */
+export async function nativePendingOpenChat(): Promise<{ uid: string; name: string } | null> {
+  if (!isNative()) return null;
+  const p = chatPlugin();
+  if (!p?.pendingOpenChat) return null;
+  try {
+    const r = await p.pendingOpenChat();
+    if (r && r.uid) return { uid: String(r.uid), name: String(r.name || "") };
+    return null;
+  } catch {
+    return null;
   }
 }
 

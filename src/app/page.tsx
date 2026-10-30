@@ -10,7 +10,7 @@ import FriendsTab from "@/components/FriendsTab";
 import SettingsTab from "@/components/SettingsTab";
 import AuthGate, { NameCapture } from "@/components/AuthGate";
 import AlarmOverlay, { ActiveAlarm } from "@/components/AlarmOverlay";
-import ChatScreen, { ChatWatchdog } from "@/components/ChatScreen";
+import ChatScreen, { ChatHeadsUp, ChatWatchdog } from "@/components/ChatScreen";
 import AdminPanel from "@/components/AdminPanel";
 import PermissionSetupFlow, { PERM_FLOW_KEY } from "@/components/PermissionSetupFlow";
 import { AtGlobalScripts } from "@/components/AdsBanner";
@@ -19,7 +19,7 @@ import { getLog, todayStr } from "@/lib/types";
 import { pushDay, ensureProfile, fbIsBanned, fbSignOut, DaySummary } from "@/lib/cloud";
 import { APP_VERSION } from "@/lib/version";
 import { banglaNameFromEnglish } from "@/lib/translit";
-import { makeT } from "@/lib/i18n";
+import { deviceLang, makeT } from "@/lib/i18n";
 import { warmAudio, playChime } from "@/lib/audio";
 import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm, AlarmSyncResult, nativeScheduleExactAlarms, nativeCancelExactAlarms, nativeSetVoiceGender, nativeExactPending, nativeConsumeAlarmLaunch, ExactAlarmSpec } from "@/lib/native";
 import { waterAlarmTimes, shiftTime, randomMealMusic, PRAYER_KEYS, dateAtHM, addDays } from "@/lib/types";
@@ -63,15 +63,21 @@ function BottomNav({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
 }
 
 function Splash() {
-  const { t, state } = useStore();
+  // v5.0 HYDRATION SAFETY: the server (and the exported static HTML) may be
+  // produced with a DIFFERENT navigator locale than the user's device. This
+  // splash is the only thing rendered during hydration, so it uses FIXED
+  // brand literals (no t()) — the hydration output is identical on every
+  // device, and the device language kicks in on the very next render.
+  const { state } = useStore();
+  void state;
   return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-gradient-to-b from-background to-primary/10">
       <div className="w-28 h-28 rounded-[30px] overflow-hidden shadow-2xl shadow-primary/30 border border-primary/20 logo-pop">
         { }
         <img src="/icon-512.png" alt="Our Habit" className="w-full h-full object-cover" />
       </div>
-      <div className="text-2xl font-extrabold logo-fade">{t("appName")}</div>
-      <div className="text-xs text-muted-foreground logo-fade">{t("tagline")}</div>
+      <div className="text-2xl font-extrabold logo-fade">আওয়ার হ্যাবিট</div>
+      <div className="text-xs text-muted-foreground logo-fade">Our Habit — একসাথে ভালো অভ্যাস</div>
     </div>
   );
 }
@@ -304,7 +310,7 @@ function Shell() {
         state.settings.mealPreAlert,
         state.settings.azanSound, // v2.8: azan recitation changes the alarm sound
         state.settings.name,     // v2.9: the name-call text follows the name
-        state.settings.language, // v2.9: TTS language follows the app language
+        deviceLang(), // v5.0: follows the DEVICE language
       ])
     : "";
 
@@ -433,7 +439,9 @@ function Shell() {
     const namazSlots: { time: string; pk: string }[] = [];
     (["fajr", "dhuhr", "asr", "maghrib", "isha"] as const).forEach((pk) => {
       const c = s.settings.adhanAlerts?.[pk];
-      if (c?.on) namazSlots.push({ time: shiftTime(c.time, 15), pk });
+      // v5.0 (owner round-19): মাগরিবের ডাক আজানের ~৩ মিনিট পরে — ১৫ মিনিটের
+      // নিয়ম মাগরিবের ক্ষেত্রে প্রযোজ্য নয়; বাকি সব নামাজ ~১৫ মিনিট পরে।
+      if (c?.on) namazSlots.push({ time: shiftTime(c.time, pk === "maghrib" ? 3 : 15), pk });
     });
     if (s.settings.fajrAlarm?.on) namazSlots.push({ time: shiftTime(s.settings.fajrAlarm.time, 15), pk: "fajr" });
     const namazTaken: number[] = [];
@@ -468,8 +476,11 @@ function Shell() {
           `🍽 ${t(`meal_${mk}`)}`,
           t("mealAlarmMsg"),
           randomMealMusic(),
-          norm(spokenName ? `${spokenName}, ${tv(`meal_${mk}`)} ${tv("speakMeal")}` : ""),
-          norm(spokenNameEn ? `${spokenNameEn}, ${te(`meal_${mk}`)} ${te("speakMeal")}` : "")
+          // v5.0 (owner round-19): the exact dictated sentence — “তোমার এখন খাবার
+          // খাওয়ার সময় হয়েছে। সময়মতো খাওয়া-দাওয়া করে নাও।” One standalone
+          // sentence (no breakfast/lunch/dinner prefix).
+          named("speakMealFull"),
+          namedEn("speakMealFull")
         );
         // v2.4: 15-min EARLY heads-up — spoken with the name
         if (s.settings.mealPreAlert !== false)
@@ -581,7 +592,7 @@ function Shell() {
     const s = stateRef.current;
     if (!s?.account?.verified) return;
     void nativeSetVoiceGender(s.settings.gender === "male" ? "male" : "female");
-  }, [ready, state.settings.gender, state.settings.language, state.account?.verified]);
+  }, [ready, state.settings.gender, state.account?.verified]);
 
   // ---------- v2.8: the alarm that LAUNCHED the app (full-screen azan) ----------
   // When the exact alarm fires with the screen off/locked, Android launches
@@ -830,6 +841,9 @@ function Shell() {
         waterMl: log.waterMl,
         waterGoalMl: s.settings.waterGoalMl,
         reels: log.reels,
+        // v5.0: precise per-app seconds ride along in the day summary (the
+        // status panel + friends view can show “৪৫ সেকেন্ড”-style precision).
+        reelsSec: log.reelsSec,
         reelsMin: log.reelsMin ?? 0,
         dhikrTotal: dhikrTotal(log),
         meditationMin: log.meditationMin,
@@ -870,6 +884,9 @@ function Shell() {
           {/* v2.9: messenger-style chat (opens from Friends/Notes via
               openChat) + the background chat/reels watchdog engine */}
           <ChatScreen />
+          {/* v4.3: messenger-style heads-up popup — "টুট" sound + banner
+              when a message arrives while the app is open (tap → open chat) */}
+          <ChatHeadsUp />
           <AtGlobalScripts />
           {adminOpen ? <AdminPanel onClose={() => setAdminOpen(false)} /> : null}
         </div>

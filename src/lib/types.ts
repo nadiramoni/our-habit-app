@@ -1,8 +1,29 @@
+// v5.0: defaultSettings() reads the DEVICE language (bn* → বাংলা, else
+// English) for both the UI language and the alarm VOICE. i18n's import of
+// types is TYPE-ONLY (erased at runtime), so this value import is safe.
+import { deviceLang } from "./i18n";
+
 export type PrayerKey = "fajr" | "dhuhr" | "asr" | "maghrib" | "isha";
 
 export const PRAYER_KEYS: PrayerKey[] = ["fajr", "dhuhr", "asr", "maghrib", "isha"];
 
-export type ReelApp = "facebook" | "ytshorts" | "ytlong" | "tiktok" | "instagram" | "other";
+export type ReelApp =
+  | "facebook"
+  | "ytshorts"
+  | "ytlong"
+  | "tiktok"
+  | "instagram"
+  // v5.0 (owner round-19): the owner's video-app list — এক্স, কুকু টিভি,
+  // মোজ + BD drama/OTT apps. Package names verified from the Play Store.
+  | "x"
+  | "kukutv"
+  | "moj"
+  | "chorki"
+  | "hoichoi"
+  | "bongo"
+  | "bioscope"
+  | "toffee"
+  | "other";
 
 export const REEL_APPS: { id: ReelApp; icon: string; short: boolean }[] = [
   { id: "facebook", icon: "📘", short: true },
@@ -10,6 +31,14 @@ export const REEL_APPS: { id: ReelApp; icon: string; short: boolean }[] = [
   { id: "ytlong", icon: "📺", short: false },
   { id: "tiktok", icon: "🎵", short: true },
   { id: "instagram", icon: "📸", short: true },
+  { id: "x", icon: "✖️", short: true },
+  { id: "kukutv", icon: "🍿", short: true },
+  { id: "moj", icon: "🎬", short: true },
+  { id: "chorki", icon: "🎥", short: false },
+  { id: "hoichoi", icon: "🎭", short: false },
+  { id: "bongo", icon: "🦎", short: false },
+  { id: "bioscope", icon: "🎞️", short: false },
+  { id: "toffee", icon: "🍬", short: false },
   { id: "other", icon: "📱", short: true },
 ];
 
@@ -23,6 +52,10 @@ export interface DayLog {
   waterMl: number;
   reelsMin: number | null; // null = not logged today; total across apps
   reels: Record<ReelApp, number>; // minutes per video platform (auto-track in APK phase)
+  // v5.0: SECONDS per video app (precise display source — 45s shows as
+  // "৪৫ সেকেন্ড", not a truncated 0 min). Written by auto-track from the
+  // OS; old days simply lack the field and fall back to minutes.
+  reelsSec?: Record<string, number>;
   dhikr: Record<string, number>; // dhikrId -> count today
   meditationMin: number;
   focusMin: number; // 25-min focus sessions completed today
@@ -316,7 +349,11 @@ export const DHIKRS: { id: string; ar: string; bn: string; en: string }[] = [
 ];
 
 export function emptyReels(): Record<ReelApp, number> {
-  return { facebook: 0, ytshorts: 0, ytlong: 0, tiktok: 0, instagram: 0, other: 0 };
+  return {
+    facebook: 0, ytshorts: 0, ytlong: 0, tiktok: 0, instagram: 0,
+    x: 0, kukutv: 0, moj: 0, chorki: 0, hoichoi: 0,
+    bongo: 0, bioscope: 0, toffee: 0, other: 0,
+  };
 }
 
 export function emptyLog(): DayLog {
@@ -341,12 +378,14 @@ export function emptyLog(): DayLog {
 export function defaultSettings(): AppSettings {
   return {
     name: "",
-    language: "bn",
-    // v4.2 (owner round-17): the alarm VOICE speaks BANGLA by default again —
-    // the ORIGINAL system (নাম আগের মতো ডাকবে, কথাটা বলবে বাংলায়)। No Bangla
-    // TTS voice on the phone → auto-English fallback; English stays as an
-    // option in Settings → প্রোফাইল.
-    voiceLang: "bn",
+    // v5.0 (owner round-19): the language follows the DEVICE — bn* → বাংলা,
+    // anything else → English. The manual picker is gone from Settings; the
+    // stored value is only a legacy field (the UI reads deviceLang() now).
+    language: deviceLang(),
+    // v5.0: the alarm VOICE also starts on the DEVICE language for NEW
+    // installs (existing users keep their saved choice — Settings → প্রোফাইল
+    // still has the ডাক-ভাষা picker, so anyone can override it).
+    voiceLang: deviceLang(),
     theme: "dark",
     waterGoalMl: 3000,
     checkinTime: "21:00",

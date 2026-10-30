@@ -1,14 +1,16 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { useServerCfg } from "@/lib/cfg";
 import { Card, SectionTitle, ToggleRow } from "@/components/ui-bits";
 import { AtCfg, AtZone, ServerCfg } from "@/lib/types";
 import { extractScriptUrl } from "@/components/AdsBanner";
-import { mirrorMeta, readRawMeta, writeRawMeta, panelSaveCfg, PanelSaveResult } from "@/lib/cloud";
+import { mirrorMeta, readRawMeta, writeRawMeta, panelSaveCfg, PanelSaveResult, fbEmailSignIn, fbReadStatus, FbStatusSnapshot, FbStatusUser } from "@/lib/cloud";
 import { isNative } from "@/lib/native";
 import { APP_VERSION, APP_BUILD } from "@/lib/version";
+import { REEL_APPS } from "@/lib/types";
+import { deviceLang } from "@/lib/i18n";
 
 /**
  * v2.4: LIVE banner health — reads window.__atHealth (written by AdsBanner
@@ -338,10 +340,160 @@ function AtZoneRow({
   );
 }
 
+/**
+ * v5.1 (owner round-21): the IN-APP STATUS TAB — the retired GitHub-Pages
+ * status panel's successor, now living inside the admin panel itself
+ * (“অ্যাপসেই সব সিস্টেম দিয়ে দাও, আলাদা করার দরকার নাই”).
+ * Reads usersIndex + backups straight from the owner's Firebase with the
+ * signed-in client (rules allow it) — NO server, NO admin-sdk-key, so it
+ * works in the APK on any phone. Read-only view; every admin mutation stays
+ * in the ⚙️ সেটিংস tab (ads + app updates), exactly as before.
+ */
+function StatusTab() {
+  const { t } = useStore();
+  const [snap, setSnap] = useState<FbStatusSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    const s = await fbReadStatus();
+    setSnap(s);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const iv = setInterval(() => void load(), 30_000); // auto-refresh 30s
+    return () => clearInterval(iv);
+  }, [load]);
+
+  const ago = (ms: number | null) => {
+    if (!ms) return t("admNever");
+    const s = Math.max(0, Date.now() - ms);
+    if (s < 60e3) return t("admJustNow");
+    if (s < 3600e3) return `${Math.floor(s / 60e3)} ${t("admMinAgo")}`;
+    if (s < 86400e3) return `${Math.floor(s / 3600e3)} ${t("admHourAgo")}`;
+    return `${Math.floor(s / 86400e3)} ${t("admDayAgo")}`;
+  };
+
+  const reelLabel = (id: string) => t(`reel_${id}`) || id;
+  const reelIcon = (id: string) => REEL_APPS.find((a) => a.id === id)?.icon || "📱";
+  // Bengali digits on Bengali devices — same as every other number in the app
+  const num = (n: number | string) => {
+    const s = String(n);
+    return deviceLang() === "bn" ? s.replace(/[0-9]/g, (d) => "০১২৩৪৫৬৭৮৯"[Number(d)]) : s;
+  };
+
+  const stat = (v: number, label: string, cls: string) => (
+    <div className="rounded-xl bg-secondary/60 border border-border p-2.5 text-center">
+      <div className={`text-xl font-extrabold ${cls}`}>{num(v)}</div>
+      <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">{label}</div>
+    </div>
+  );
+
+  const users = (snap?.users || []).slice().sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0) || String(a.name).localeCompare(String(b.name)));
+
+  return (
+    <div>
+      <Card className="mb-4">
+        <SectionTitle title={`👥 ${t("admStatusTitle")}`} sub={t("admStatusSub")} />
+        {loading && !snap ? (
+          <p className="text-xs text-muted-foreground py-4 text-center">…</p>
+        ) : !snap ? (
+          <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-3 mb-2">
+            <p className="text-xs text-destructive font-semibold">📴 {t("admStatusOffline")}</p>
+            <button type="button" onClick={() => void load()} className="mt-2 rounded-xl bg-secondary px-4 py-2 text-xs font-bold">
+              {t("admRefresh")}
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 gap-2">
+              {stat(snap.stats.total, t("admStatTotal"), "text-primary")}
+              {stat(snap.stats.google, t("admStatGoogle"), "text-amber-500")}
+              {stat(snap.stats.email, t("admStatEmail"), "text-amber-500")}
+              {stat(snap.stats.banned, t("admStatBanned"), "text-destructive")}
+              {stat(snap.stats.activeToday, t("admStatActive"), "text-primary")}
+              {stat(snap.stats.onlineNow, t("admStatOnline"), "text-green-500")}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">
+              🟢 = {t("admOnline")} · 🔴 = {t("admOffline")} · {t("admAutoRefresh")}
+              {snap.app.latestVersion ? ` · v${snap.app.latestVersion}` : ""}
+            </p>
+            <button type="button" onClick={() => void load()} className="mt-2 rounded-xl bg-secondary px-4 py-2 text-xs font-bold">
+              {t("admRefresh")}
+            </button>
+          </>
+        )}
+      </Card>
+
+      {users.length === 0 && !loading ? (
+        <Card><p className="text-xs text-muted-foreground text-center py-3">{t("admNoUsers")}</p></Card>
+      ) : null}
+
+      {users.map((u: FbStatusUser) => (
+        <Card key={u.uid} className="mb-3">
+          <div className="flex items-start justify-between gap-2 mb-1.5">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary/25 to-primary/5 border border-primary/30 flex items-center justify-center text-sm font-extrabold text-primary shrink-0">
+                {(u.name || "?").slice(0, 1).toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-bold truncate leading-tight">
+                  {u.name || "—"}
+                  {u.banned ? <span className="ml-1.5 text-[9px] font-extrabold text-destructive border border-destructive/50 rounded-full px-1.5 py-0.5 align-middle">ব্যান</span> : null}
+                </div>
+                <div className="text-[10px] text-muted-foreground truncate">{u.email || ""}</div>
+              </div>
+            </div>
+            <div className="text-[9px] font-bold rounded-full border border-border px-2 py-0.5 shrink-0 text-muted-foreground">
+              {u.provider === "google" ? "🔵 Google" : "✉️ ইমেইল"}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 text-[11px] mb-2">
+            <span className="inline-block w-2 h-2 rounded-full" style={{ background: u.online ? "#4ade80" : "#f87171" }} />
+            <b>{u.online ? t("admOnline") : t("admOffline")}</b>
+            <span className="text-muted-foreground">· {t("admLastSeen")}: {ago(u.lastSeen)}</span>
+          </div>
+
+          <div className="text-[11px] leading-relaxed space-y-0.5">
+            <div className="text-muted-foreground">
+              👥 {t("admFriendsOf")} ({num(u.friendsCount)}): {u.friendNames.length ? u.friendNames.join(" · ") : "—"}
+            </div>
+            <div>
+              {t("admUserVideo")}: {" "}
+              {u.videoToday && Object.values(u.videoToday).some((v) => v > 0) ? (
+                Object.entries(u.videoToday)
+                  .filter(([, v]) => v > 0)
+                  .map(([k, v]) => `${reelIcon(k)} ${reelLabel(k)} ${num(v)} ${t("min")}`)
+                  .join(" · ")
+              ) : (
+                <span className="text-muted-foreground">{t("admVideoNone")}</span>
+              )}
+            </div>
+            {u.habitsToday ? (
+              <div>
+                {t("admUserHabits")}: 🕌 {num(u.habitsToday.prayers)}/{num(5)} · 💧 {num(u.habitsToday.waterMl)} {t("admMlUnit")} · 📿 {num(u.habitsToday.dhikr)} · 🔥 {num(u.streak)} {t("days")} · ⭐ {num(u.points)}
+              </div>
+            ) : (
+              <div className="text-muted-foreground">{t("admUserHabits")}: —</div>
+            )}
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
 function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
   const { t } = useStore();
   const { cfg, loaded, refresh } = useServerCfg();
   const [draft, setDraft] = useState<ServerCfg>(cfg);
+  // v5.1 (owner round-21): the admin panel now has TWO tabs — 📊 স্ট্যাটাস
+  // (the retired GitHub-Pages panel, now read-only inside the app) and ⚙️
+  // সেটিংস (ads + Firebase + app updates + PIN — everything it always had).
+  const [tab, setTab] = useState<"status" | "settings">("status");
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -461,6 +613,28 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
           </button>
         </div>
 
+        {/* v5.1: the two admin tabs */}
+        <div className="flex gap-2 mb-4">
+          <button
+            type="button"
+            onClick={() => setTab("status")}
+            className={`flex-1 rounded-xl py-2.5 text-sm font-bold border min-h-[44px] ${tab === "status" ? "bg-primary text-primary-foreground border-primary" : "bg-secondary text-foreground border-border"}`}
+          >
+            {t("admTabStatus")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("settings")}
+            className={`flex-1 rounded-xl py-2.5 text-sm font-bold border min-h-[44px] ${tab === "settings" ? "bg-primary text-primary-foreground border-primary" : "bg-secondary text-foreground border-border"}`}
+          >
+            {t("admTabSettings")}
+          </button>
+        </div>
+
+        {tab === "status" ? (
+          <StatusTab />
+        ) : (
+          <>
         {/* ---- Ads ---- */}
         <Card className="mb-4">
           <SectionTitle title={`💰 ${t("adsSection")}`} sub={t("adsSub")} />
@@ -616,6 +790,9 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
             ⏳ কনফিগ লোড হচ্ছে… লোড শেষ হলে Save চালু হবে (খালি কনফিগ সেভ হওয়া আটকানো হলো)
           </p>
         ) : null}
+          </>
+        )}
+        {tab === "settings" ? (
         <div className="fixed bottom-0 left-0 right-0 p-4 bg-background/95 backdrop-blur border-t border-border" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 16px)" }}>
           <div className="max-w-md mx-auto">
             <button
@@ -628,6 +805,162 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
             </button>
           </div>
         </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * v5.0 (owner round-19, sections 10–11): SERVER-LEVEL admin verification.
+ * The PIN alone is NEVER enough — after the PIN gate, the signed-in account
+ * is checked against the SERVER-side admin record (app/meta.adminUid, the
+ * same claim the Firestore rules enforce on every cfg write):
+ *   • match (or no claim yet — first-run setup) → the panel opens;
+ *   • no match → an inline “sign in as admin” card (email+password) — so the
+ *     owner can open the FULL panel from ANY phone (a friend's phone too);
+ *     after finishing they sign out and the friend logs back in.
+ * A random visitor with the PIN gets stuck here: the panel never opens and
+ * Firestore rules deny every write anyway.
+ */
+function AdminVerify({ onPass, onClose }: { onPass: () => void; onClose: () => void }) {
+  const { state, t } = useStore();
+  const { cfg } = useServerCfg();
+  const acc = state.account;
+  // live account ref — after fbEmailSignIn the store swaps the account
+  // asynchronously; signIn() must read the LATEST value, not its closure.
+  const accRef = useRef(acc);
+  accRef.current = acc;
+  const [holder, setHolder] = useState<{ uid: string; email: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      // DEV-ONLY shortcut (v5.1): bun run dev + the local flag lets a
+      // signed-in dev skip the adminUid match — needed to e2e-test the panel
+      // body on the owner's REAL Firebase, where the adminUid claim is the
+      // owner's own account. Inert everywhere else: production builds bake
+      // NODE_ENV=production, so the guard never passes in the APK or web.
+      try {
+        if (process.env.NODE_ENV === "development" && typeof window !== "undefined" && localStorage.getItem("__oh_dev_admin_verify_skip") === "1") {
+          onPass();
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+      try {
+        const raw = await readRawMeta();
+        const adminUid = (raw?.adminUid as string) || "";
+        const adminEmail = (raw?.adminEmail as string) || "";
+        if (!alive) return;
+        if (!adminUid) {
+          onPass(); // first run — no claim yet; the first save claims it
+          return;
+        }
+        if (adminUid === acc?.uid) {
+          onPass(); // the signed-in account IS the server-side admin
+          return;
+        }
+        setHolder({ uid: adminUid, email: adminEmail });
+        setLoading(false);
+      } catch {
+        if (alive) { setErr(t("error")); setLoading(false); }
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const signIn = async () => {
+    if (!email.trim() || !pass) return;
+    setErr("");
+    setBusy(true);
+    const r = await fbEmailSignIn(email.trim(), pass, cfg);
+    setBusy(false);
+    if (!r.ok) {
+      setErr(t("admVerifyErr"));
+      return;
+    }
+    const raw = await readRawMeta();
+    const adminUid = (raw?.adminUid as string) || "";
+    if (!adminUid) {
+      onPass(); // no claim yet — the first save claims admin for this account
+      return;
+    }
+    // Signed in with the ADMIN's own email+password → Firebase Auth itself
+    // verified possession of the admin credential — server-level check passed.
+    if (holder && email.trim().toLowerCase() === (holder.email || "").toLowerCase()) {
+      onPass();
+      return;
+    }
+    // Different email: wait for the store to swap the account, then compare
+    // the new signed-in uid against the server record.
+    for (let i = 0; i < 10; i++) {
+      await new Promise((res) => setTimeout(res, 500));
+      if (accRef.current?.uid === adminUid) {
+        onPass();
+        return;
+      }
+    }
+    setErr(t("admVerifyWrong"));
+  };
+
+  if (loading) {
+    return (
+      <div className="fixed inset-0 z-[90] bg-background flex flex-col items-center justify-center gap-3 p-6">
+        <div className="w-16 h-16 rounded-3xl bg-primary/15 border border-primary/30 flex items-center justify-center text-3xl">🛡️</div>
+        <p className="text-xs text-muted-foreground">{t("admVerifySub")}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-[90] bg-background flex flex-col items-center justify-center gap-4 p-6 overflow-y-auto">
+      <div className="w-full max-w-sm">
+        <div className="w-16 h-16 mx-auto rounded-3xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-3xl mb-3">🛡️</div>
+        <h2 className="text-lg font-extrabold text-center">{t("admVerifyTitle")}</h2>
+        <p className="text-xs text-muted-foreground text-center mt-1 mb-3">{t("admVerifySub")}</p>
+
+        <div className="rounded-xl border border-border bg-secondary/50 p-3 mb-3 text-xs space-y-1.5">
+          <div>🔑 {t("admVerifyHolder")}: <b>{holder?.email || "—"}</b></div>
+          <div>👤 {t("admVerifyCurAcc")}: <b>{acc?.email || "—"}</b></div>
+          <div className="text-muted-foreground">{t("admVerifyNeedSignIn")}</div>
+        </div>
+
+        <input
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="admin@email.com"
+          type="email"
+          className="w-full bg-muted rounded-xl px-4 py-3 text-sm border border-border outline-none focus:ring-1 focus:ring-ring mb-2"
+        />
+        <input
+          value={pass}
+          onChange={(e) => setPass(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && void signIn()}
+          placeholder="পাসওয়ার্ড"
+          type="password"
+          className="w-full bg-muted rounded-xl px-4 py-3 text-sm border border-border outline-none focus:ring-1 focus:ring-ring mb-2"
+        />
+        {err ? <p className="text-xs text-destructive mb-2">⚠️ {err}</p> : null}
+        <button
+          type="button"
+          onClick={() => void signIn()}
+          disabled={busy || !email.trim() || !pass}
+          className="w-full rounded-xl bg-primary text-primary-foreground text-sm font-bold py-3 min-h-[48px] disabled:opacity-50 mb-2"
+        >
+          {busy ? "…" : t("admVerifySignIn")}
+        </button>
+        <p className="text-[10px] text-muted-foreground leading-relaxed">{t("admVerifyNote")}</p>
+        <button type="button" onClick={onClose} className="w-full rounded-xl bg-secondary py-2.5 text-sm font-bold mt-3">
+          ✕ {t("cancel")}
+        </button>
       </div>
     </div>
   );
@@ -635,7 +968,14 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
 
 export default function AdminPanel({ onClose }: { onClose: () => void }) {
   const [pin, setPin] = useState("");
-  const [unlocked, setUnlocked] = useState(false);
-  if (!unlocked) return <PinGate onUnlock={(p) => { setPin(p); setUnlocked(true); }} onClose={onClose} />;
+  const [stage, setStage] = useState<"pin" | "verify" | "open">("pin");
+  if (stage === "pin")
+    return (
+      <PinGate
+        onUnlock={(p) => { setPin(p); setStage("verify"); }}
+        onClose={onClose}
+      />
+    );
+  if (stage === "verify") return <AdminVerify onPass={() => setStage("open")} onClose={onClose} />;
   return <Panel onClose={onClose} pin={pin} />;
 }

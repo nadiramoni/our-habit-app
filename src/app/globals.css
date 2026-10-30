@@ -189,6 +189,23 @@
   animation: slide-up-in 0.28s ease-out;
 }
 
+/* v4.3: messenger-style chat heads-up popup — slides DOWN from the top */
+@keyframes slide-down-in {
+  0% { transform: translateY(-110%); opacity: 0; }
+  60% { transform: translateY(6%); opacity: 1; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+.animate-slide-down {
+  animation: slide-down-in 0.32s ease-out;
+}
+@keyframes pop-out-up {
+  0% { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(-110%); opacity: 0; }
+}
+.animate-pop-out {
+  animation: pop-out-up 0.25s ease-in forwards;
+}
+
 /* ---------- v1.4 dark-mode & card polish ---------- */
 /* Cards get a subtle inner gradient + softer shadow in dark mode */
 .dark .card-elevated {

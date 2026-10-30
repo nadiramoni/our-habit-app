@@ -13,11 +13,12 @@ import {
   randomMealMusic,
   todayStr,
   uid,
+  waterAlarmTimes,
+  WaterAlarmCfg,
 } from "./types";
-import { makeT, T } from "./i18n";
+import { deviceLang, makeT, T } from "./i18n";
 import { reminderOfTheDay } from "./logic";
 import { isNative } from "./native";
-import { waterAlarmTimes, WaterAlarmCfg } from "./types";
 
 const KEY = "ourhabit_v1";
 
@@ -159,7 +160,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           ...base,
           ...parsed,
           settings: mergeSettings(parsed.settings, base.settings),
-          logs: parsed.logs || {},
+          // v5.0 HARDENING: every persisted day log is re-normalized through
+          // emptyLog() on load — a partial/legacy/interrupted log can never
+          // crash any consumer (streaks, MonthCard, dayPoints…), exactly like
+          // updateLog has always guaranteed for freshly written logs.
+          logs: Object.fromEntries(
+            Object.entries(parsed.logs || {}).map(([d, l]) => [d, { ...emptyLog(), ...l }])
+          ),
           personalNotes: parsed.personalNotes || [],
           customHabits: Array.isArray(parsed.customHabits) ? parsed.customHabits : [],
           // legacy PIN accounts are retired — identity is Firebase now
@@ -248,7 +255,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.classList.toggle("dark", state.settings.theme === "dark");
   }, [state.settings.theme, ready]);
 
-  const t = useMemo(() => makeT(state.settings.language), [state.settings.language]);
+  const t = useMemo(() => makeT(deviceLang()), []); // v5.0: the language follows the DEVICE (owner round-19)
 
   const updateSettings = useCallback((patch: Partial<AppSettings>) => {
     setState((s) => {
@@ -541,7 +548,7 @@ export function checkReminders(
 function reminderText(state: AppState, t: T): string {
   try {
     const r = reminderOfTheDay(todayStr());
-    return state.settings.language === "bn" ? `${r.bn} — ${r.src}` : `${r.en} — ${r.src}`;
+    return deviceLang() === "bn" ? `${r.bn} — ${r.src}` : `${r.en} — ${r.src}`;
   } catch {
     return t("dailyReminder");
   }
