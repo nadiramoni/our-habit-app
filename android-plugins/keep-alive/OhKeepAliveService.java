@@ -30,9 +30,17 @@ import java.nio.charset.StandardCharsets;
  * OhKeepAliveService — v2.9: MESSENGER-LIKE CHAT NOTIFICATIONS (owner:
  * "মেসেঞ্জারের মত নোটিফিকেশন যাতে আসে — অ্যাপে ঢুকে দেখলে তো হবে না").
  *
- * A foreground service (specialUse) that keeps a HEADLESS WebView alive on
- * the SAME ORIGIN as the app (https://localhost). That WebView runs
- * chat-listener.html which:
+ * v4.0: A PLAIN BACKGROUND SERVICE — NO NOTIFICATION, EVER. Owner (round-15):
+ * "অ্যাপস থেকে বের হলে ওই খালি 'Our Habit' নোটিফিকেশনটা আসে — পুরাটাই
+ * উঠাই ফেলবা, এটা রাখবা না।" The old startForeground() call is GONE
+ * (Android forces a visible notification on every foreground service — the
+ * only way to show nothing is to not be a foreground service). The headless
+ * WebView + reels guard keep running; the app mutes its chat notifications
+ * while it is in the foreground. Android may stop the service when memory
+ * is needed — opening the app starts it again.
+ *
+ * Keeps a HEADLESS WebView alive on the SAME ORIGIN as the app
+ * (https://localhost). That WebView runs chat-listener.html which:
  *   • restores the Firebase session from the SHARED localStorage (the main
  *     app writes the session there via browserLocalPersistence — this is why
  *     v2.9 switched auth persistence from IndexedDB to localStorage)
@@ -40,8 +48,6 @@ import java.nio.charset.StandardCharsets;
  *     paired friend in real time
  *   • when a friend sends a message → OHNative.postNotification() → a REAL
  *     Android notification with sound + tap opens the chat
- * → messages reach the user like Messenger EVEN WHEN THE APP IS CLOSED
- *   (the process stays alive because this service is running).
  *
  * The service ALSO guards the daily Reels limit in the background: every
  * 5 minutes it reads today's Shorts/Reels minutes from UsageStatsManager
@@ -78,12 +84,9 @@ public class OhKeepAliveService extends Service {
 
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
-    // v3.3: KEEP the foreground service TYPE for Android 14+ compliance, but
-    // DON'T post any visible notification — the channel is set to IMPORTANCE_MIN
-    // (silent + hidden) and the notification is .setOngoing(false). So the user
-    // NEVER sees "চ্যাট ও রিমাইন্ডার নোটিফিকেশন চালু" anywhere.
-    // Owner: "অ্যাপসে ঢুকলেও দেখাবে না নোটিফিকেশন, বাইরেও দেখাবে না।"
-    startForegroundSilent();
+    // v4.0: NO startForeground — a foreground service ALWAYS shows a
+    // notification on modern Android; a plain background service shows
+    // NOTHING. The listener WebView + reels guard run the same either way.
     startListenerWebView();
     startReelsGuard();
     return START_STICKY;
@@ -285,63 +288,22 @@ public class OhKeepAliveService extends Service {
     }
   }
 
-  // ---------------- foreground plumbing ----------------
-
-  // v3.3: SILENT foreground — Android 14+ requires a foreground service to
-  // call startForeground within 5s of onStartCommand, BUT it does NOT require
-  // the notification to be visible. We use IMPORTANCE_MIN + setShowBadge(false)
-  // + a channel that does not appear in the status bar, so the user never sees
-  // the annoying "চ্যাট ও রিমাইন্ডার নোটিফিকেশন চালু" notification.
-  private void startForegroundSilent() {
-    try {
-      NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-      if (nm != null && nm.getNotificationChannel(CHANNEL_FGS) == null) {
-        NotificationChannel ch = new NotificationChannel(CHANNEL_FGS, "ব্যাকগ্রাউন্ড (silent)",
-            NotificationManager.IMPORTANCE_MIN);
-        ch.setDescription("Background service — silent, hidden from the user");
-        ch.setSound(null, null);
-        ch.enableVibration(false);
-        ch.setShowBadge(false);
-        ch.setLightColor(0);
-        ch.enableLights(false);
-        nm.createNotificationChannel(ch);
-      }
-      // Build a notification with NO content title/text and PRIORITY_MIN →
-      // Android shows NOTHING in the status bar / notification shade.
-      Notification n = new NotificationCompat.Builder(this, CHANNEL_FGS)
-          .setSmallIcon(android.R.drawable.stat_notify_chat)
-          .setPriority(NotificationCompat.PRIORITY_MIN)
-          .setOngoing(true)
-          .setContentTitle("")
-          .setContentText("")
-          .setVisibility(NotificationCompat.VISIBILITY_SECRET)
-          .build();
-      if (Build.VERSION.SDK_INT >= 34) {
-        startForeground(FGS_ID, n, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
-      } else {
-        startForeground(FGS_ID, n);
-      }
-    } catch (Exception ignored) {
-    }
-  }
-
-  private void startForegroundSafely() {
-    // Kept for reference but no longer called — use startForegroundSilent().
-    startForegroundSilent();
-  }
-
   // ---------------- lifecycle helpers ----------------
+  // v4.0: the whole foreground plumbing is GONE. A foreground service ALWAYS
+  // shows a notification on modern Android — the owner wants NO notification
+  // at all ("ওই খালি Our Habit নোটিফিকেশন পুরাটাই উঠাই ফেলবা, এটা রাখবা না"),
+  // so this is a plain background service now.
 
   static void start(Context ctx) {
     try {
       SharedPreferences sp = ctx.getSharedPreferences(PREFS, MODE_PRIVATE);
       sp.edit().putBoolean(KEY_ON, true).apply();
       Intent i = new Intent(ctx, OhKeepAliveService.class);
-      if (Build.VERSION.SDK_INT >= 26) {
-        ctx.startForegroundService(i);
-      } else {
-        ctx.startService(i);
-      }
+      // plain startService — NOT startForegroundService. Called from the app
+      // (foreground / onPause transition = allowed). If Android refuses
+      // (rare), it's swallowed here and the service returns on the next
+      // app open.
+      ctx.startService(i);
     } catch (Exception ignored) {
     }
   }

@@ -31,12 +31,14 @@ import android.speech.tts.Voice;
  * সাকিব... আমাকে ডাকবে — আনোয়ারুল সন সাকিব, তোমার পানি খাওয়ার সময় হইছে,
  * পানি খাও, স্বাস্থ্য ঠিক থাকবে").
  *
- * A foreground service (mediaPlayback) that SPEAKS the alert with the user's
- * REGISTERED FULL NAME through the Android TextToSpeech engine on the ALARM
- * audio stream — so the phone literally calls the user by name, exactly like
- * a person would. Right after the voice finishes, the real alarm notification
- * fires with its own channel sound (water music / meal music / chime) →
- * the experience is: the app CALLS you, THEN the alarm rings.
+ * v4.0: a PLAIN background service (NO startForeground → NO notification
+ * at all — owner killed the visible "আপনাকে ডাকা হচ্ছে…" one too). It SPEAKS
+ * the alert with the user's name through the Android TextToSpeech engine on
+ * the ALARM audio stream — so the phone literally calls the user by name,
+ * exactly like a person would. Right after the voice finishes, the real
+ * alarm notification fires with its own channel sound (water music /
+ * meal music / chime) → the experience is: the app CALLS you, THEN the
+ * alarm rings.
  *
  * Adhan alarms NEVER use this (owner: "আজানের ক্ষেত্রে না ভাই — আজানটা আজানি
  * দিবে") — they go straight to the full-screen azan + adhan audio.
@@ -84,7 +86,9 @@ public class AlarmSpeakService extends Service {
       final boolean notify = intent.getBooleanExtra(EXTRA_NOTIFY, false);
       final long firedAt = intent.getLongExtra(EXTRA_FIRED_AT, 0L);
 
-      startForegroundSafely(title == null ? "Our Habit" : title);
+      // v4.0: no startForeground — no notification of our own. The REAL
+      // alarm notification is posted AFTER the voice finishes
+      // (postAlarmNotification below).
 
       if (speak == null || speak.trim().isEmpty()) {
         if (notify) postAlarmNotification(title, body, sound, key, time, firedAt);
@@ -211,6 +215,13 @@ public class AlarmSpeakService extends Service {
     try {
       final String gender = ExactAlarmPlugin.storedVoiceGender(getApplicationContext());
       if (tts == null) return;
+      // v4.0: plus a soft pitch shift — most engines expose NO gendered
+      // Bangla voices, so this is what actually makes the difference
+      // audible (male = slightly deeper, female = slightly brighter).
+      try {
+        tts.setPitch("male".equals(gender) ? 0.9f : 1.05f);
+      } catch (Exception ignored) {
+      }
       java.util.Set<Voice> voices;
       try {
         voices = tts.getVoices();
@@ -344,32 +355,6 @@ public class AlarmSpeakService extends Service {
     }
   }
 
-  private void startForegroundSafely(String title) {
-    try {
-      NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-      if (nm != null && nm.getNotificationChannel(CHANNEL_ID) == null) {
-        NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "কথা বলা রিমাইন্ডার",
-            NotificationManager.IMPORTANCE_LOW);
-        ch.setSound(null, null);
-        ch.setShowBadge(false);
-        nm.createNotificationChannel(ch);
-      }
-      Notification n = new NotificationCompat.Builder(this, CHANNEL_ID)
-          .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-          .setContentTitle(title)
-          .setContentText("আপনাকে ডাকা হচ্ছে…")
-          .setPriority(NotificationCompat.PRIORITY_LOW)
-          .setOngoing(true)
-          .build();
-      if (Build.VERSION.SDK_INT >= 34) {
-        startForeground(FGS_ID, n, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
-      } else {
-        startForeground(FGS_ID, n);
-      }
-    } catch (Exception ignored) {
-    }
-  }
-
   private void stopSelfSafely() {
     try {
       if (tts != null) {
@@ -385,7 +370,6 @@ public class AlarmSpeakService extends Service {
       }
     } catch (Exception ignored) {
     }
-    stopForeground(true);
     stopSelf();
   }
 
@@ -414,11 +398,11 @@ public class AlarmSpeakService extends Service {
       i.putExtra(EXTRA_TIME, time);
       i.putExtra(EXTRA_NOTIFY, true);
       i.putExtra(EXTRA_FIRED_AT, System.currentTimeMillis());
-      if (Build.VERSION.SDK_INT >= 26) {
-        ctx.startForegroundService(i);
-      } else {
-        ctx.startService(i);
-      }
+      // v4.0: plain startService — no foreground service, no notification of
+      // our own. From AlarmFireReceiver.onReceive / the open app (both are
+      // allowed contexts); if Android still refuses, the catch below posts a
+      // plain notification so the alarm is never lost.
+      ctx.startService(i);
     } catch (Exception ignored) {
       // fall back to a plain notification so the alarm is never lost
       try {
@@ -445,11 +429,8 @@ public class AlarmSpeakService extends Service {
       i.putExtra(EXTRA_SPEAK, speak);
       i.putExtra(EXTRA_LANG, lang);
       i.putExtra(EXTRA_NOTIFY, false);
-      if (Build.VERSION.SDK_INT >= 26) {
-        ctx.startForegroundService(i);
-      } else {
-        ctx.startService(i);
-      }
+      // v4.0: plain startService — no foreground service, no notification.
+      ctx.startService(i);
     } catch (Exception ignored) {
     }
   }
