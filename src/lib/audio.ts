@@ -386,22 +386,3 @@ export function playStart() {
     /* ignore */
   }
 }
-
-// ==================== v4.3: messenger-style chat POP ====================
-// Owner round-18: "মেসেঞ্জারে দেখো না টুট করে একটা পপ আপ এসে মেসেজটা সিন হয়"
-// — a short bright two-tone "toot" that plays with the heads-up popup when a
-// chat message arrives while the app is open. Distinct from every alarm.
-export function playChatPop() {
-  const ac = ensureCtx();
-  if (!ac) return;
-  try {
-    const t0 = ac.currentTime + 0.01;
-    // "টুট" — high ping then a quick higher answer, messenger-like
-    blip(ac, t0, 987.77, 987.77, 0.09, 0.3, "sine");
-    blip(ac, t0 + 0.1, 1318.51, 1318.51, 0.16, 0.3, "sine");
-    // soft harmonic underneath so it carries on phone speakers
-    blip(ac, t0, 493.88, 493.88, 0.12, 0.12, "triangle");
-  } catch {
-    /* ignore */
-  }
-}

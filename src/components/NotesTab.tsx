@@ -716,15 +716,22 @@ function SharedNotes() {
 
 export default function NotesTab() {
   const { t } = useStore();
+  const [tab, setTab] = useState<SubTab>("personal");
   return (
     <div>
       <h1 className="text-xl font-bold mb-3">📝 {t("notesTitle")}</h1>
       {/* v2.8: ads on every page */}
       <AdsBanner variant="a" />
-      {/* v3.3: SHARED NOTES TAB REMOVED — owner: "শেয়ার লিস্ট উঠে ফেলবা — শুধু
-          পার্সোনাল নোটস থাকবে"। The messenger-style chat in the Friends tab is
-          the only way to communicate with friends now. */}
-      <PersonalNotes />
+      <Seg<SubTab>
+        value={tab}
+        onChange={setTab}
+        options={[
+          { value: "personal", label: `🔒 ${t("tab_personal")}` },
+          { value: "shared", label: `👥 ${t("tab_shared")}` },
+        ]}
+        className="mb-4"
+      />
+      {tab === "personal" ? <PersonalNotes /> : <SharedNotes />}
       {/* v2.8: ads on every page */}
       <AdsBanner variant="b" />
     </div>

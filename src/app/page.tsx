@@ -10,18 +10,18 @@ import FriendsTab from "@/components/FriendsTab";
 import SettingsTab from "@/components/SettingsTab";
 import AuthGate, { NameCapture } from "@/components/AuthGate";
 import AlarmOverlay, { ActiveAlarm } from "@/components/AlarmOverlay";
-import ChatScreen, { ChatHeadsUp, ChatWatchdog } from "@/components/ChatScreen";
+import ChatScreen, { ChatWatchdog, ChatPopupHost } from "@/components/ChatScreen";
 import AdminPanel from "@/components/AdminPanel";
 import PermissionSetupFlow, { PERM_FLOW_KEY } from "@/components/PermissionSetupFlow";
 import { AtGlobalScripts } from "@/components/AdsBanner";
 import { dayPoints, dhikrTotal, computeStreaks, dayCompletion } from "@/lib/logic";
 import { getLog, todayStr } from "@/lib/types";
-import { pushDay, ensureProfile, fbIsBanned, fbSignOut, DaySummary } from "@/lib/cloud";
+import { pushDay, ensureProfile, fbIsBanned, fbSignOut, fbTouchLastAt, DaySummary } from "@/lib/cloud";
 import { APP_VERSION } from "@/lib/version";
-import { alarmSpeakText, makeT } from "@/lib/i18n";
 import { warmAudio, playChime } from "@/lib/audio";
-import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm, AlarmSyncResult, nativeScheduleExactAlarms, nativeCancelExactAlarms, nativeSetVoiceGender, nativeExactPending, nativeConsumeAlarmLaunch, ExactAlarmSpec } from "@/lib/native";
+import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm, AlarmSyncResult, nativeScheduleExactAlarms, nativeCancelExactAlarms, nativeExactPending, nativeConsumeAlarmLaunch, ExactAlarmSpec } from "@/lib/native";
 import { waterAlarmTimes, shiftTime, randomMealMusic, PRAYER_KEYS, dateAtHM, addDays } from "@/lib/types";
+import { makeT } from "@/lib/i18n";
 
 type Tab = "home" | "notes" | "stats" | "friends" | "settings";
 
@@ -62,21 +62,15 @@ function BottomNav({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
 }
 
 function Splash() {
-  // v5.0 HYDRATION SAFETY: the server (and the exported static HTML) may be
-  // produced with a DIFFERENT navigator locale than the user's device. This
-  // splash is the only thing rendered during hydration, so it uses FIXED
-  // brand literals (no t()) — the hydration output is identical on every
-  // device, and the device language kicks in on the very next render.
-  const { state } = useStore();
-  void state;
+  const { t, state } = useStore();
   return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-gradient-to-b from-background to-primary/10">
       <div className="w-28 h-28 rounded-[30px] overflow-hidden shadow-2xl shadow-primary/30 border border-primary/20 logo-pop">
         { }
         <img src="/icon-512.png" alt="Our Habit" className="w-full h-full object-cover" />
       </div>
-      <div className="text-2xl font-extrabold logo-fade">আওয়ার হ্যাবিট</div>
-      <div className="text-xs text-muted-foreground logo-fade">Our Habit — একসাথে ভালো অভ্যাস</div>
+      <div className="text-2xl font-extrabold logo-fade">{t("appName")}</div>
+      <div className="text-xs text-muted-foreground logo-fade">{t("tagline")}</div>
     </div>
   );
 }
@@ -309,8 +303,7 @@ function Shell() {
         state.settings.mealPreAlert,
         state.settings.azanSound, // v2.8: azan recitation changes the alarm sound
         state.settings.name,     // v2.9: the name-call text follows the name
-        state.settings.voiceLang, // v4.2: a ডাক-ভাষা change re-composes every call
-        state.settings.language, // v5.2: the UI language drives every label now
+        state.settings.language, // v2.9: TTS language follows the app language
       ])
     : "";
 
@@ -360,36 +353,18 @@ function Shell() {
     const now = Date.now();
     const azanSound = s.settings.azanSound || "adhan.mp3";
     // v2.9 NAMED ALERTS: the user's REGISTERED FULL NAME is spoken aloud by
-    // AlarmSpeakService at ring time — "Anwar Hossen Sakib, পানি খাও…"
-    // (owner's exact request). Adhan alarms NEVER speak —
+    // AlarmSpeakService at ring time — "আনোয়ারুল সন সাকিব, তোমার পানি খাওয়ার
+    // সময় হইছে…" (owner's exact request). Adhan alarms NEVER speak —
     // "আজানের ক্ষেত্রে না ভাই, আজানটা আজানি দিবে".
     const myName = (s.settings.name || "").trim();
-    // v4.2 (owner round-17): the VOICE language is BANGLA by default again —
-    // the ORIGINAL system (owner: "আগের সিস্টেম — ঐরকম নাম ধরে ডাকবে কিন্তু
-    // কথাটা বলবে বাংলায়। ম্যানুয়ালে সিলেক্ট না থাকলেও বাংলায়ই বলবে।").
-    // v5.2 (owner round-22): bn (default) = the name AS ENTERED (English
-    // letters stay English) + the Bangla sentence — "নামও বলবে। তোমার যে
-    // ইংলিশ নামটা ঐটা বলবে… ঐটা টোটালি বাংলাতে বলবে" — no Bangla-script
-    // substitution, no transliteration; the Bengali TTS voice reads the
-    // English name Bengali-style and the words beside it stay the owner's
-    // previous Bengali sentences. If the phone has no Bangla TTS voice the
-    // native side auto-falls back to the English copy (speakEn) so the call
-    // is never silent. en = the optional English call for those who pick it
-    // in Settings → প্রোফাইল.
-    const vlang: "en" | "bn" = s.settings.voiceLang === "en" ? "en" : "bn";
-    const lang = vlang; // passed to the native TTS engine
-    const tv = makeT(vlang); // spoken sentences in the VOICE language
-    const te = makeT("en"); // English fallback — used by the native side when
-    //                           the phone has NO Bangla TTS voice installed
-    // v5.2: one helper composes every call — the name + the sentence
-    // (i18n.alarmSpeakText); the name part is ALWAYS the name as entered.
-    const spokenName = myName; // the name part of the call (as entered)
-    const spokenNameEn = myName; // the English fallback name
-    const named = (key: string) => alarmSpeakText(myName, key, vlang);
-    const namedEn = (key: string) => alarmSpeakText(myName, key, "en");
-    // v4.1: normalize whitespace in the composed meal sentences (the English
-    // dictionary pieces carry their own leading space → "Lunch  time")
-    const norm = (s: string) => (s ? s.replace(/\s+/g, " ").trim() : s);
+    // v5.1: স্পোকেন রিমাইন্ডার সবসময় বাংলা (owner: "ডাক বাংলায় থাকবে, নাম
+    // আগের মতোই পড়ে দেবে") — the TTS text + voice are locked to Bengali
+    // regardless of the UI language; the NAME stays exactly as registered
+    // (English names are read as-is by the bn voice). Only the notification
+    // title/body follow the chosen UI language.
+    const tBn = makeT("bn");
+    const lang = "bn"; // TTS voice — always Bengali for every spoken reminder
+    const named = (suffix: string) => (myName ? `${myName}${suffix}` : "");
 
     // ---------- v2.8/v2.9 EXACT ALARMS (azan / Fajr / meals / water / sleep) ----------
     const exact: ExactAlarmSpec[] = [];
@@ -400,13 +375,12 @@ function Shell() {
       title: string,
       body: string,
       sound: string,
-      speak = "",
-      speakEn = ""
+      speak = ""
     ) => {
       if (!/^\d{1,2}:\d{2}$/.test(time)) return;
       for (const d of days) {
         const at = dateAtHM(d, time);
-        if (at > now + 30000) exact.push({ id: `${key}@${d}`, at, key, time, title, body, sound, speak, speakEn, lang });
+        if (at > now + 30000) exact.push({ id: `${key}@${d}`, at, key, time, title, body, sound, speak, lang });
       }
     };
     // azan + Fajr: the adhan itself, never a voice call (owner's rule)
@@ -417,65 +391,28 @@ function Shell() {
       if (c?.on)
         pushExact(
           `adhan_${pk}`,
-          c.time,
+          // v5.1: মাগরিব +৩ মিনিট (owner's 2-3-minute special case) — the
+          // Maghrib ring comes 3 minutes AFTER the azan time, in the native
+          // engine AND the in-app engine (store.tsx) so both always agree.
+          pk === "maghrib" ? shiftTime(c.time, 3) : c.time,
           `🕌 ${t("adhanAlerts")} — ${t(`prayer_${pk}`)}`,
           t("adhanMsg"),
           azanSound
         );
     });
-    // v4.2 (owner round-17): নামাজের ডাক — the azan itself NEVER speaks
-    // (owner's standing rule: "শুধু আজান — আজানের সময় আজান দিবে, ঐটা বাদে"),
-    // but ~15 minutes AFTER each azan the voice calls the name and says
-    // "নামাজ পড়ার সময় হয়েছে, নামাজে যান" — NOT long after the azan (owner:
-    // "আজানের পর একটা ধরে নিবা… আজান দেওয়ার অনেকক্ষণ পর বলে না").
-    // One call per prayer: if the Fajr alarm and the Fajr adhan-reminder are
-    // both on, their +15 slots land close together → keep ONE (the real
-    // prayer-time one wins; the other is silently skipped).
-    const namazSlots: { time: string; pk: string }[] = [];
-    (["fajr", "dhuhr", "asr", "maghrib", "isha"] as const).forEach((pk) => {
-      const c = s.settings.adhanAlerts?.[pk];
-      // v5.0 (owner round-19): মাগরিবের ডাক আজানের ~৩ মিনিট পরে — ১৫ মিনিটের
-      // নিয়ম মাগরিবের ক্ষেত্রে প্রযোজ্য নয়; বাকি সব নামাজ ~১৫ মিনিট পরে।
-      if (c?.on) namazSlots.push({ time: shiftTime(c.time, pk === "maghrib" ? 3 : 15), pk });
-    });
-    if (s.settings.fajrAlarm?.on) namazSlots.push({ time: shiftTime(s.settings.fajrAlarm.time, 15), pk: "fajr" });
-    const namazTaken: number[] = [];
-    for (const ns of namazSlots) {
-      if (!/^\d{1,2}:\d{2}$/.test(ns.time)) continue;
-      const [nh, nm] = ns.time.split(":").map(Number);
-      const nmins = nh * 60 + nm;
-      if (namazTaken.some((x) => Math.abs(x - nmins) < 20)) continue;
-      namazTaken.push(nmins);
-      pushExact(
-        `namaz_${ns.pk}`,
-        ns.time,
-        `🕌 ${t("namazTitle")}`,
-        t("namazBody"),
-        "alarm.wav",
-        named("speakNamaz"),
-        namedEn("speakNamaz")
-      );
-    }
     // meals: the phone CALLS the user by name, then the owner's music rings
     (["breakfast", "lunch", "dinner"] as const).forEach((mk) => {
       const c = s.settings.mealAlarms?.[mk];
       if (c?.on) {
         // v2.5: RANDOM music — the owner's two tracks alternate. Re-synced on
         // every app open / settings change → real variety daily.
-        // v4.1: the sentence follows the VOICE language (tv) and an English
-        // copy (te) rides along as the fallback when the phone has no Bangla
-        // TTS voice installed.
         pushExact(
           `meal_${mk}`,
           c.time,
           `🍽 ${t(`meal_${mk}`)}`,
           t("mealAlarmMsg"),
           randomMealMusic(),
-          // v5.0 (owner round-19): the exact dictated sentence — “তোমার এখন খাবার
-          // খাওয়ার সময় হয়েছে। সময়মতো খাওয়া-দাওয়া করে নাও।” One standalone
-          // sentence (no breakfast/lunch/dinner prefix).
-          named("speakMealFull"),
-          namedEn("speakMealFull")
+          myName ? `${myName}, ${tBn(`meal_${mk}`)} ${tBn("speakMeal")}` : ""
         );
         // v2.4: 15-min EARLY heads-up — spoken with the name
         if (s.settings.mealPreAlert !== false)
@@ -485,14 +422,13 @@ function Shell() {
             `🍽 ${t(`meal_${mk}`)}`,
             t("mealPreMsg"),
             "alarm.wav",
-            norm(spokenName ? `${spokenName}, ${tv(`meal_${mk}`)} ${tv("speakMealPre15")}` : ""),
-            norm(spokenNameEn ? `${spokenNameEn}, ${te(`meal_${mk}`)} ${te("speakMealPre15")}` : "")
+            myName ? `${myName}, ${tBn(`meal_${mk}`)} ${tBn("speakMealPre15")}` : ""
           );
       }
     });
     // sleep: spoken name-call + soft chime
     if (s.settings.sleepAlarm?.on)
-      pushExact("sleep", s.settings.sleepAlarm.time, `😴 ${t("sleep")}`, t("sleepAlarmMsg"), "alarm.wav", named("speakSleep"), namedEn("speakSleep"));
+      pushExact("sleep", s.settings.sleepAlarm.time, `😴 ${t("sleep")}`, t("sleepAlarmMsg"), "alarm.wav", named(tBn("speakSleep")));
     // v2.9 WATER — moved to the exact engine so it rings ON TIME and SPEAKS
     // the user's name first (owner: "পানি খাওয়ার রিমাইন্ডার হলে আমাকে ডাকবে")
     const wa = s.settings.waterAlarm?.on
@@ -508,8 +444,7 @@ function Shell() {
           `💧 ${t("appName")}`,
           t("waterAlarmBody"),
           "wateralarm.mp3",
-          named("speakWater"),
-          namedEn("speakWater")
+          named(tBn("speakWater"))
         );
       }
     }
@@ -528,8 +463,7 @@ function Shell() {
         `🕌 ${t("appName")}`,
         t("habitsAlarmMsg"),
         "alarm.wav",
-        named("speakHabits"),
-        namedEn("speakHabits")
+        named(tBn("speakHabits"))
       );
       // v2.5 APP-OPEN NUDGES — real notifications even when the app is closed.
       list.push({ id: "nudge_morning", time: "10:00", title: `👋 ${t("appName")}`, body: t("nudgeBody") });
@@ -575,19 +509,6 @@ function Shell() {
       );
     })();
   }, [ready, alarmSig, t, resumeTick]);
-
-  // ---------- v4.0: push the user's GENDER to the alarm voice ----------
-  // AlarmSpeakService reads it (ExactAlarmPlugin prefs) and tries to pick a
-  // female voice for girls / a male voice for boys when the TTS engine
-  // exposes gendered voices (plus a soft pitch shift as fallback).
-  // Default = FEMALE (owner: "একটা বাংলা মেয়ের ভয়েস এড করবে") — male users
-  // switch it to ছেলে কণ্ঠ from Settings → প্রোফাইল.
-  useEffect(() => {
-    if (!ready || !isNative()) return;
-    const s = stateRef.current;
-    if (!s?.account?.verified) return;
-    void nativeSetVoiceGender(s.settings.gender === "male" ? "male" : "female");
-  }, [ready, state.settings.gender, state.account?.verified]);
 
   // ---------- v2.8: the alarm that LAUNCHED the app (full-screen azan) ----------
   // When the exact alarm fires with the screen off/locked, Android launches
@@ -778,7 +699,6 @@ function Shell() {
       clearInterval(iv);
       document.removeEventListener("visibilitychange", onVis);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, state.account?.uid]);
 
   // ensure the Firebase profile (invite code) exists once per signed-in user
@@ -836,9 +756,6 @@ function Shell() {
         waterMl: log.waterMl,
         waterGoalMl: s.settings.waterGoalMl,
         reels: log.reels,
-        // v5.0: precise per-app seconds ride along in the day summary (the
-        // status panel + friends view can show “৪৫ সেকেন্ড”-style precision).
-        reelsSec: log.reelsSec,
         reelsMin: log.reelsMin ?? 0,
         dhikrTotal: dhikrTotal(log),
         meditationMin: log.meditationMin,
@@ -855,6 +772,31 @@ function Shell() {
     const iv = setInterval(push, 60000);
     return () => clearInterval(iv);
   }, [ready, state.account?.uid, today]);
+
+  // v5.1 PRESENCE HEARTBEAT (owner: "সত্যিকারের অনলাইন স্ট্যাটাস — সবুজ/লাল"):
+  // while the app is visible we beat every 45s into usersIndex.lastAt; one
+  // final beat when it goes to the background. Readers (chat header + the
+  // friends list) treat lastAt within 2 minutes as 🟢 online, else 🔴 offline.
+  useEffect(() => {
+    if (!ready) return;
+    const acc = state.account;
+    if (!acc?.uid) return;
+    let dead = false;
+    const beat = () => {
+      if (!dead) void fbTouchLastAt(acc.uid);
+    };
+    beat();
+    const iv = setInterval(beat, 45_000);
+    const onVis = () => {
+      if (document.visibilityState === "hidden") beat();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      dead = true;
+      clearInterval(iv);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [ready, state.account?.uid]);
 
   if (!ready) return <Splash />;
 
@@ -879,9 +821,6 @@ function Shell() {
           {/* v2.9: messenger-style chat (opens from Friends/Notes via
               openChat) + the background chat/reels watchdog engine */}
           <ChatScreen />
-          {/* v4.3: messenger-style heads-up popup — "টুট" sound + banner
-              when a message arrives while the app is open (tap → open chat) */}
-          <ChatHeadsUp />
           <AtGlobalScripts />
           {adminOpen ? <AdminPanel onClose={() => setAdminOpen(false)} /> : null}
         </div>
@@ -889,6 +828,7 @@ function Shell() {
       <PermFlowHost />
       <NameCapture />
       <ChatWatchdog />
+      <ChatPopupHost />
     </>
   );
 }

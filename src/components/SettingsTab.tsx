@@ -2,7 +2,7 @@
 
 /**
  * SettingsTab — clean & reorganized:
- *   Profile (Firebase account) → Theme → Water goal →
+ *   Profile (Firebase account) → Language & Theme → Water goal →
  *   Permissions → Data & Backup (file + Firebase cloud) → About (English)
  * Meal alarms & reminder alarms now live on the HOME (alarms layer), not here.
  */
@@ -12,10 +12,9 @@ import { useStore } from "@/lib/store";
 import { useServerCfg } from "@/lib/cfg";
 import { Card, SectionTitle, Seg, ToggleRow } from "@/components/ui-bits";
 import AdsBanner from "@/components/AdsBanner";
-import { AppState } from "@/lib/types";
-import { APP_VERSION, APP_BUILD } from "@/lib/version";
+import { AppState, Lang } from "@/lib/types";
+import { APP_VERSION } from "@/lib/version";
 import { SmartlinkButton } from "@/components/AdsBanner";
-import { makeT } from "@/lib/i18n";
 import { backupState, ensureFirebase, fbSignOut, fbUpdateProfileName, restoreState } from "@/lib/cloud";
 import { totalPoints, levelInfo } from "@/lib/logic";
 import {
@@ -197,49 +196,6 @@ export default function SettingsTab() {
               </div>
             )}
 
-            {/* v4.2 (owner round-17) → v5.2 (owner round-22): অ্যালার্মের কণ্ঠ —
-                বাংলা ডিফল্ট (আগের সিস্টেম) + লিঙ্গ। Owner: "আগের সিস্টেম — ঐরকম
-                নাম ধরে ডাকবে কিন্তু কথাটা বলবে বাংলায়।" v5.2: নামটা বলবে যেভাবে
-                লেখা আছে (ইংলিশ নাম) — "নামও বলবে। তোমার যে ইংলিশ নামটা ঐটা
-                বলবে" — আর পাশের কথাগুলা আগের মতোই বাংলায়। ফোনে বাংলা TTS
-                ভয়েস না থাকলে অ্যাপ নিজে থেকেই ইংলিশে ডাকবে। */}
-            <div className="mt-3 rounded-xl bg-background/60 border border-border p-2.5">
-              <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">🗣️ {t("voiceGenderTitle")}</div>
-              <div className="text-[11px] font-semibold mb-1.5">{t("voiceLangTitle")}</div>
-              <Seg<"en" | "bn">
-                value={s.voiceLang === "en" ? "en" : "bn"}
-                onChange={(v) => updateSettings({ voiceLang: v, voiceLangPicked: true })}
-                options={[
-                  { value: "bn", label: t("voiceLangBnOpt") },
-                  { value: "en", label: t("voiceLangEnOpt") },
-                ]}
-              />
-              {(s.name || "").trim() ? (
-                <div className="text-[11px] text-muted-foreground mt-2 leading-relaxed">
-                  {"\""}
-                  <b>
-                    {/* v5.2: the name AS ENTERED (English letters) + the
-                        sentence in the voice language — exactly what the
-                        alarm speaks (alarmSpeakText). No transliteration. */}
-                    {`${s.name.trim()}${makeT(s.voiceLang === "en" ? "en" : "bn")("speakWater")}`}
-                  </b>
-                  {"\" "}
-                  {t("voiceLangExBn")}
-                </div>
-              ) : null}
-              <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">{t("voiceLangNote")}</p>
-              <div className="border-t border-border my-2.5" />
-              <Seg<"female" | "male">
-                value={s.gender === "male" ? "male" : "female"}
-                onChange={(v) => updateSettings({ gender: v })}
-                options={[
-                  { value: "female", label: "👩 মেয়ে কণ্ঠ" },
-                  { value: "male", label: "👨 ছেলে কণ্ঠ" },
-                ]}
-              />
-              <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">{t("voiceGenderNote")}</p>
-            </div>
-
             {/* round-5: points LIVE here now (moved off the home header) */}
             <div className="mt-3 rounded-xl bg-background/60 border border-border px-3 py-2.5 flex items-center justify-between gap-2">
               <div>
@@ -299,25 +255,20 @@ export default function SettingsTab() {
         ) : null}
       </Card>
 
-      {/* ---------- v5.2 (owner round-22): THEME + LANGUAGE — the manual
-          language picker is BACK. Round-19 had removed it (app followed the
-          device), but on the owner's English-locale phone the whole app turned
-          English: "এখানে দেওয়া কিন্তু সবগুলা ইংলিশ ভাই। আগে কিন্তু বাংলা
-          ইংলিশ দুটাই ভাষা ছিল… বাট ডিফল্ট হিসেবে বাংলাটাই থাকবে।" So:
-          🇧🇩 বাংলা DEFAULT for everyone, 🇬🇧 English right next to it —
-          "যারা ইংলিশ প্রয়োজন ওরা ইংলিশ সিলেক্ট করবে"। ---------- */}
+      {/* ---------- Language & Theme ---------- */}
       <Card className="mb-4">
-        <SectionTitle title={`🌐 ${t("langTitle")} · 🎨 ${t("theme")}`} />
-        <div className="text-[10px] text-muted-foreground mb-2 leading-relaxed">{t("langNote")}</div>
-        <Seg<"bn" | "en">
-          value={s.language === "en" ? "en" : "bn"}
-          onChange={(v) => updateSettings({ language: v, langPicked: true })}
+        <SectionTitle title={`🌍 ${t("language")} & ${t("theme")}`} />
+        <div className="text-xs text-muted-foreground mb-1">{t("language")}</div>
+        <Seg<Lang>
+          value={s.language}
+          onChange={(v) => updateSettings({ language: v })}
           options={[
-            { value: "bn", label: t("langBnOpt") },
-            { value: "en", label: t("langEnOpt") },
+            { value: "bn", label: "বাংলা" },
+            { value: "en", label: "English" },
           ]}
+          className="mb-3"
         />
-        <div className="border-t border-border my-3" />
+        <div className="text-xs text-muted-foreground mb-1">{t("theme")}</div>
         <Seg<"dark" | "light">
           value={s.theme}
           onChange={(v) => updateSettings({ theme: v })}
@@ -651,7 +602,7 @@ export default function SettingsTab() {
         <SectionTitle title={`ℹ️ About`} />
         <p className="text-xs text-muted-foreground leading-relaxed">{t("aboutText")}</p>
         <div className="flex items-center justify-between gap-2 mt-3">
-          <p className="text-[10px] text-muted-foreground opacity-70">© 2026 Our Habit v{APP_VERSION}{APP_BUILD > 0 ? ` · Build ${APP_BUILD}` : ""}</p>
+          <p className="text-[10px] text-muted-foreground opacity-70">© 2026 Our Habit v{APP_VERSION}</p>
           <SmartlinkButton />
         </div>
       </Card>

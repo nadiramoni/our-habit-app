@@ -4,9 +4,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { startAlarmMusic, startMealMusic, startAzan, stopAlarmMusic } from "@/lib/audio";
 import { PRAYER_KEYS } from "@/lib/types";
-// v5.0: the clock follows the DEVICE language — রাত ১২:৩০ / সকাল ৯:৩০ in
-// Bengali (Bangladesh 12-hour convention, owner round-19), "9:30 AM" in English.
-import { appLang, fmtHM } from "@/lib/i18n";
 
 export interface ActiveAlarm {
   key: string;
@@ -18,9 +15,14 @@ export interface ActiveAlarm {
   time?: string;
 }
 
-/** v5.0: HH:MM → localized 12h display (Bengali day-parts + Bengali digits). */
+/** HH:MM → 12h display like "11:40 AM" */
 function fmt12(hhmm: string): string {
-  return fmtHM(hhmm, appLang());
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || "");
+  if (!m) return hhmm || "";
+  let h = Number(m[1]);
+  const ap = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${h}:${m[2]} ${ap}`;
 }
 
 /**
