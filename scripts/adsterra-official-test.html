@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Adsterra OFFICIAL usage — direct script injection</title>
+<style>body{background:#222;color:#eee;font-family:sans-serif}div{text-align:center}</style>
+</head>
+<body>
+<h3 style="text-align:center;font-size:12px">OFFICIAL 468×60 (direct page injection)</h3>
+<div id="zone468" style="min-height:70px;border:1px dashed #666">
+<script>
+  atOptions = {
+    'key' : 'e29a2af548bd3c9fa5512bd423e484a5',
+    'format' : 'iframe',
+    'height' : 60,
+    'width' : 468,
+    'params' : {}
+  };
+</script>
+<script src="https://bicea.org/22/e29a2af548bd3c9fa5512bd423e484a5"></script>
+</div>
+<pre id="log" style="font-size:10px;color:#8f8"></pre>
+<script>
+  setTimeout(() => {
+    const z = document.getElementById("zone468");
+    const ifs = z.querySelectorAll("iframe");
+    document.getElementById("log").textContent =
+      `after 15s: zone iframes=${ifs.length}, zone HTML len=${z.innerHTML.length}, ` +
+      Array.from(ifs).map(f => `frame ${f.width}x${f.height} src=${(f.src||"").slice(0,100)}`).join(" ; ");
+  }, 15000);
+</script>
+</body>
+</html>

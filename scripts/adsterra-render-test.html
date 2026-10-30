@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adsterra render test — mirrors AdsBanner.tsx srcDoc</title>
+<style>
+  body { margin: 0; font-family: sans-serif; background: #0d1512; color: #eee; }
+  .slot { margin: 8px auto; max-width: 420px; border: 1px dashed #345; position: relative; }
+  .slot iframe { border: 0; transform-origin: top left; }
+  h3 { font-size: 12px; margin: 10px 0 0; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<h3>slot-top (320×50, banner300 zone)</h3>
+<div class="slot" id="slot-a" style="height:50px">
+  <iframe id="fa" width="320" height="50" scrolling="no" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" style="border:0"></iframe>
+</div>
+<h3>slot-mid (468×60, adsterra zone)</h3>
+<div class="slot" id="slot-b" style="height:60px">
+  <iframe id="fb" width="468" height="60" scrolling="no" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" style="border:0"></iframe>
+</div>
+<pre id="log" style="font-size:10px;color:#8f8;padding:8px;white-space:pre-wrap"></pre>
+<script>
+  const ZONES = {
+    fa: { key: "a19161feecb13d6d32cfa3a7f599f5a2", w: 320, h: 50 },
+    fb: { key: "e29a2af548bd3c9fa5512bd423e484a5", w: 468, h: 60 },
+  };
+  const log = (m) => { document.getElementById("log").textContent += m + "\n"; };
+  for (const [id, z] of Object.entries(ZONES)) {
+    const srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;height:100%;overflow:hidden;background:transparent}body{display:flex;align-items:center;justify-content:center}</style></head><body><script>atOptions={'key':'${z.key}','format':'iframe','height':${z.h},'width':${z.w},'params':{}};<\/script><script src="https://bicea.org/22/${z.key}"><\/script></body></html>`;
+    const f = document.getElementById(id);
+    f.srcdoc = srcdoc;
+    f.addEventListener("load", () => {
+      try {
+        const inner = f.contentDocument;
+        const ifr = inner ? inner.querySelectorAll("iframe") : [];
+        const bodyTxt = inner ? inner.body.innerHTML.length : -1;
+        log(`[${id}] load event: innerHTML=${bodyTxt}, nested iframes=${ifr.length}`);
+        ifr.forEach((n, i) => log(`  nested[${i}] ${n.width}x${n.height} src=${(n.src || "").slice(0, 90)}`));
+      } catch (e) { log(`[${id}] load: (cross-origin, cannot inspect — script ran) ${e.message}`); }
+    });
+  }
+  window.addEventListener("message", (e) => log(`[msg] ${JSON.stringify(e.data).slice(0, 120)}`));
+  setTimeout(() => {
+    // after 12s, measure rendered geometry — a real ad fills the iframe or nests content
+    for (const id of Object.keys(ZONES)) {
+      const f = document.getElementById(id);
+      let info = "cross-origin (likely ad content rendered)";
+      try { info = `inner len=${f.contentDocument.body.innerHTML.length}`; } catch {}
+      log(`[12s-check] ${id}: doc=${info}`);
+    }
+  }, 12000);
+</script>
+</body>
+</html>
