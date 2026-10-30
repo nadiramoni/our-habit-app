@@ -189,15 +189,21 @@
   animation: slide-up-in 0.28s ease-out;
 }
 
-/* ---------- v5.1: chat heads-up popup ----------
- * Slides DOWN from the top when a message arrives while the user is elsewhere
- * in the app; auto-hides after 5.5s (ChatPopupHost). */
+/* v4.3: messenger-style chat heads-up popup — slides DOWN from the top */
 @keyframes slide-down-in {
   0% { transform: translateY(-110%); opacity: 0; }
+  60% { transform: translateY(6%); opacity: 1; }
   100% { transform: translateY(0); opacity: 1; }
 }
 .animate-slide-down {
-  animation: slide-down-in 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  animation: slide-down-in 0.32s ease-out;
+}
+@keyframes pop-out-up {
+  0% { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(-110%); opacity: 0; }
+}
+.animate-pop-out {
+  animation: pop-out-up 0.25s ease-in forwards;
 }
 
 /* ---------- v1.4 dark-mode & card polish ---------- */

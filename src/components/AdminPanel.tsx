@@ -1,14 +1,16 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { useServerCfg } from "@/lib/cfg";
 import { Card, SectionTitle, ToggleRow } from "@/components/ui-bits";
 import { AtCfg, AtZone, ServerCfg } from "@/lib/types";
 import { extractScriptUrl } from "@/components/AdsBanner";
-import { mirrorMeta, readRawMeta, writeRawMeta, fbListUsers, FbProfile } from "@/lib/cloud";
-import { isNative, nativeChatServiceRunning, nativeNotifPermission, nativeRequestNotifications, nativeRequestBatteryExemption, nativePermissionStatus, nativeRealTestNotification, nativeOpenNotificationSettings } from "@/lib/native";
-import { fmtClock } from "@/lib/i18n";
+import { mirrorMeta, readRawMeta, writeRawMeta, panelSaveCfg, PanelSaveResult, fbEmailSignIn, fbReadStatus, FbStatusSnapshot, FbStatusUser } from "@/lib/cloud";
+import { isNative } from "@/lib/native";
+import { APP_VERSION, APP_BUILD } from "@/lib/version";
+import { REEL_APPS } from "@/lib/types";
+import { appLang } from "@/lib/i18n";
 
 /**
  * v2.4: LIVE banner health — reads window.__atHealth (written by AdsBanner
@@ -78,31 +80,47 @@ async function remotePinHash(): Promise<string | null> {
   return (raw?.adminPin as string) || null;
 }
 
-/** Write adminPin and/or cfg in one Firestore hit. */
-async function remoteWriteMeta(cfg: ServerCfg | null, pinHash?: string): Promise<boolean> {
+/** v4.2: turn a panelSaveCfg result into a REAL, actionable Bengali message —
+ *  the owner was stuck on the generic “সমস্যা হয়েছে — আবার চেষ্টা করো” with no
+ *  hint of the actual fix; now every failure says exactly what to do. */
+function panelSaveErrText(r: PanelSaveResult, t: (k: string) => string): string {
+  switch (r.reason) {
+    case "no-account":
+      return "সেভ করতে হলে অ্যাপে লগইন থাকতে হবে — তোমার অ্যাকাউন্ট দিয়ে ঢুকে আবার চেষ্টা করো।";
+    case "not-configured":
+      return "Firebase কানেক্ট হচ্ছে না — ইন্টারনেট দেখে আবার চেষ্টা করো।";
+    case "claimed-other":
+      return `অ্যাডমিন দখল করা আছে অন্য অ্যাকাউন্টের নামে${r.adminEmail ? ` (${r.adminEmail})` : ""}। ওই অ্যাকাউন্ট দিয়ে লগইন করে সেভ করো — অথবা নিজের অ্যাকাউন্টকে অ্যাডমিন বানাতে: Firebase Console → Firestore Database → app/meta → adminUid ফিল্ডটা মুছে দাও → এখানে আবার Save চাপো।`;
+    case "denied":
+      return "Firebase এ লিখতে অনুমতি পাচ্ছি না। Firebase Console → Firestore → Rules-এ গিয়ে আমার দেওয়া নতুন রুল (FIRESTORE-RULES-FOR-PASTE) পেস্ট করে Publish দাও — তারপর আবার Save চাপো।";
+    default:
+      return t("error");
+  }
+}
+
+/** v4.2: the PIN-write equivalent (PinGate setup / changePin) — same rules
+ *  root cause, same real fix. */
+function nativeWriteErr(): string {
+  return "সেভ হয়নি — Firebase এ লিখতে অনুমতি পাচ্ছি না। Firebase Console → Firestore → Rules-এ নতুন রুল পেস্ট করে Publish দাও; আর adminUid যদি অন্য অ্যাকাউন্টের নামে দখল করা থাকে, app/meta থেকে adminUid ফিল্ডটা মুছে দাও — তারপর আবার চেষ্টা করো।";
+}
+
+/** Write adminPin and/or cfg in one Firestore hit. v4.2: also writes the
+ *  adminUid claim — without it every write to app/meta was permission-denied
+ *  under the v4.0 rules (the “সমস্যা হয়েছে” root cause). */
+async function remoteWriteMeta(
+  cfg: ServerCfg | null,
+  pinHash?: string,
+  me?: { uid: string; email?: string } | null
+): Promise<boolean> {
   const fields: Record<string, unknown> = {};
   if (cfg) fields.cfg = JSON.parse(JSON.stringify(cfg));
   if (pinHash) fields.adminPin = pinHash;
+  if (me?.uid) {
+    fields.adminUid = me.uid;
+    if (me.email) fields.adminEmail = me.email;
+  }
   if (!Object.keys(fields).length) return false;
   return writeRawMeta(fields);
-}
-
-/**
- * v5.1 ADMIN SECURITY ISOLATION (owner: "অ্যাডমিন সিকিউরিটি")। If the live
- * Firestore rules are the v3.2 cloud-panel set, app/meta writes require
- * isAdmin() — adminUid (the FIRST account that ever wrote meta) must match
- * the caller. This helper CLAIMS adminUid when the field is still empty and
- * refuses with a clear Bengali error when a DIFFERENT account holds it — so
- * only the owner's own account can ever change PIN/ads/update settings.
- */
-async function adminWriteMeta(myUid: string | undefined, fields: Record<string, unknown>): Promise<{ ok: boolean; notAdmin?: boolean }> {
-  const raw = await readRawMeta();
-  const curAdmin = String((raw as { adminUid?: unknown } | null)?.adminUid || "");
-  if (curAdmin && myUid && curAdmin !== myUid) return { ok: false, notAdmin: true };
-  const out: Record<string, unknown> = { ...fields };
-  if (!curAdmin && myUid) out.adminUid = myUid; // first writer claims admin forever
-  const ok = await writeRawMeta(out);
-  return { ok };
 }
 
 type Mode = "loading" | "setup" | "unlock" | "open";
@@ -131,6 +149,7 @@ function writeLock(l: { count: number; until: number }) {
 
 function PinGate({ onUnlock, onClose }: { onUnlock: (pin: string) => void; onClose: () => void }) {
   const { t } = useStore();
+  const acc = useStore().state.account;
   const [mode, setMode] = useState<Mode>("loading");
   const [pin, setPin] = useState("");
   const [pin2, setPin2] = useState("");
@@ -171,15 +190,17 @@ function PinGate({ onUnlock, onClose }: { onUnlock: (pin: string) => void; onClo
     try {
       if (mode === "setup") {
         if (pin.length < 4 || pin !== pin2) {
-          setErr(pin !== pin2 ? t("adminPinMismatch") : t("adminPinSetSub"));
+          setErr(pin !== pin2 ? "PIN মিলছে না / PINs don't match" : t("adminPinSetSub"));
           setBusy(false);
           return;
         }
         if (isNative()) {
           const hash = await sha256Hex(`${pin}::${PIN_SALT}`);
-          const ok = await remoteWriteMeta(null, hash);
+          // v4.2: pass the signed-in account — the adminUid claim rides along
+          // (without it the write is permission-denied under the v4.0 rules).
+          const ok = await remoteWriteMeta(null, hash, acc ? { uid: acc.uid, email: acc.email } : null);
           if (ok) onUnlock(pin);
-          else setErr(t("error"));
+          else setErr(nativeWriteErr());
           setBusy(false);
           return;
         }
@@ -251,7 +272,7 @@ function PinGate({ onUnlock, onClose }: { onUnlock: (pin: string) => void; onClo
           inputMode="numeric"
           value={pin2}
           onChange={(e) => setPin2(e.target.value.replace(/\D/g, "").slice(0, 6))}
-          placeholder={mode === "setup" ? t("adminPinRepeat") : t("adminPinEnter")}
+          placeholder="PIN আবার / repeat"
           className="w-full max-w-xs bg-muted rounded-xl px-4 py-3 text-center text-lg tracking-[0.4em] border border-border outline-none focus:ring-1 focus:ring-ring"
         />
       ) : null}
@@ -320,70 +341,216 @@ function AtZoneRow({
 }
 
 /**
- * v5.1: which account box does a user belong to? (owner's exact spec:
- * ইমেইল = Google accounts · মেইল = signed up manually with an email ·
- * আনকনাউন = no email recorded — an "empty" account). No email → Unknown,
- * no matter what the provider field says.
+ * v5.1 (owner round-21): the IN-APP STATUS TAB — the retired GitHub-Pages
+ * status panel's successor, now living inside the admin panel itself
+ * (“অ্যাপসেই সব সিস্টেম দিয়ে দাও, আলাদা করার দরকার নাই”).
+ * Reads usersIndex + backups straight from the owner's Firebase with the
+ * signed-in client (rules allow it) — NO server, NO admin-sdk-key, so it
+ * works in the APK on any phone. Read-only view; every admin mutation stays
+ * in the ⚙️ সেটিংস tab (ads + app updates), exactly as before.
  */
-function clsOf(u: FbProfile): "google" | "mail" | "unknown" {
-  const email = String(u.email || "").trim();
-  if (!email) return "unknown";
-  return String(u.provider || "").toLowerCase().includes("google") ? "google" : "mail";
+function StatusTab() {
+  const { t } = useStore();
+  const [snap, setSnap] = useState<FbStatusSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    const s = await fbReadStatus();
+    setSnap(s);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const iv = setInterval(() => void load(), 30_000); // auto-refresh 30s
+    return () => clearInterval(iv);
+  }, [load]);
+
+  const ago = (ms: number | null) => {
+    if (!ms) return t("admNever");
+    const s = Math.max(0, Date.now() - ms);
+    if (s < 60e3) return t("admJustNow");
+    if (s < 3600e3) return `${Math.floor(s / 60e3)} ${t("admMinAgo")}`;
+    if (s < 86400e3) return `${Math.floor(s / 3600e3)} ${t("admHourAgo")}`;
+    return `${Math.floor(s / 86400e3)} ${t("admDayAgo")}`;
+  };
+
+  const reelLabel = (id: string) => t(`reel_${id}`) || id;
+  const reelIcon = (id: string) => REEL_APPS.find((a) => a.id === id)?.icon || "📱";
+  // Bengali digits on Bengali devices — same as every other number in the app
+  const num = (n: number | string) => {
+    const s = String(n);
+    return appLang() === "bn" ? s.replace(/[0-9]/g, (d) => "০১২৩৪৫৬৭৮৯"[Number(d)]) : s;
+  };
+
+  const stat = (v: number, label: string, cls: string) => (
+    <div className="rounded-xl bg-secondary/60 border border-border p-2.5 text-center">
+      <div className={`text-xl font-extrabold ${cls}`}>{num(v)}</div>
+      <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">{label}</div>
+    </div>
+  );
+
+  // v5.2 (owner round-22): রিফ্রেশ বাটনের নিচে ৩টা ছোট বক্স — কোন দলের
+  // অ্যাকাউন্ট দেখা যাবে সেটা বাছাই করার জন্য। Owner: "এর নিচে তিনটা লেআউট
+  // বানাবা ছোট ছোট বক্সের মধ্যে — একটা হচ্ছে ইমেইল (গুগল দিয়ে অ্যাকাউন্ট
+  // করছে), তারপর যারা ম্যানুয়ালি মেইল দিয়ে অ্যাকাউন্ট করছে, তারপর আননোন
+  // (যারা ইমেইল টিমেইল কিছুই করে না — ফাঁকা)।" বক্সে চাপ দিলে শুধু ওই
+  // দলের অ্যাকাউন্ট দেখায়; আবার চাপ দিলে সবাই ফিরে আসে।
+  type Group = "google" | "email" | "unknown";
+  const [grp, setGrp] = useState<Group | "all">("all");
+  const inGrp = (u: FbStatusUser): boolean =>
+    grp === "all"
+      ? true
+      : grp === "google"
+        ? u.provider === "google"
+        : grp === "email"
+          ? u.provider !== "google" && Boolean(u.email)
+          : !u.email; // আননোন — ইমেইল ফাঁকা
+  const groups: { id: Group; icon: string; label: string; count: number }[] = snap
+    ? [
+        { id: "google", icon: "🔵", label: t("admFbGoogle"), count: snap.stats.google },
+        { id: "email", icon: "✉️", label: t("admFbEmail"), count: snap.stats.email },
+        { id: "unknown", icon: "❓", label: t("admFbUnknown"), count: snap.stats.unknown },
+      ]
+    : [];
+
+  const users = (snap?.users || []).slice().sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0) || String(a.name).localeCompare(String(b.name)));
+  const shown = users.filter(inGrp);
+
+  return (
+    <div>
+      <Card className="mb-4">
+        <SectionTitle title={`👥 ${t("admStatusTitle")}`} sub={t("admStatusSub")} />
+        {loading && !snap ? (
+          <p className="text-xs text-muted-foreground py-4 text-center">…</p>
+        ) : !snap ? (
+          <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-3 mb-2">
+            <p className="text-xs text-destructive font-semibold">📴 {t("admStatusOffline")}</p>
+            <button type="button" onClick={() => void load()} className="mt-2 rounded-xl bg-secondary px-4 py-2 text-xs font-bold">
+              {t("admRefresh")}
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 gap-2">
+              {stat(snap.stats.total, t("admStatTotal"), "text-primary")}
+              {stat(snap.stats.google, t("admStatGoogle"), "text-amber-500")}
+              {stat(snap.stats.email, t("admStatEmail"), "text-amber-500")}
+              {stat(snap.stats.banned, t("admStatBanned"), "text-destructive")}
+              {stat(snap.stats.activeToday, t("admStatActive"), "text-primary")}
+              {stat(snap.stats.onlineNow, t("admStatOnline"), "text-green-500")}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">
+              🟢 = {t("admOnline")} · 🔴 = {t("admOffline")} · {t("admAutoRefresh")}
+              {snap.app.latestVersion ? ` · v${snap.app.latestVersion}` : ""}
+            </p>
+            <button type="button" onClick={() => void load()} className="mt-2 rounded-xl bg-secondary px-4 py-2 text-xs font-bold">
+              {t("admRefresh")}
+            </button>
+
+            {/* v5.2 (owner round-22): রিফ্রেশের ঠিক নিচে ৩টা ছোট বক্স —
+                🔵 গুগল (গুগল দিয়ে অ্যাকাউন্ট) / ✉️ ইমেইল (ম্যানুয়ালি মেইল
+                দিয়ে) / ❓ আননোন (ইমেইল ফাঁকা)। চাপ দিলে শুধু ওই দল দেখায়,
+                আবার চাপ দিলে সবাই। */}
+            <div className="grid grid-cols-3 gap-2 mt-2">
+              {groups.map((g) => {
+                const active = grp === g.id;
+                return (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onClick={() => setGrp(active ? "all" : g.id)}
+                    className={`rounded-xl border p-2 text-center transition-colors ${
+                      active ? "border-primary bg-primary/10" : "border-border bg-secondary/60"
+                    }`}
+                  >
+                    <div className="text-base leading-none">{g.icon}</div>
+                    <div className="text-[10px] font-bold mt-1 leading-tight">{g.label}</div>
+                    <div className={`text-lg font-extrabold leading-tight mt-0.5 ${active ? "text-primary" : ""}`}>{num(g.count)}</div>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1.5 leading-relaxed">
+              {grp === "all" ? t("admFbHint") : `${t("admFbShowing")}: ${groups.find((g) => g.id === grp)?.icon} ${groups.find((g) => g.id === grp)?.label} (${num(shown.length)})`}
+            </p>
+          </>
+        )}
+      </Card>
+
+      {shown.length === 0 && !loading ? (
+        <Card><p className="text-xs text-muted-foreground text-center py-3">{grp === "all" ? t("admNoUsers") : t("admFbNone")}</p></Card>
+      ) : null}
+
+      {shown.map((u: FbStatusUser) => (
+        <Card key={u.uid} className="mb-3">
+          <div className="flex items-start justify-between gap-2 mb-1.5">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary/25 to-primary/5 border border-primary/30 flex items-center justify-center text-sm font-extrabold text-primary shrink-0">
+                {(u.name || "?").slice(0, 1).toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-bold truncate leading-tight">
+                  {u.name || "—"}
+                  {u.banned ? <span className="ml-1.5 text-[9px] font-extrabold text-destructive border border-destructive/50 rounded-full px-1.5 py-0.5 align-middle">ব্যান</span> : null}
+                </div>
+                <div className="text-[10px] text-muted-foreground truncate">{u.email || ""}</div>
+              </div>
+            </div>
+            <div className="text-[9px] font-bold rounded-full border border-border px-2 py-0.5 shrink-0 text-muted-foreground">
+              {u.provider === "google" ? "🔵 Google" : u.email ? "✉️ ইমেইল" : "❓ আননোন"}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 text-[11px] mb-2">
+            <span className="inline-block w-2 h-2 rounded-full" style={{ background: u.online ? "#4ade80" : "#f87171" }} />
+            <b>{u.online ? t("admOnline") : t("admOffline")}</b>
+            <span className="text-muted-foreground">· {t("admLastSeen")}: {ago(u.lastSeen)}</span>
+          </div>
+
+          <div className="text-[11px] leading-relaxed space-y-0.5">
+            <div className="text-muted-foreground">
+              👥 {t("admFriendsOf")} ({num(u.friendsCount)}): {u.friendNames.length ? u.friendNames.join(" · ") : "—"}
+            </div>
+            <div>
+              {t("admUserVideo")}: {" "}
+              {u.videoToday && Object.values(u.videoToday).some((v) => v > 0) ? (
+                Object.entries(u.videoToday)
+                  .filter(([, v]) => v > 0)
+                  .map(([k, v]) => `${reelIcon(k)} ${reelLabel(k)} ${num(v)} ${t("min")}`)
+                  .join(" · ")
+              ) : (
+                <span className="text-muted-foreground">{t("admVideoNone")}</span>
+              )}
+            </div>
+            {u.habitsToday ? (
+              <div>
+                {t("admUserHabits")}: 🕌 {num(u.habitsToday.prayers)}/{num(5)} · 💧 {num(u.habitsToday.waterMl)} {t("admMlUnit")} · 📿 {num(u.habitsToday.dhikr)} · 🔥 {num(u.streak)} {t("days")} · ⭐ {num(u.points)}
+              </div>
+            ) : (
+              <div className="text-muted-foreground">{t("admUserHabits")}: —</div>
+            )}
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
 }
 
 function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
-  const { t, state } = useStore();
+  const { t } = useStore();
   const { cfg, loaded, refresh } = useServerCfg();
   const [draft, setDraft] = useState<ServerCfg>(cfg);
+  // v5.1 (owner round-21): the admin panel now has TWO tabs — 📊 স্ট্যাটাস
+  // (the retired GitHub-Pages panel, now read-only inside the app) and ⚙️
+  // সেটিংস (ads + Firebase + app updates + PIN — everything it always had).
+  const [tab, setTab] = useState<"status" | "settings">("status");
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [newPin, setNewPin] = useState("");
-  const acc = state.account;
-
-  // ---------- v5.1: system status + account boxes + Refresh Now ----------
-  const [users, setUsers] = useState<FbProfile[] | null>(null); // null = loading
-  const [box, setBox] = useState<"google" | "mail" | "unknown" | "">("");
-  const [svcOn, setSvcOn] = useState(false);
-  const [hbAt, setHbAt] = useState(0);
-  const [notifPerm, setNotifPerm] = useState<"" | "granted" | "denied" | "prompt" | "unsupported">("");
-  const [battPerm, setBattPerm] = useState<"" | "granted" | "denied">("");
-  const [testMsg, setTestMsg] = useState("");
-
-  const runDiag = useCallback(async () => {
-    setHbAt(Number(localStorage.getItem("oh_listener_hb") || 0));
-    if (isNative()) {
-      void nativeChatServiceRunning().then(setSvcOn);
-      void nativeNotifPermission().then(setNotifPerm);
-      void nativePermissionStatus().then((p) => setBattPerm(p?.battery || ""));
-    } else {
-      setSvcOn(false);
-      setNotifPerm("unsupported");
-      setBattPerm("");
-    }
-  }, []);
-
-  /** v5.1 REFRESH NOW: one tap re-reads the live config + every account +
-  * the whole notification diagnosis. */
-  const loadAll = useCallback(async () => {
-    void refresh();
-    void fbListUsers().then(setUsers);
-    void runDiag();
-  }, [refresh, runDiag]);
-
-  useEffect(() => {
-    void loadAll();
-  }, [loadAll]);
-
-  // keep the diagnosis live while the panel is open
-  useEffect(() => {
-    const iv = setInterval(() => void runDiag(), 5000);
-    return () => clearInterval(iv);
-  }, [runDiag]);
-
-  // v5.1: the background listener writes a heartbeat every cycle — a beat
-  // within the last 90s means the headless page is ALIVE (rules v3.3+).
-  const hbAlive = hbAt > 0 && Date.now() - hbAt < 90_000;
+  const acc = useStore().state.account;
 
   useEffect(() => {
     setDraft(cfg);
@@ -413,16 +580,22 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
     setBusy(true);
     try {
       if (isNative()) {
-        // APK: save DIRECTLY to the owner's Firestore (same doc fetchRemoteMeta
-        // reads) — no server needed; every install picks it up within 5 min.
-        // v5.1: through adminWriteMeta — claims adminUid on the first write and
-        // enforces the owner's account afterwards (admin security isolation).
-        const r = await adminWriteMeta(acc?.uid, { cfg: JSON.parse(JSON.stringify(draft)) });
-        if (r.ok) {
+        // v4.2 (owner round-17): THE UPDATE-SAVE FIX. The old mirrorMeta()
+        // write was silently permission-denied under the v4.0 Firestore rules
+        // (the in-app panel never claimed adminUid) — that is exactly why the
+        // owner saw "সমস্যা হয়েছে — আবার চেষ্টা করো" and why NO user ever got
+        // the update. panelSaveCfg writes the cfg AND the adminUid claim, and
+        // returns a precise reason so the REAL fix can be shown.
+        const r = await panelSaveCfg(draft, acc ? { uid: acc.uid, email: acc.email } : null);
+        if (r.reason === "ok") {
+          setErr("");
           setSaved(true);
           setTimeout(() => setSaved(false), 2500);
           await refresh();
-        } else setErr(r.notAdmin ? t("adminNotAdmin") : t("error"));
+        } else {
+          setSaved(false);
+          setErr(panelSaveErrText(r, t));
+        }
         setBusy(false);
         return;
       }
@@ -450,9 +623,9 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
     try {
       if (isNative()) {
         const hash = await sha256Hex(`${newPin}::${PIN_SALT}`);
-        // v5.1: adminUid-aware write (claims admin if the field is still empty)
-        const r = await adminWriteMeta(acc?.uid, { adminPin: hash });
-        alert(r.ok ? t("adminSaved") : r.notAdmin ? t("adminNotAdmin") : t("error"));
+        // v4.2: the adminUid claim rides along (same rules fix as save()).
+        const ok = await remoteWriteMeta(null, hash, acc ? { uid: acc.uid, email: acc.email } : null);
+        alert(ok ? t("adminSaved") : nativeWriteErr());
         setNewPin("");
         return;
       }
@@ -492,130 +665,28 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
           </button>
         </div>
 
-        {/* ---- v5.1: 🩺 System status — the notification truth ---- */}
-        <Card className="mb-4">
-          <SectionTitle title={`🩺 ${t("sysTitle")}`} sub={t("sysSub")} />
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between rounded-lg bg-secondary/60 px-2.5 py-2 text-[11px]">
-              <span className="font-semibold">⚙️ {t("stService")}</span>
-              <span className={`font-bold ${svcOn ? "text-green-600 dark:text-green-400" : "text-red-500"}`}>
-                {svcOn ? t("svcOn") : t("svcOff")}
-              </span>
-            </div>
-            <div className="flex items-center justify-between rounded-lg bg-secondary/60 px-2.5 py-2 text-[11px]">
-              <span className="font-semibold">🎧 {t("stListener")}</span>
-              <span className={`font-bold ${hbAlive ? "text-green-600 dark:text-green-400" : "text-red-500"}`}>
-                {hbAlive ? t("stListenerAlive") : t("stListenerDead")}
-              </span>
-            </div>
-            <div className="flex items-center justify-between rounded-lg bg-secondary/60 px-2.5 py-2 text-[11px]">
-              <span className="font-semibold">🔔 {t("stNotifPerm")}</span>
-              {notifPerm === "granted" ? (
-                <span className="font-bold text-green-600 dark:text-green-400">✓</span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => void nativeRequestNotifications().then(() => setTimeout(() => void runDiag(), 1200))}
-                  className="rounded-lg bg-primary/15 border border-primary/30 text-primary font-bold px-2.5 py-1"
-                >
-                  {t("stGrant")}
-                </button>
-              )}
-            </div>
-            <div className="flex items-center justify-between rounded-lg bg-secondary/60 px-2.5 py-2 text-[11px]">
-              <span className="font-semibold">🔋 {t("stBattery")}</span>
-              {battPerm === "granted" ? (
-                <span className="font-bold text-green-600 dark:text-green-400">✓</span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => void nativeRequestBatteryExemption().then(() => setTimeout(() => void runDiag(), 1500))}
-                  className="rounded-lg bg-primary/15 border border-primary/30 text-primary font-bold px-2.5 py-1"
-                >
-                  {t("stBatteryAsk")}
-                </button>
-              )}
-            </div>
-          </div>
+        {/* v5.1: the two admin tabs */}
+        <div className="flex gap-2 mb-4">
           <button
             type="button"
-            onClick={async () => {
-              const r = await nativeRealTestNotification(`🔔 ${t("appName")}`, t("testNotif"));
-              setTestMsg(r === "fired" ? t("testNotifOk") : r === "permDenied" ? t("testNotifDeny") : t("testNotifWeb"));
-            }}
-            className="w-full mt-2.5 rounded-xl bg-primary/15 border border-primary/30 text-primary text-xs font-bold py-2.5 min-h-[44px]"
+            onClick={() => setTab("status")}
+            className={`flex-1 rounded-xl py-2.5 text-sm font-bold border min-h-[44px] ${tab === "status" ? "bg-primary text-primary-foreground border-primary" : "bg-secondary text-foreground border-border"}`}
           >
-            {t("testNotif")}
+            {t("admTabStatus")}
           </button>
-          {testMsg ? <div className="text-[10px] text-muted-foreground mt-1.5 text-center leading-relaxed">{testMsg}</div> : null}
-        </Card>
-
-        {/* ---- v5.1: 👥 Refresh Now + the 3 account boxes ---- */}
-        <Card className="mb-4">
-          <SectionTitle title={`👥 ${t("accountsTitle")}`} sub={t("accountsSub")} />
           <button
             type="button"
-            onClick={() => void loadAll()}
-            className="w-full rounded-xl bg-primary text-primary-foreground text-sm font-bold py-3 min-h-[48px] mb-1"
+            onClick={() => setTab("settings")}
+            className={`flex-1 rounded-xl py-2.5 text-sm font-bold border min-h-[44px] ${tab === "settings" ? "bg-primary text-primary-foreground border-primary" : "bg-secondary text-foreground border-border"}`}
           >
-            🔄 {t("refreshNow")}
+            {t("admTabSettings")}
           </button>
-          <div className="text-[10px] text-muted-foreground text-center mb-3">{t("refreshNowSub")}</div>
-          <div className="grid grid-cols-3 gap-2 mb-3">
-            {(
-              [
-                { id: "google", icon: "📧", title: t("acctGoogle"), sub: t("acctGoogleSub"), n: users?.filter((u) => clsOf(u) === "google").length },
-                { id: "mail", icon: "✉️", title: t("acctMail"), sub: t("acctMailSub"), n: users?.filter((u) => clsOf(u) === "mail").length },
-                { id: "unknown", icon: "👤", title: t("acctUnknown"), sub: t("acctUnknownSub"), n: users?.filter((u) => clsOf(u) === "unknown").length },
-              ] as const
-            ).map((b) => (
-              <button
-                key={b.id}
-                type="button"
-                onClick={() => setBox(box === b.id ? "" : (b.id as typeof box))}
-                className={`rounded-xl border p-2.5 text-center transition-colors ${
-                  box === b.id ? "border-primary bg-primary/15" : "border-border bg-secondary/60"
-                }`}
-              >
-                <div className="text-lg leading-none mb-1">{b.icon}</div>
-                <div className="text-xs font-bold">{b.title}</div>
-                <div className="text-[9px] text-muted-foreground leading-tight mb-1">{b.sub}</div>
-                <div className="text-sm font-extrabold text-primary">{b.n === undefined ? "…" : b.n}</div>
-              </button>
-            ))}
-          </div>
-          <div className="text-[10px] text-muted-foreground mb-2">
-            {t("acctTotal")}: {users === null ? "…" : users.length}
-          </div>
-          {box ? (
-            <div className="rounded-xl border border-border bg-secondary/40 p-2 flex flex-col gap-1.5">
-              {(users || [])
-                .filter((u) => clsOf(u) === box)
-                .slice(0, 100)
-                .map((u) => {
-                  const online = Boolean(u.lastAt && Date.now() - u.lastAt < 120_000);
-                  return (
-                    <div key={u.uid} className="rounded-lg bg-card border border-border px-2.5 py-2 text-[11px]">
-                      <div className="flex items-center gap-1.5">
-                        <span className={online ? "text-green-600 dark:text-green-400" : "text-red-500"}>●</span>
-                        <span className="font-bold truncate">{u.name || "—"}</span>
-                        {u.banned ? <span className="ml-auto shrink-0 text-[9px] font-bold text-destructive border border-destructive/40 rounded px-1">{t("bannedTag")}</span> : null}
-                      </div>
-                      <div className="text-muted-foreground truncate">{u.email || t("acctUnknownSub")}</div>
-                      <div className="text-muted-foreground">
-                        {t("lastSeen")}: {u.lastAt ? fmtClock(u.lastAt) : "—"}
-                        {u.provider ? ` · ${u.provider}` : ""}
-                      </div>
-                    </div>
-                  );
-                })}
-              {users !== null && users.filter((u) => clsOf(u) === box).length === 0 ? (
-                <div className="text-[11px] text-muted-foreground text-center py-2">{t("acctNoneHere")}</div>
-              ) : null}
-            </div>
-          ) : null}
-        </Card>
+        </div>
 
+        {tab === "status" ? (
+          <StatusTab />
+        ) : (
+          <>
         {/* ---- Ads ---- */}
         <Card className="mb-4">
           <SectionTitle title={`💰 ${t("adsSection")}`} sub={t("adsSub")} />
@@ -705,6 +776,14 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
         {/* ---- Auto-update ---- */}
         <Card className="mb-4">
           <SectionTitle title={`🔄 ${t("admUpdate")}`} sub={t("admUpdateSub")} />
+          {/* v4.0: the owner kept seeing "same version 3.2.0 again and again"
+              (round-15) — the version field below is the number USERS get
+              pushed to, and it was pre-filled from Firestore. Show what's
+              INSTALLED on this phone right next to it so the two can never be
+              confused again. */}
+          <p className="text-[11px] text-muted-foreground mb-2 leading-relaxed">
+            📱 এই ফোনে এখন ইনস্টল হয়ে আছে: <b>v{APP_VERSION}{APP_BUILD > 0 ? ` · Build ${APP_BUILD}` : ""}</b> — নতুন APK বানালে নিচের ঘরে নতুন নাম্বারটা (যেমন 4.1.0) বসাও।
+          </p>
           <input
             value={draft.latestVersion}
             onChange={(e) => setDraft({ ...draft, latestVersion: e.target.value.trim() })}
@@ -726,13 +805,16 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
           <ToggleRow label={t("admForce")} checked={draft.forceUpdate} onChange={(v) => setDraft({ ...draft, forceUpdate: v })} />
           <p className="text-[11px] text-muted-foreground mt-2 leading-relaxed">{t("admWebNote")}</p>
           <div className="mt-2 rounded-xl bg-secondary/60 border border-border p-3">
-            <p className="text-[11px] font-bold mb-1">📦 নতুন আপডেট কীভাবে পাঠাবেন (৪ ধাপ):</p>
+            <p className="text-[11px] font-bold mb-1">📦 নতুন আপডেট পাঠানোর নিয়ম (৪ ধাপ):</p>
             <ol className="text-[10px] text-muted-foreground leading-relaxed list-decimal list-inside space-y-0.5">
-              <li>GitHub-এ নতুন ZIP আপলোড → <b>Run workflow</b> → নতুন APK নামাও</li>
-              <li>নিচে <b>ভার্সন</b>-এ নতুন নাম্বার লেখো (যেমন 1.4.0)</li>
-              <li><b>APK URL</b>-এ নতুন APK-র ডাউনলোড লিংক বসাও</li>
-              <li>💾 Save চাপো — <b>Force update</b> চালু রাখলে সবার অ্যাপ আটকে যাবে যতক্ষণ না আপডেট করে</li>
+              <li>কোড রিপোতে নতুন <b>our-habit-github-upload.zip</b> আপলোড করো (Add file → Upload files → Commit) — বিল্ড এখন অটো হবে না</li>
+              <li><b>Actions</b> → “Build Android APK (manual — Run workflow)” → সবুজ <b>Run workflow</b> চাপো — ১০–১৫ মিনিটে নতুন APK রিলিজ হয়ে যাবে (nadiramoni/our-habit-apk)</li>
+              <li>নিচে <b>ভার্সন</b>-এ নতুন নাম্বার লেখো (আগের চেয়ে <b>বড়</b> — যেমন 4.2.0), <b>APK URL</b>-এ <b>https://github.com/nadiramoni/our-habit-apk/releases/latest</b> বসাও (একবার দিলেই আর বদলাতে হবে না)</li>
+              <li>💾 <b>Save</b> চাপো — ৫ মিনিটের মধ্যে সবার অ্যাপে “নতুন আপডেট” দেখাবে; <b>Force update</b> চালু রাখলে সবার অ্যাপ আটকে যাবে যতক্ষণ না আপডেট করে</li>
             </ol>
+            <p className="text-[10px] text-muted-foreground mt-1.5 leading-relaxed">
+              💡 ভার্সন নাম্বার অবশ্যই ইউজারদের ইনস্টল করা ভার্সনের চেয়ে <b>বড়</b> হতে হবে — সেই কারণেই কেউ আপডেট দেখতো না। আর APK URL-এর লিংকটা একবার দিলেই সবসময় সর্বশেষ রিলিজ খুলবে।
+            </p>
           </div>
         </Card>
 
@@ -760,6 +842,9 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
             ⏳ কনফিগ লোড হচ্ছে… লোড শেষ হলে Save চালু হবে (খালি কনফিগ সেভ হওয়া আটকানো হলো)
           </p>
         ) : null}
+          </>
+        )}
+        {tab === "settings" ? (
         <div className="fixed bottom-0 left-0 right-0 p-4 bg-background/95 backdrop-blur border-t border-border" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 16px)" }}>
           <div className="max-w-md mx-auto">
             <button
@@ -772,6 +857,162 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
             </button>
           </div>
         </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * v5.0 (owner round-19, sections 10–11): SERVER-LEVEL admin verification.
+ * The PIN alone is NEVER enough — after the PIN gate, the signed-in account
+ * is checked against the SERVER-side admin record (app/meta.adminUid, the
+ * same claim the Firestore rules enforce on every cfg write):
+ *   • match (or no claim yet — first-run setup) → the panel opens;
+ *   • no match → an inline “sign in as admin” card (email+password) — so the
+ *     owner can open the FULL panel from ANY phone (a friend's phone too);
+ *     after finishing they sign out and the friend logs back in.
+ * A random visitor with the PIN gets stuck here: the panel never opens and
+ * Firestore rules deny every write anyway.
+ */
+function AdminVerify({ onPass, onClose }: { onPass: () => void; onClose: () => void }) {
+  const { state, t } = useStore();
+  const { cfg } = useServerCfg();
+  const acc = state.account;
+  // live account ref — after fbEmailSignIn the store swaps the account
+  // asynchronously; signIn() must read the LATEST value, not its closure.
+  const accRef = useRef(acc);
+  accRef.current = acc;
+  const [holder, setHolder] = useState<{ uid: string; email: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      // DEV-ONLY shortcut (v5.1): bun run dev + the local flag lets a
+      // signed-in dev skip the adminUid match — needed to e2e-test the panel
+      // body on the owner's REAL Firebase, where the adminUid claim is the
+      // owner's own account. Inert everywhere else: production builds bake
+      // NODE_ENV=production, so the guard never passes in the APK or web.
+      try {
+        if (process.env.NODE_ENV === "development" && typeof window !== "undefined" && localStorage.getItem("__oh_dev_admin_verify_skip") === "1") {
+          onPass();
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+      try {
+        const raw = await readRawMeta();
+        const adminUid = (raw?.adminUid as string) || "";
+        const adminEmail = (raw?.adminEmail as string) || "";
+        if (!alive) return;
+        if (!adminUid) {
+          onPass(); // first run — no claim yet; the first save claims it
+          return;
+        }
+        if (adminUid === acc?.uid) {
+          onPass(); // the signed-in account IS the server-side admin
+          return;
+        }
+        setHolder({ uid: adminUid, email: adminEmail });
+        setLoading(false);
+      } catch {
+        if (alive) { setErr(t("error")); setLoading(false); }
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const signIn = async () => {
+    if (!email.trim() || !pass) return;
+    setErr("");
+    setBusy(true);
+    const r = await fbEmailSignIn(email.trim(), pass, cfg);
+    setBusy(false);
+    if (!r.ok) {
+      setErr(t("admVerifyErr"));
+      return;
+    }
+    const raw = await readRawMeta();
+    const adminUid = (raw?.adminUid as string) || "";
+    if (!adminUid) {
+      onPass(); // no claim yet — the first save claims admin for this account
+      return;
+    }
+    // Signed in with the ADMIN's own email+password → Firebase Auth itself
+    // verified possession of the admin credential — server-level check passed.
+    if (holder && email.trim().toLowerCase() === (holder.email || "").toLowerCase()) {
+      onPass();
+      return;
+    }
+    // Different email: wait for the store to swap the account, then compare
+    // the new signed-in uid against the server record.
+    for (let i = 0; i < 10; i++) {
+      await new Promise((res) => setTimeout(res, 500));
+      if (accRef.current?.uid === adminUid) {
+        onPass();
+        return;
+      }
+    }
+    setErr(t("admVerifyWrong"));
+  };
+
+  if (loading) {
+    return (
+      <div className="fixed inset-0 z-[90] bg-background flex flex-col items-center justify-center gap-3 p-6">
+        <div className="w-16 h-16 rounded-3xl bg-primary/15 border border-primary/30 flex items-center justify-center text-3xl">🛡️</div>
+        <p className="text-xs text-muted-foreground">{t("admVerifySub")}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-[90] bg-background flex flex-col items-center justify-center gap-4 p-6 overflow-y-auto">
+      <div className="w-full max-w-sm">
+        <div className="w-16 h-16 mx-auto rounded-3xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-3xl mb-3">🛡️</div>
+        <h2 className="text-lg font-extrabold text-center">{t("admVerifyTitle")}</h2>
+        <p className="text-xs text-muted-foreground text-center mt-1 mb-3">{t("admVerifySub")}</p>
+
+        <div className="rounded-xl border border-border bg-secondary/50 p-3 mb-3 text-xs space-y-1.5">
+          <div>🔑 {t("admVerifyHolder")}: <b>{holder?.email || "—"}</b></div>
+          <div>👤 {t("admVerifyCurAcc")}: <b>{acc?.email || "—"}</b></div>
+          <div className="text-muted-foreground">{t("admVerifyNeedSignIn")}</div>
+        </div>
+
+        <input
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="admin@email.com"
+          type="email"
+          className="w-full bg-muted rounded-xl px-4 py-3 text-sm border border-border outline-none focus:ring-1 focus:ring-ring mb-2"
+        />
+        <input
+          value={pass}
+          onChange={(e) => setPass(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && void signIn()}
+          placeholder="পাসওয়ার্ড"
+          type="password"
+          className="w-full bg-muted rounded-xl px-4 py-3 text-sm border border-border outline-none focus:ring-1 focus:ring-ring mb-2"
+        />
+        {err ? <p className="text-xs text-destructive mb-2">⚠️ {err}</p> : null}
+        <button
+          type="button"
+          onClick={() => void signIn()}
+          disabled={busy || !email.trim() || !pass}
+          className="w-full rounded-xl bg-primary text-primary-foreground text-sm font-bold py-3 min-h-[48px] disabled:opacity-50 mb-2"
+        >
+          {busy ? "…" : t("admVerifySignIn")}
+        </button>
+        <p className="text-[10px] text-muted-foreground leading-relaxed">{t("admVerifyNote")}</p>
+        <button type="button" onClick={onClose} className="w-full rounded-xl bg-secondary py-2.5 text-sm font-bold mt-3">
+          ✕ {t("cancel")}
+        </button>
       </div>
     </div>
   );
@@ -779,7 +1020,14 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
 
 export default function AdminPanel({ onClose }: { onClose: () => void }) {
   const [pin, setPin] = useState("");
-  const [unlocked, setUnlocked] = useState(false);
-  if (!unlocked) return <PinGate onUnlock={(p) => { setPin(p); setUnlocked(true); }} onClose={onClose} />;
+  const [stage, setStage] = useState<"pin" | "verify" | "open">("pin");
+  if (stage === "pin")
+    return (
+      <PinGate
+        onUnlock={(p) => { setPin(p); setStage("verify"); }}
+        onClose={onClose}
+      />
+    );
+  if (stage === "verify") return <AdminVerify onPass={() => setStage("open")} onClose={onClose} />;
   return <Panel onClose={onClose} pin={pin} />;
 }

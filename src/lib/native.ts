@@ -24,6 +24,21 @@ export interface UsageResult {
   shortsYt: number;
   shortsFb: number;
   shortsIg: number;
+  // v5.0 (owner round-19): the owner's video-app list as separate buckets —
+  // এক্স, কুকু টিভি, মোজ + BD drama/OTT apps (minutes, legacy compat).
+  x?: number;
+  kukutv?: number;
+  moj?: number;
+  chorki?: number;
+  hoichoi?: number;
+  bongo?: number;
+  bioscope?: number;
+  toffee?: number;
+  /** v5.0: PRECISE per-app SECONDS (appid → seconds) + the day total — the
+   *  display source for the “৪৫ সেকেন্ড / ৫ মিনিট / ১ ঘণ্টা ১০ মিনিট”
+   *  format. Undefined on builds without the new engine. */
+  apps?: Record<string, number>;
+  appsTotal?: number;
 }
 
 export function isNative(): boolean {
@@ -50,18 +65,31 @@ export async function nativeGetVideoUsage(): Promise<UsageResult | null> {
   if (!p) return null;
   try {
     const res = await p.getVideoUsage();
+    const num = (v: unknown): number => Number(v) || 0;
+    const numOrU = (v: unknown): number | undefined => (v === undefined || v === null ? undefined : Number(v) || 0);
     return {
-      facebook: Number(res?.facebook) || 0,
-      ytshorts: Number(res?.ytshorts) || 0,
-      ytlong: Number(res?.ytlong) || 0,
-      tiktok: Number(res?.tiktok) || 0,
-      instagram: Number(res?.instagram) || 0,
-      other: Number(res?.other) || 0,
+      facebook: num(res?.facebook),
+      ytshorts: num(res?.ytshorts),
+      ytlong: num(res?.ytlong),
+      tiktok: num(res?.tiktok),
+      instagram: num(res?.instagram),
+      other: num(res?.other),
       granted: Boolean(res?.granted),
-      shortsCount: Number(res?.shortsCount) || 0,
-      shortsYt: Number(res?.shortsYt) || 0,
-      shortsFb: Number(res?.shortsFb) || 0,
-      shortsIg: Number(res?.shortsIg) || 0,
+      shortsCount: num(res?.shortsCount),
+      shortsYt: num(res?.shortsYt),
+      shortsFb: num(res?.shortsFb),
+      shortsIg: num(res?.shortsIg),
+      // v5.0: the new buckets + the precise seconds map (optional).
+      x: numOrU(res?.x),
+      kukutv: numOrU(res?.kukutv),
+      moj: numOrU(res?.moj),
+      chorki: numOrU(res?.chorki),
+      hoichoi: numOrU(res?.hoichoi),
+      bongo: numOrU(res?.bongo),
+      bioscope: numOrU(res?.bioscope),
+      toffee: numOrU(res?.toffee),
+      apps: res?.apps && typeof res.apps === "object" ? (res.apps as Record<string, number>) : undefined,
+      appsTotal: numOrU(res?.appsTotal),
     };
   } catch {
     return null;
@@ -577,10 +605,14 @@ export interface ExactAlarmSpec {
   body: string;
   sound: string; // res/raw file, e.g. "adhan.mp3"
   /** v2.9: the sentence SPOKEN at ring time with the user's registered name
-   * ("আনোয়ারুল সন সাকিব, তোমার পানি খাওয়ার সময় হইছে…") — empty for adhan
+   * ("Sakib, it's your time to drink water…") — empty for adhan
    * (owner: "আজানের ক্ষেত্রে না ভাই"). */
   speak?: string;
-  /** TTS language for the spoken sentence ("bn" | "en"). */
+  /** v4.1: the same call in ENGLISH — the native service speaks THIS when the
+   * user picked the বাংলা voice but the phone has no Bangla TTS voice
+   * installed (the call must never go silent/garbled). */
+  speakEn?: string;
+  /** TTS language for the spoken sentence ("bn" default, v4.2 | "en"). */
   lang?: string;
 }
 
@@ -609,6 +641,7 @@ export async function nativeScheduleExactAlarms(alarms: ExactAlarmSpec[]): Promi
         body: a.body,
         sound: a.sound,
         speak: a.speak || "",
+        speakEn: a.speakEn || "",
         lang: a.lang || "bn",
       })),
     });
@@ -623,6 +656,19 @@ export async function nativeCancelExactAlarms(): Promise<void> {
   if (!p) return;
   try {
     await p.cancelAll();
+  } catch {
+    /* ignore */
+  }
+}
+
+/** v3.3: store the user's gender for the alarm VOICE — AlarmSpeakService tries
+ *  a female voice for girls / a male voice for boys (best-effort: depends on
+ *  the TTS engine exposing gendered voices). */
+export async function nativeSetVoiceGender(gender: "male" | "female"): Promise<void> {
+  const p = exactPlugin();
+  if (!p?.setVoiceGender) return;
+  try {
+    await p.setVoiceGender({ gender });
   } catch {
     /* ignore */
   }
@@ -696,12 +742,12 @@ export async function nativeOpenFullScreenSettings(): Promise<boolean> {
  * (throttled per key) — used by the Reels-limit warning while the app is
  * open (the background guard covers app-closed).
  */
-export async function nativeSpeakOnce(key: string, text: string, lang = "bn", throttleMin = 30): Promise<boolean> {
+export async function nativeSpeakOnce(key: string, text: string, lang = "bn", throttleMin = 30, textEn = ""): Promise<boolean> {
   if (!isNative()) return false;
   const p = exactPlugin();
   if (!p?.speakOnce) return false;
   try {
-    const r = await p.speakOnce({ key, text, lang, throttleMin });
+    const r = await p.speakOnce({ key, text, lang, throttleMin, textEn: textEn || text });
     return Boolean(r?.spoken);
   } catch {
     return false;
@@ -754,11 +800,11 @@ export async function nativeChatServiceSetMuted(muted: boolean): Promise<void> {
 }
 
 /** Push the daily Reels limit + spoken warning to the background guard. */
-export async function nativeSetReelsLimit(limitMin: number, warnText: string, lang: string): Promise<void> {
+export async function nativeSetReelsLimit(limitMin: number, warnText: string, lang: string, warnTextEn = ""): Promise<void> {
   const p = chatPlugin();
   if (!p?.setReelsLimit) return;
   try {
-    await p.setReelsLimit({ limitMin, warnText, lang });
+    await p.setReelsLimit({ limitMin, warnText, lang, warnTextEn: warnTextEn || warnText });
   } catch {
     /* ignore */
   }
@@ -770,9 +816,29 @@ export async function nativeChatServiceRunning(): Promise<boolean> {
   if (!p?.status) return false;
   try {
     const r = await p.status();
+    // v5.0: `running` now means ALIVE — the service writes a 30s heartbeat
+    // (KEY_LAST_BEAT) and the plugin only reports true while the beat is
+    // fresh (≤ 90s). A service Android killed silently no longer counts as
+    // running, so the in-app watchdog takes the notification over.
     return Boolean(r?.running);
   } catch {
     return false;
+  }
+}
+
+/** v5.0: consume the pending chat deep link (a background notification tap —
+ * MainActivity saved the friend's uid+name from the PendingIntent extras).
+ * Returns {uid, name} once, then null until the next tap. */
+export async function nativePendingOpenChat(): Promise<{ uid: string; name: string } | null> {
+  if (!isNative()) return null;
+  const p = chatPlugin();
+  if (!p?.pendingOpenChat) return null;
+  try {
+    const r = await p.pendingOpenChat();
+    if (r && r.uid) return { uid: String(r.uid), name: String(r.name || "") };
+    return null;
+  } catch {
+    return null;
   }
 }
 

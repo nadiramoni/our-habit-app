@@ -443,6 +443,11 @@ export function NameCapture() {
   // prefill from whatever name we already have (Google name split, etc.)
   const [first, setFirst] = useState("");
   const [last, setLast] = useState("");
+  // v3.3 gender (the voice tries to pick a female voice for girls / male for
+  // boys). v5.2 (owner round-22): the Bengali-spelling field is GONE — the
+  // alarm now says the name AS ENTERED ("নামও বলবে — তোমার যে ইংলিশ নামটা
+  // ঐটা বলবে"), so there is nothing left to spell in Bangla script.
+  const [gender, setGender] = useState<"" | "male" | "female">("");
 
   useEffect(() => {
     if (!acc) return;
@@ -465,7 +470,13 @@ export function NameCapture() {
     const full = `${first.trim()}${last.trim() ? ` ${last.trim()}` : ""}`;
     if (!first.trim()) return;
     setBusy(true);
-    updateSettings({ name: full, nameSet: true });
+    updateSettings({
+      name: full,
+      nameSet: true,
+      // v3.3 gender for the spoken alarm voice (v5.2: nameBn is retired —
+      // the English name itself is spoken now)
+      ...(gender ? { gender } : {}),
+    });
     setAccount({ ...acc, name: full });
     await fbUpdateProfileName(full); // Firebase displayName + usersIndex
     setBusy(false);
@@ -505,6 +516,27 @@ export function NameCapture() {
           />
         </div>
         <p className="text-[10px] text-muted-foreground mb-3 leading-relaxed">{t("yourNameNote")}</p>
+        {/* v3.3: gender — the alarm voice tries female for girls, male for boys */}
+        <div className="flex gap-2 mb-1">
+          {([
+            ["male", `👦 ${t("genderBoy")}`],
+            ["female", `👧 ${t("genderGirl")}`],
+          ] as const).map(([g, label]) => (
+            <button
+              key={g}
+              type="button"
+              onClick={() => setGender(gender === g ? "" : (g as "male" | "female"))}
+              className={`flex-1 rounded-xl text-xs font-bold py-2.5 min-h-[40px] border transition-colors ${
+                gender === g
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-muted text-muted-foreground border-border"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-muted-foreground mb-3 leading-relaxed">{t("genderNote")}</p>
         <div className="flex gap-2">
           <button
             type="button"

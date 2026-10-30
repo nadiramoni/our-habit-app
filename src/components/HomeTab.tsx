@@ -20,6 +20,9 @@ import {
 import { dayPoints, fetchPrayerTimes, reminderOfTheDay, dhikrTotal, computeStreaks, MAX_POINTS } from "@/lib/logic";
 import AdsBanner from "@/components/AdsBanner";
 import { isNative, nativeGetVideoUsage, nativeOpenUsageAccess, nativeVibrate, nativeEnsureNotifPermission, nativeConfirmNotification, nativeRequestNotifications, nativeOpenNotificationSettings, UsageResult } from "@/lib/native";
+// v5.0: localized 12h clocks (রাত ১২:৩০ / সকাল ৯:৩০), the video duration
+// format (৪৫ সেকেন্ড / ৫ মিনিট / ১ ঘণ্টা ১০ মিনিট) + the device language.
+import { appLang, fmtDur, fmtHM } from "@/lib/i18n";
 import { playAdd, playAlarmOn, playChime, playFanfare, playMinus, playStart, playTick, previewSound } from "@/lib/audio";
 import { glassesOf, waterAlarmTimes, WaterAlarmCfg, shiftTime, AZAN_SOUNDS } from "@/lib/types";
 
@@ -47,14 +50,11 @@ function AlarmConfirm({ text, warn }: { text: string; warn?: boolean }) {
   );
 }
 
-/** "HH:MM" (24h) → "8:00 AM" — how the owner's reference app shows times. */
+/** "HH:MM" (24h) → localized 12h — v5.0 (owner round-19): the Bangladesh
+ * convention in Bengali (রাত ১২:৩০, সকাল ৯:৩০, দুপুর ১২:৩০…) and AM/PM in
+ * English. Used for EVERY clock the user sees (alarms, prayers, sleep). */
 function fmt12(hhmm: string): string {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || "");
-  if (!m) return hhmm || "";
-  const h = parseInt(m[1], 10);
-  const ap = h < 12 ? "AM" : "PM";
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${h12}:${m[2]} ${ap}`;
+  return fmtHM(hhmm, appLang());
 }
 
 /**
@@ -202,8 +202,9 @@ function Header({ onSecret }: { onSecret?: () => void }) {
   const log = getLog(state, today);
   const holdRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // SECRET owner trigger: hold the greeting for 3s — invisible to normal users
-  // (v5.1: exactly 3 seconds, per the owner's "৩ সেকেন্ড চেপে ধরলে" rule)
+  // SECRET owner trigger: hold the greeting for 3s — invisible to normal users.
+  // v5.1 (owner round-21): 2.5s → 3000ms — “তিন সেকেন্ড চেপে ধরে রাখলে
+  // অ্যাডমিন প্যানেল আসে” — the in-app admin panel (status + ads + updates).
   const startHold = () => {
     if (!onSecret) return;
     cancelHold();
@@ -233,12 +234,12 @@ function Header({ onSecret }: { onSecret?: () => void }) {
   const dateLabel = useMemo(() => {
     try {
       const d = new Date();
-      const loc = state.settings.language === "bn" ? "bn-BD" : "en-GB";
+      const loc = appLang() === "bn" ? "bn-BD" : "en-GB";
       return new Intl.DateTimeFormat(loc, { weekday: "long", day: "numeric", month: "long" }).format(d);
     } catch {
       return today;
     }
-  }, [today, state.settings.language]);
+  }, [today]);
   return (
     <div className="flex items-start justify-between gap-3 mb-4">
       <div
@@ -323,7 +324,7 @@ function MosqueBadge() {
 function ReminderCard() {
   const { today, state, t } = useStore();
   const r = reminderOfTheDay(today);
-  const bn = state.settings.language === "bn";
+  const bn = appLang() === "bn";
   return (
     <div
       className="mb-4 rounded-3xl border border-primary/25 overflow-hidden relative"
@@ -370,14 +371,14 @@ function MonthCard() {
 
   const monthLabel = useMemo(() => {
     try {
-      return new Intl.DateTimeFormat(state.settings.language === "bn" ? "bn-BD" : "en-GB", {
+      return new Intl.DateTimeFormat(appLang() === "bn" ? "bn-BD" : "en-GB", {
         month: "long",
         year: "numeric",
       }).format(new Date(view.y, view.m - 1, 1));
     } catch {
       return `${view.y}-${String(view.m).padStart(2, "0")}`;
     }
-  }, [view, state.settings.language]);
+  }, [view]);
 
   // Saturday-first grid (Bangladesh week: শনি → শুক্র)
   const cells = useMemo(() => {
@@ -407,12 +408,12 @@ function MonthCard() {
     // one fixed reference week starting on a Saturday (2026-10-24 = শনিবার)
     const fmt = (d: string) => {
       const [y, m, dd] = d.split("-").map(Number);
-      return new Intl.DateTimeFormat(state.settings.language === "bn" ? "bn-BD" : "en-GB", { weekday: "narrow" }).format(
+      return new Intl.DateTimeFormat(appLang() === "bn" ? "bn-BD" : "en-GB", { weekday: "narrow" }).format(
         new Date(y, m - 1, dd)
       );
     };
     return ["2026-10-24", "2026-10-25", "2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30"].map(fmt);
-  }, [state.settings.language]);
+  }, []);
 
   // ---------- selected day detail ----------
   const selLog = state.logs[sel];
@@ -430,7 +431,7 @@ function MonthCard() {
   const selDateLabel = useMemo(() => {
     try {
       const [y, m, d] = sel.split("-").map(Number);
-      return new Intl.DateTimeFormat(state.settings.language === "bn" ? "bn-BD" : "en-GB", {
+      return new Intl.DateTimeFormat(appLang() === "bn" ? "bn-BD" : "en-GB", {
         weekday: "long",
         day: "numeric",
         month: "long",
@@ -438,7 +439,7 @@ function MonthCard() {
     } catch {
       return sel;
     }
-  }, [sel, state.settings.language]);
+  }, [sel]);
 
   const customList = state.customHabits || [];
 
@@ -592,7 +593,7 @@ function MonthCard() {
               {doneRow(Boolean(selLog.sleepBed && selLog.sleepWake))}
               <span className="text-xs font-medium flex-1">😴 {t("sleep")}</span>
               <span className="text-[11px] font-bold">
-                {selLog.sleepBed && selLog.sleepWake ? `${selLog.sleepBed} → ${selLog.sleepWake}` : t("notDone")}
+                {selLog.sleepBed && selLog.sleepWake ? `${fmt12(selLog.sleepBed)} → ${fmt12(selLog.sleepWake)}` : t("notDone")}
               </span>
             </div>
             {/* custom habits — done AND not-done both listed (owner: no habit মার্কিং) */}
@@ -747,7 +748,7 @@ export function PrayerCard() {
             >
               <span className="text-lg leading-none">{on ? "✅" : ["🌅", "☀️", "🌤", "🌇", "🌙"][i]}</span>
               <span className="text-[11px] font-semibold leading-none">{t(`prayer_${k}`)}</span>
-              {time ? <span className="text-[9px] opacity-70 leading-none">{time}</span> : null}
+              {time ? <span className="text-[9px] opacity-70 leading-none">{fmt12(time)}</span> : null}
             </button>
           );
         })}
@@ -979,10 +980,24 @@ function ReelsCard() {
           tiktok: res.tiktok,
           instagram: res.instagram,
           ytlong: res.ytlong,
+          x: res.x ?? 0,
+          kukutv: res.kukutv ?? 0,
+          moj: res.moj ?? 0,
+          chorki: res.chorki ?? 0,
+          hoichoi: res.hoichoi ?? 0,
+          bongo: res.bongo ?? 0,
+          bioscope: res.bioscope ?? 0,
+          toffee: res.toffee ?? 0,
           other: res.other,
         };
-        const sum = Object.values(next).reduce((a, b) => a + b, 0);
-        return { reels: next, reelsMin: sum };
+        const sum = Object.values(next).reduce((a, b) => a + (b || 0), 0);
+        return {
+          reels: next,
+          reelsMin: sum,
+          // v5.0: the precise per-app SECONDS map (present when the new
+          // usage engine is on the device; web/old builds just skip it).
+          ...(res.apps ? { reelsSec: res.apps } : {}),
+        };
       });
     }
     if (!silent) setAutoBusy(false);
@@ -1016,15 +1031,32 @@ function ReelsCard() {
   // 2h 05min style display (owner: মিনিট ও ঘণ্টা হিসেবে)
   const hm = (mins: number) => (mins >= 60 ? `${Math.floor(mins / 60)} ${t("hour")} ${mins % 60} ${t("min")}` : `${mins} ${t("min")}`);
 
-  const appRows = REEL_APPS.map((a) => ({ ...a, min: reels[a.id] })).filter((r) => r.min > 0).sort((a, b) => b.min - a.min);
-  const maxRow = Math.max(1, ...appRows.map((r) => r.min));
+  // v5.0 (owner round-19): PRECISE per-app seconds — the new usage engine
+  // returns an `apps` map of SECONDS (autoTrack stores it as log.reelsSec).
+  // Display: <1 মিনিট → সেকেন্ড; ≥1 মিনিট → মিনিট; >60 মিনিট → ঘণ্টা+মিনিট।
+  // Old days without reelsSec fall back to the legacy minutes × 60.
+  const lang = appLang();
+  const secsOf = (id: string): number => {
+    const s = (log.reelsSec || {})[id];
+    if (typeof s === "number") return s;
+    return (reels[id] || 0) * 60;
+  };
+  const totalSec = useMemo(() => REEL_APPS.reduce((a, x) => a + secsOf(x.id), 0), [log.reelsSec, reels]);
+  const dur = (sec: number) => fmtDur(sec, lang);
+  const limitSec = (state.settings.reelsLimitMin ?? 0) * 60;
+  const usedSec = totalSec;
+  const leftSec = Math.max(0, limitSec - usedSec);
+  const overLimit = limitSec > 0 && usedSec >= limitSec;
+
+  const appRows = REEL_APPS.map((a) => ({ ...a, sec: secsOf(a.id) })).filter((r) => r.sec > 0).sort((a, b) => b.sec - a.sec);
+  const maxRow = Math.max(1, ...appRows.map((r) => r.sec));
 
   return (
     <Card className="mb-4">
       <SectionTitle
         title={`🎬 ${t("reels")}`}
         sub={nativeOn ? t("autoTrackingOn") : t("autoTrackNote")}
-        right={<span className="text-xs text-muted-foreground shrink-0">{t("reelsTotalToday")}: <b className={total > 0 ? "text-destructive" : "text-primary"}>{hm(total)}</b></span>}
+        right={<span className="text-xs text-muted-foreground shrink-0">{t("reelsTotalToday")}: <b className={totalSec > 0 ? "text-destructive" : "text-primary"}>{dur(totalSec)}</b></span>}
       />
 
       {/* auto badge — the card measures itself */}
@@ -1083,7 +1115,13 @@ function ReelsCard() {
         <div className="rounded-xl bg-primary/10 text-primary text-sm font-medium px-3 py-2 mb-3">{t("reelsFreeToday")}</div>
       )}
 
-      {/* per-app live minutes — READ-ONLY bars (manual entry removed) */}
+      {/* v5.0: the honest note — Android cannot detect each video's playback
+          separately; this is the most accurate approximation possible. */}
+      {nativeOn && granted ? (
+        <p className="text-[10px] text-muted-foreground leading-relaxed mb-3">≈ {t("videoTimeNote")}</p>
+      ) : null}
+
+      {/* per-app live seconds — READ-ONLY bars (manual entry removed) */}
       {appRows.length ? (
         <div className="text-xs font-semibold mb-1.5">{t("reelsPerApp")}</div>
       ) : null}
@@ -1094,15 +1132,16 @@ function ReelsCard() {
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between gap-2 mb-1">
                 <span className="text-xs font-medium truncate">{t(`reel_${r.id}`)}</span>
-                <span className="text-[11px] font-bold text-destructive shrink-0">{hm(r.min)}</span>
+                <span className="text-[11px] font-bold text-destructive shrink-0">≈ {dur(r.sec)}</span>
               </div>
-              <Bar pct={r.min / maxRow} className="h-1.5" />
+              <Bar pct={r.sec / maxRow} className="h-1.5" />
             </div>
           </div>
         ))}
       </div>
 
-      {/* daily limit — crossing it fires a REAL tracking notification */}
+      {/* daily limit — v5.0: a real COUNTDOWN (used / left / over) built on
+          the precise seconds, plus the warning when the limit is crossed. */}
       <div className="rounded-xl border border-border bg-secondary/40 p-2.5 mt-3">
         <div className="text-xs font-semibold">⏰ {t("reelsLimitLabel")}</div>
         <div className="text-[10px] text-muted-foreground mb-2">{t("reelsLimitSub")}</div>
@@ -1117,19 +1156,33 @@ function ReelsCard() {
             </Chip>
           ))}
         </div>
-        {(state.settings.reelsLimitMin ?? 0) > 0 && total >= (state.settings.reelsLimitMin ?? 0) ? (
-          <div className="text-[11px] text-destructive font-semibold mt-2">🔔 {t("reelsLimitNotifTitle")}</div>
+        {limitSec > 0 ? (
+          <div className="mt-2.5">
+            <div className="flex items-center justify-between text-[11px] font-semibold mb-1">
+              <span className="text-muted-foreground">{t("videoUsedLabel")}: <b className={overLimit ? "text-destructive" : "text-foreground"}>{dur(Math.min(usedSec, limitSec))}</b></span>
+              <span className={overLimit ? "text-destructive" : "text-primary"}>{overLimit ? t("videoOverLimit") : `${t("videoLeftLabel")}: ${dur(leftSec)}`}</span>
+            </div>
+            <div className="h-2 rounded-full overflow-hidden bg-muted">
+              <div
+                className={`h-full ${overLimit ? "bg-destructive" : "bg-primary"}`}
+                style={{ width: `${Math.min(100, (usedSec / limitSec) * 100)}%` }}
+              />
+            </div>
+            {overLimit ? (
+              <div className="text-[11px] text-destructive font-semibold mt-2">🔔 {t("reelsLimitNotifBody")}</div>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
       {log.reelsMin !== null && log.reelsMin > 0 ? (
         <div className="rounded-xl bg-destructive/10 text-destructive text-sm font-medium px-3 py-2 mt-3">
-          ⏳ {hm(log.reelsMin)} — {t("reelsWasted")}
+          ⏳ {dur(usedSec)} — {t("reelsWasted")}
         </div>
       ) : null}
 
       <p className="text-xs text-muted-foreground mt-3">
-        {t("reelsWeek")}: <b className="text-destructive">{hm(weekWasted)}</b> · {t("reelsWarning")}
+        {t("reelsWeek")}: <b className="text-destructive">{dur(weekWasted * 60)}</b> · {t("reelsWarning")}
       </p>
       {!nativeOn ? <p className="text-[10px] text-muted-foreground mt-2 opacity-80">{t("autoTrackNote")}</p> : null}
     </Card>
@@ -1145,7 +1198,7 @@ function DhikrCard() {
   const [pulse, setPulse] = useState(false);
   const [doneMsg, setDoneMsg] = useState(false);
   const dhikr = DHIKRS.find((d) => d.id === sel) || DHIKRS[0];
-  const bn = state.settings.language === "bn";
+  const bn = appLang() === "bn";
   const total = dhikrTotal(log);
 
   const tap = () => {
@@ -1580,7 +1633,7 @@ function AzanSoundCard() {
       <div className="flex flex-col gap-1.5">
         {AZAN_SOUNDS.map((a, i) => {
           const isOn = chosen === a.file;
-          const label = state.settings.language === "bn" ? a.labelBn : a.labelEn;
+          const label = appLang() === "bn" ? a.labelBn : a.labelEn;
           return (
             <div
               key={a.file}
@@ -2039,7 +2092,7 @@ function HabitGrid({ onOpen }: { onOpen: (k: DetailKey) => void }) {
         icon="🕌"
         titleKey="prayers"
         value={`${prayersDone}/5`}
-        sub={state.settings.prayerTimes?.[nextPrayerKey || "fajr"] ? `${t("next")}: ${state.settings.prayerTimes?.[nextPrayerKey || "fajr"]}` : t("prayersSub")}
+        sub={state.settings.prayerTimes?.[nextPrayerKey || "fajr"] ? `${t("next")}: ${fmt12(state.settings.prayerTimes?.[nextPrayerKey || "fajr"] || "")}` : t("prayersSub")}
         pct={prayersDone / 5}
         tint="prayers"
         onOpen={onOpen}
@@ -2056,7 +2109,7 @@ function HabitGrid({ onOpen }: { onOpen: (k: DetailKey) => void }) {
       <HabitTile
         icon="😴"
         titleKey="sleep"
-        value={log.sleepBed && log.sleepWake ? `${log.sleepBed} → ${log.sleepWake}` : "—"}
+        value={log.sleepBed && log.sleepWake ? `${fmt12(log.sleepBed)} → ${fmt12(log.sleepWake)}` : "—"}
         sub={t("sleepSub")}
         pct={log.sleepBed && log.sleepWake ? 1 : 0}
         tint="sleep"

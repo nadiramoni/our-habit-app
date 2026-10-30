@@ -11,7 +11,8 @@ import { useStore } from "@/lib/store";
 import { useServerCfg } from "@/lib/cfg";
 import { Card, SectionTitle, Bar, Chip } from "@/components/ui-bits";
 import { PRAYER_KEYS, REEL_APPS, emptyReels, getLog } from "@/lib/types";
-import { DaySummary, FbProfile, addFriendByCode, listenDay, listenProfile, removeFriend, pairKeyOf } from "@/lib/cloud";
+import { DaySummary, FbProfile, addFriendByCode, isPresenceOnline, listenDay, listenProfile, removeFriend, pairKeyOf } from "@/lib/cloud";
+import { appLang, fmtHM } from "@/lib/i18n";
 import AdsBanner from "@/components/AdsBanner";
 import { openChat, chatUnreadCount } from "@/components/ChatScreen";
 
@@ -33,8 +34,10 @@ function PartnerCard({ p, meUid, onRemoved }: { p: FbProfile; meUid: string; onR
   const [open, setOpen] = useState(false);
   const [day, setDay] = useState<DaySummary | null>(null);
   const [, setChatTick] = useState(0);
-  // v5.1 PRESENCE: the friend's live heartbeat (🟢 ≤ 2 min, else 🔴)
-  const [peerLastAt, setPeerLastAt] = useState<number | null>(null);
+  // v5.0: the friend's LIVE presence — 🟢 the friend's app/service really
+  // holds a server connection (heartbeat < 2 min old); 🔴 no connection.
+  const [friendSeen, setFriendSeen] = useState<number | null>(null);
+  const [, setSeenTick] = useState(0);
   const today = new Date().toISOString().slice(0, 10);
   const pairKey = pairKeyOf(meUid, p.uid);
 
@@ -45,14 +48,19 @@ function PartnerCard({ p, meUid, onRemoved }: { p: FbProfile; meUid: string; onR
     };
   }, [p.uid, today, cfg]);
 
-  // v5.1: live lastAt subscription for the online dot
+  // v5.0: live lastSeen from usersIndex + a 30s ticker so the dot flips to
+  // red ON ITS OWN when the heartbeat goes stale (never stuck green).
   useEffect(() => {
-    const un = listenProfile(p.uid, (pr) => setPeerLastAt(pr?.lastAt || null), cfg);
+    const un = listenProfile(p.uid, (prof) => {
+      setFriendSeen((prof as unknown as { lastSeen?: number } | null)?.lastSeen ?? null);
+    }, cfg);
+    const iv = setInterval(() => setSeenTick((n) => n + 1), 30_000);
     return () => {
       if (un) un();
+      clearInterval(iv);
     };
   }, [p.uid, cfg]);
-  const online = peerLastAt != null && Date.now() - peerLastAt < 120_000;
+  const online = isPresenceOnline(friendSeen);
 
   // refresh the unread badge whenever a chat message lands
   useEffect(() => {
@@ -83,14 +91,18 @@ function PartnerCard({ p, meUid, onRemoved }: { p: FbProfile; meUid: string; onR
               ●
             </span>
           ) : null}
+          {/* v5.0: presence dot on the avatar */}
+          <span
+            className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-card ${online ? "bg-green-500" : "bg-red-500"}`}
+            aria-label={online ? t("onlineNow") : t("offlineNow")}
+          />
         </button>
         <button type="button" onClick={() => openChat(p.uid, p.name)} className="min-w-0 flex-1 text-left">
-          <div className="text-sm font-bold truncate">
-            <span className={online ? "text-green-600 dark:text-green-400" : "text-red-500"}>●</span> {p.name}
-          </div>
-          <div className="text-[11px] text-muted-foreground truncate">
-            {online ? t("chatOnline") : t("chatOffline")}
-            {p.email ? ` · ${p.email}` : ""}
+          <div className="text-sm font-bold truncate">{p.name}</div>
+          <div className="text-[11px] text-muted-foreground truncate">{p.email}</div>
+          <div className={`text-[10px] flex items-center gap-1 mt-0.5 ${online ? "text-primary" : "text-muted-foreground"}`}>
+            <span className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${online ? "bg-green-500" : "bg-red-500"}`} />
+            {online ? t("onlineNow") : t("offlineNow")}
           </div>
         </button>
         <button
@@ -167,7 +179,7 @@ function PartnerCard({ p, meUid, onRemoved }: { p: FbProfile; meUid: string; onR
                   )}
                 </div>
               ) : null}
-              <DetailRow label={`😴 ${t("detailSleep")}`} value={day.sleepBed && day.sleepWake ? `${day.sleepBed} → ${day.sleepWake}` : "—"} />
+              <DetailRow label={`😴 ${t("detailSleep")}`} value={day.sleepBed && day.sleepWake ? `${fmtHM(day.sleepBed, appLang())} → ${fmtHM(day.sleepWake, appLang())}` : "—"} />
             </div>
           ) : null}
         </>

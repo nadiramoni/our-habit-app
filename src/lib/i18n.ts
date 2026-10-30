@@ -2,6 +2,120 @@ import type { Lang } from "./types";
 
 type Dict = Record<string, string>;
 
+// ==================== v5.2: LANGUAGE — MANUAL AGAIN, BANGLA DEFAULT ====================
+// Owner round-19 made the app follow the DEVICE language (picker removed) —
+// but on the owner's own English-locale phone the WHOLE app turned English,
+// and the owner did not like it (round-22: "এখানে দেওয়া কিন্তু সবগুলা ইংলিশ
+// ভাই। আগে কিন্তু বাংলা ইংলিশ দুটাই ভাষা ছিল… বাট ডিফল্ট হিসেবে বাংলাটাই
+// থাকবে")। So the manual picker is BACK (Settings → থিম ও ভাষা) with
+// 🇧🇡 বাংলা as the DEFAULT for everyone and 🇬🇧 English right next to it —
+// "যারা ইংলিশ প্রয়োজন ওরা ইংলিশ সিলেক্ট করবে"। The device language no
+// longer decides anything; the STORED settings.language does.
+export function appLang(): Lang {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return "bn"; // SSR/prerender → default Bangla
+    const st = JSON.parse(window.localStorage.getItem("ourhabit_v1") || "{}") as { settings?: { language?: string } };
+    return st?.settings?.language === "en" ? "en" : "bn";
+  } catch {
+    return "bn";
+  }
+}
+
+// v5.0 legacy: the device-language detector (round-19). Kept for reference —
+// nothing calls it anymore; appLang() above is the single language truth.
+export function deviceLang(): Lang {
+  try {
+    const s = String((typeof navigator !== "undefined" && navigator.language) || "bn").toLowerCase();
+    return s.startsWith("bn") ? "bn" : "en";
+  } catch {
+    return "bn";
+  }
+}
+
+/** v5.2 (owner round-22): the alarm's SPOKEN sentence — the name AS ENTERED
+ *  (English letters stay English) followed by the sentence in the voice
+ *  language. Owner: "নামও বলবে — তোমার যে ইংলিশ নামটা ঐটা বলবে… ঐটা টোটালি
+ *  বাংলাতে বলবে" — no transliteration, no Bangla-script substitution: the
+ *  Bengali TTS voice reads the English name Bengali-style and the words
+ *  beside it (পানি/ঘুম/খাওয়া/সুস্থ থাকো) stay exactly the owner's previous
+ *  Bengali sentences. Empty name → empty string (nothing spoken). */
+export function alarmSpeakText(name: string, key: string, lang: Lang = "bn"): string {
+  const n = (name || "").trim();
+  if (!n) return "";
+  return `${n}${makeT(lang)(key)}`;
+}
+
+// ==================== v5.0: TIME FORMATTING (Bangladesh 12-hour rule) ====================
+// Owner round-19: "বাংলাদেশের ক্ষেত্রে অ্যালার্মের সময় প্রদর্শনে ১২ ঘণ্টার
+// পরিবর্তে ২৪ ঘণ্টার বিন্যাস ব্যবহারের কারণে যে সমস্যা" — every clock the
+// user SEES now follows the Bengali 12-hour convention:
+//   0:00–0:59   → রাত ১২:MM   (মধ্যরাত + এর পরের ঘণ্টাগুলো)
+//   1:00–4:59   → সকাল ১:MM … (owner: "মধ্যরাতের পর সময় অনুযায়ী সকাল ১টা
+//                             দেখাতে হবে" — NOT রাত ১টা)
+//   5:00–11:59  → সকাল ৫–১১
+//   12:00–12:59 → দুপুর ১২    (owner: "দুপুর ১২টার পর দুপুর ১টা, দুপুর ২টা")
+//   13:00–15:59 → দুপুর ১–৩
+//   16:00–17:59 → বিকাল ৪–৫
+//   18:00–18:59 → সন্ধ্যা ৬
+//   19:00–23:59 → রাত ৭–১১
+// Bengali digits in bn mode (০-৯). English devices get AM/PM. Other
+// countries keep their own local time (alarms already fire on device-local
+// time) — only the DISPLAY convention follows the language.
+const BN_DIGITS = ["০", "১", "২", "৩", "৪", "৫", "৬", "৭", "৮", "৯"];
+export function toBnDigits(s: string): string {
+  return String(s).replace(/[0-9]/g, (d) => BN_DIGITS[Number(d)]);
+}
+
+function bnDayPart(h: number): string {
+  if (h === 0) return "রাত ১২"; // মধ্যরাত ১২টা — এর পরেই সকাল
+  if (h <= 4) return `সকাল ${h}`; // ১টা–৪টা (মধ্যরাতের পর → সকাল)
+  if (h <= 11) return `সকাল ${h}`;
+  if (h === 12) return "দুপুর ১২";
+  if (h <= 15) return `দুপুর ${h - 12}`;
+  if (h <= 17) return `বিকাল ${h - 12}`;
+  if (h === 18) return `সন্ধ্যা ${h - 12}`;
+  return `রাত ${h - 12}`;
+}
+
+/** "HH:MM" (24h storage format) → display string in the ACTIVE language. */
+export function fmtHM(hhmm: string, lang: Lang): string {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || "");
+  if (!m) return hhmm || "";
+  const h = Number(m[1]);
+  if (lang === "bn") return toBnDigits(`${bnDayPart(h)}:${m[2]}`);
+  const ap = h < 12 ? "AM" : "PM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${m[2]} ${ap}`;
+}
+
+/** A Date/timestamp → display string in the ACTIVE language (local time). */
+export function fmtDateHM(d: Date | number, lang: Lang): string {
+  const dt = d instanceof Date ? d : new Date(d);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return fmtHM(`${p(dt.getHours())}:${p(dt.getMinutes())}`, lang);
+}
+
+// ==================== v5.0: VIDEO-TIME DURATION FORMAT ====================
+// Owner round-19 rules:
+//   < ১ মিনিট → সেকেন্ডে;  ≥ ১ মিনিট → মিনিটে;  > ৬০ মিনিট → ঘণ্টা+মিনিট।
+// Examples: ৪৫ সেকেন্ড · ৫ মিনিট · ৫৯ মিনিট · ১ ঘণ্টা ১০ মিনিট।
+// Bengali digits in bn mode.
+export function fmtDur(sec: number, lang: Lang): string {
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  if (lang === "bn") {
+    if (s < 60) return toBnDigits(`${s}`) + " সেকেন্ড";
+    if (s < 3600) return toBnDigits(`${Math.floor(s / 60)}`) + " মিনিট";
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return toBnDigits(`${h}`) + " ঘণ্টা" + (m > 0 ? " " + toBnDigits(`${m}`) + " মিনিট" : "");
+  }
+  if (s < 60) return `${s} sec`;
+  if (s < 3600) return `${Math.floor(s / 60)} min`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return `${h} h` + (m > 0 ? ` ${m} min` : "");
+}
+
 const bn: Dict = {
   appName: "আওয়ার হ্যাবিট",
   tagline: "একসাথে ভালো অভ্যাস — একসাথে সফলতা",
@@ -234,7 +348,6 @@ const bn: Dict = {
   requestSent: "রিকোয়েস্ট পাঠানো হয়েছে",
   friendAdded: "বন্ধু যোগ হয়েছে! 🎉",
   selfCode: "নিজের কোড দিয়ে লগইন করা যাবে না 😄",
-  onlineNow: "এখন অনলাইন",
   lastSeenAgo: "আগে দেখা",
   refresh: "রিফ্রেশ",
   challenges: "চ্যালেঞ্জ",
@@ -260,6 +373,16 @@ const bn: Dict = {
   profile: "প্রোফাইল",
   yourName: "তোমার নাম",
   language: "ভাষা",
+  // v5.0: shown where the language picker used to be — the app follows the
+  // DEVICE language now (owner round-19).
+  langDeviceNote: "ভাষা এখন ফোনের ভাষা অনুযায়ী — আলাদা করে সেট করতে হবে না। ফোনের ভাষা বাংলা থাকলে পুরো অ্যাপ বাংলায় দেখাবে, ইংলিশ থাকলে ইংলিশে। (ফোনের Settings → System → Languages থেকে বদলানো যায়)",
+  // v5.2 (owner round-22): the manual language picker is BACK — বাংলা
+  // DEFAULT, English an option. "বাংলাও চাই ইংলিশও চাই… বাট ডিফল্ট হিসেবে
+  // বাংলাটাই থাকবে।"
+  langTitle: "ভাষা",
+  langBnOpt: "🇧🇩 বাংলা (ডিফল্ট)",
+  langEnOpt: "🇬🇧 English",
+  langNote: "ডিফল্ট বাংলা — যারা ইংলিশ দরকার তারা English বেছে নিবে, পুরো অ্যাপ সাথে সাথে ইংলিশ হয়ে যাবে।",
   theme: "থিম",
   dark: "ডার্ক",
   light: "লাইট",
@@ -277,14 +400,14 @@ const bn: Dict = {
   waterAlarmSub: "নির্দিষ্ট সময় পরপর পানি খেতে নোটিফিকেশন আসবে",
   waterEvery: "প্রতি",
   waterWindow: "সক্রিয় সময়",
-  waterAlarmBody: "পানি পান করার সময় হয়েছে! 💧 এক গ্লাস পানি খেয়ে নাও",
+  waterAlarmBody: "পানি খাও। পানি খেলে শরীর সুস্থ থাকবে। 💧",
   waterDone: "পান করেছি ✓",
   waterSnooze: "পরে মনে করাও 💤",
   waterSnoozed: "ঠিক আছে — ১৫ মিনিট পরে আবার মনে করাবো 💧",
   waterLogged: "দারুণ! ১ গ্লাস পানি যোগ হয়েছে ✓",
   habitsReminder: "আমাদের অভ্যাস রিমাইন্ডার 🕌",
   habitsReminderSub: "প্রতিদিন একবার — আজকের অভ্যাসগুলো ট্র্যাক করতে বলবে",
-  habitsAlarmMsg: "আজকের অভ্যাসগুলো ট্র্যাক করলে? নামাজ, পানি, জিকির — সব এক জায়গায় 🕌",
+  habitsAlarmMsg: "তোমার অভ্যাসের রিমাইন্ডার চালু হয়েছে — কাজগুলো কমপ্লিট করো, একটু জিকির করে নাও 🕌",
   alarmOnToast: "আপনার অ্যালার্মটি সফলভাবে চালু হয়েছে",
   alarmOffToast: "অ্যালার্ম বন্ধ করা হয়েছে",
   alarmPermWarn: "⚠️ নোটিফিকেশন পারমিশন নেই — অ্যালার্ম বাজবে না! সেটিংস খুলছি…",
@@ -355,7 +478,7 @@ const bn: Dict = {
   meal_breakfast: "সকালের নাস্তা",
   meal_lunch: "দুপুরের খাবার",
   meal_dinner: "রাতের খাবার",
-  mealAlarmMsg: "খাওয়ার সময় হয়েছে! 🍽",
+  mealAlarmMsg: "তোমার এখন খাবার খাওয়ার সময় হয়েছে। সময়মতো খাওয়া-দাওয়া করে নাও। 🍽",
   mealAlarmsCfg: "খাবারের অ্যালার্ম",
   mealAlarmsCfgSub: "বাংলাদেশের নিয়মিত সময় ডিফল্ট — চাইলে বদলাও",
   alarmRang: "🔔 অ্যালার্ম বাজছে",
@@ -369,6 +492,16 @@ const bn: Dict = {
   reel_ytlong: "ইউটিউব (লং ভিডিও)",
   reel_tiktok: "টিকটক",
   reel_instagram: "ইনস্টাগ্রাম",
+  // v5.0 (owner round-19): the owner's own list — এক্স, কুকু টিভি, মোস + BD
+  // drama/OTT apps. Packages verified from the Play Store listings.
+  reel_x: "এক্স (X)",
+  reel_kukutv: "কুকু টিভি",
+  reel_moj: "মোজ (Moj)",
+  reel_chorki: "চরকি",
+  reel_hoichoi: "হইচই",
+  reel_bongo: "বঙ্গ",
+  reel_bioscope: "বায়োস্কোপ",
+  reel_toffee: "টফি",
   reel_other: "অন্যান্য",
   shortsVsLong: "শর্টস বনাম লং",
   estReelsCount: "আনুমানিক রিলস/শর্টস সংখ্যা",
@@ -393,6 +526,55 @@ const bn: Dict = {
   adminSecretHint: "v",
   adminTapHint: "লক আইকনে ৫ বার ট্যাপ করো",
   adminPanel: "অ্যাডমিন প্যানেল",
+  // v5.0 (owner round-19): SERVER-LEVEL admin verification — the PIN alone
+  // is never enough; the signed-in account must match app/meta.adminUid.
+  admVerifyTitle: "অ্যাডমিন যাচাই",
+  admVerifySub: "পিন ঠিক আছে — এবার সার্ভারে অ্যাডমিনের অনুমতি যাচাই হবে",
+  admVerifyHolder: "অ্যাডমিন এই অ্যাকাউন্টের নামে দখল করা আছে",
+  admVerifyCurAcc: "এই ফোনে এখন লগইন করা আছে",
+  admVerifyNeedSignIn: "অ্যাডমিন অ্যাকাউন্ট দিয়ে লগইন করলেই প্যানেল খুলবে — যেকোনো ফোন থেকে।",
+  admVerifySignIn: "অ্যাডমিন অ্যাকাউন্ট দিয়ে লগইন করো",
+  admVerifyNote: "বন্ধুর ফোনে ঢুকলে: কাজ শেষে অ্যাপ থেকে সাইন-আউট করে দিও — বন্ধু নিজে আবার লগইন করবে।",
+  admVerifyWrong: "এই অ্যাকাউন্টটা অ্যাডমিন না — অ্যাডমিনের ইমেইলটা দিয়ে লগইন করো",
+  admVerifyErr: "লগইন হয়নি — ইমেইল আর পাসওয়ার্ড দেখে নাও",
+  // v5.1 (owner round-21): the admin panel now lives INSIDE the app — the
+  // GitHub-Pages status panel is retired; this is its in-app successor.
+  admTabStatus: "📊 স্ট্যাটাস",
+  admTabSettings: "⚙️ সেটিংস",
+  admStatusTitle: "সব ব্যবহারকারীর স্ট্যাটাস",
+  admStatusSub: "অ্যাপের ভেতর থেকেই সব হিসাব — কোনো আলাদা সার্ভার লাগে না",
+  admStatTotal: "মোট অ্যাকাউন্ট",
+  admStatGoogle: "গুগল অ্যাকাউন্ট",
+  admStatEmail: "ইমেইল অ্যাকাউন্ট",
+  admStatBanned: "ব্যান করা",
+  admStatActive: "আজ সক্রিয়",
+  admStatOnline: "এখন অনলাইন",
+  admRefresh: "🔄 এখনই রিফ্রেশ",
+  admAutoRefresh: "প্রতি ৩০ সেকেন্ডে নিজে নিজে আপডেট হয়",
+  // v5.2 (owner round-22): রিফ্রেশ বাটনের নিচে ৩টা ছোট বক্স — গুগল /
+  // ইমেইল / আননোন অ্যাকাউন্ট; বক্সে চাপ দিলে শুধু ওই দলের অ্যাকাউন্ট
+  // দেখাবে। Owner: "এর নিচে তিনটা লেআউট বানাবা ছোট ছোট বক্সের মধ্যে।"
+  admFbGoogle: "গুগল",
+  admFbEmail: "ইমেইল",
+  admFbUnknown: "আননোন",
+  admFbHint: "বক্সে চাপ দিলে শুধু ওই দলের অ্যাকাউন্ট দেখাবে — আবার চাপ দিলে সবাই",
+  admFbNone: "এই দলে কোনো অ্যাকাউন্ট নেই",
+  admFbShowing: "এখন দেখানো হচ্ছে",
+  admStatusOffline: "Firebase-এ পৌঁছানো যাচ্ছে না — ইন্টারনেট দেখে আবার রিফ্রেশ করো।",
+  admNoUsers: "এখনো কোনো অ্যাকাউন্ট নেই",
+  admUserVideo: "🎬 আজকের ভিডিও",
+  admUserHabits: "✅ আজকের কাজ",
+  admVideoNone: "আজ ভিডিও দেখেনি",
+  admLastSeen: "সর্বশেষ",
+  admJustNow: "এই মুহূর্তে",
+  admMinAgo: "মিনিট আগে",
+  admHourAgo: "ঘণ্টা আগে",
+  admDayAgo: "দিন আগে",
+  admNever: "কখনো না",
+  admOnline: "অনলাইন",
+  admOffline: "অফলাইন",
+  admFriendsOf: "বন্ধু",
+  admMlUnit: "মি.লি",
   adminPanelSub: "শুধু তোমার জন্য — অন্য কেউ দেখবে না",
   adminPinSet: "অ্যাডমিন PIN সেট করো",
   adminPinSetSub: "৪-৬ ডিজিট — ভুলে যেও না!",
@@ -505,6 +687,13 @@ const bn: Dict = {
   yourNameQ: "তোমার নাম কী?",
   yourNameSub: "যে নামে সবাই তোমাকে চেনে — সেটাই অ্যাপে ও শেয়ারে দেখাবে",
   yourNameNote: "এই নামটাই শেয়ার করা নোট ও বন্ধুদের কাছে দেখাবে — জিমেইল অ্যাকাউন্টের নাম নয়।",
+  nameBnPh: "নামের বাংলা বানান (ঐচ্ছিক) — যেমন: নাদিরা মণি",
+  nameBnNote: "বানানটা দিলে অ্যালার্মে তোমার নাম শুদ্ধ বাংলা উচ্চারণে ডাকবে। না দিলে ইংরেজি অক্ষর বাংলা ঢঙে পড়বে।",
+  // v5.2 (owner round-22): the name is spoken AS ENTERED now, so the gender
+  // note replaced the old Bangla-spelling note under the picker.
+  genderNote: "ছেলে হলে ছেলে কণ্ঠে ডাকবে, মেয়ে হলে মেয়ে কণ্ঠে — অ্যালার্মে নাম ধরে ডাকবে যেভাবে লেখা আছে সেভাবেই।",
+  genderBoy: "ছেলে",
+  genderGirl: "মেয়ে",
   saveBtn: "সেভ করো",
   later: "পরে",
   cancel: "বাতিল",
@@ -590,16 +779,68 @@ const bn: Dict = {
   chatAudio: "🎙️ ভয়েস",
   chatRecordHold: "ধরে রেখে বলো",
   chatRecording: "🔴 রেকর্ড হচ্ছে…",
+  chatDelete: "ডিলিট করো",
+  // v5.0: the TWO delete modes (owner round-19):
+  //   নিজের কাছ থেকে = the message disappears from MY phone only — the
+  //   friend still sees it (server marks it hiddenBy me).
+  //   উভয় পক্ষ থেকে = allowed ONLY for messages I SENT (delete the shared doc).
+  chatDelForMe: "আমার কাছ থেকে",
+  chatDelForMeSub: "শুধু তোমার চ্যাট থেকে সরে যাবে — বন্ধুর ফোনে মেসেজটা থেকে যাবে",
+  chatDelForBoth: "উভয় পক্ষ থেকে",
+  chatDelForBothSub: "দুই জনের ফোন থেকেই মুছে যাবে — শুধু নিজের পাঠানো মেসেজে পারবে",
+  chatDelOnlyMe: "অন্যের পাঠানো মেসেজ শুধু তোমার কাছ থেকেই ডিলিট করা যায়",
+  chatDeletedForMe: "🙈 তোমার চ্যাট থেকে মুছে দেওয়া হয়েছে",
+  chatDeletedForBoth: "🗑️ মেসেজ দুই ফোন থেকেই ডিলিট হয়েছে",
+  chatDelHidden: "🙈 এই মেসেজটা তোমার কাছ থেকে ডিলিট করা হয়েছিল",
+  chatDelFailNet: "⚠️ নেট নেই — নেট এলে আবার চেষ্টা করো",
+  chatDeleteAsk: "মেসেজটা কোনভাবে ডিলিট করবা?",
+  chatDeleted: "🗑️ মেসেজ ডিলিট হয়েছে",
+  chatDeleteFail: "⚠️ ডিলিট হয়নি — নেট চেক করে আবার চেষ্টা করো",
+  chatClearAll: "সব মেসেজ ডিলিট",
+  chatClearAsk: "পুরো চ্যাট মুছবা? তোমার পাঠানো মেসেগুলো দুই ফোন থেকেই মুছে যাবে — আর বন্ধুর পাঠানোগুলো শুধু তোমার ফোন থেকে লুকিয়ে যাবে।",
+  chatCleared: "🗑️ পুরো চ্যাট ডিলিট হয়েছে",
+  chatClearFail: "⚠️ মোছা যায়নি — নেট চেক করে আবার চেষ্টা করো",
+  chatHoldToDelete: "মেসে চেপে ধরে রাখলে ডিলিট করা যায়",
+  // v5.0: presence (green/red) — owner round-19
+  onlineNow: "অনলাইন",
+  offlineNow: "অফলাইন",
+  presenceSub: "সার্ভারের সাথে সংযোগ সক্রিয়",
+  presenceOffSub: "সংযোগ নেই",
 
   // ---------- v2.9: নাম ধরে ডাকা অ্যালার্ট (TTS) ----------
-  speakWater: ", তোমার পানি খাওয়ার সময় হয়েছে। পানি খাও, স্বাস্থ্য ঠিক থাকবে।",
-  speakSleep: ", ঘুমানোর সময় হয়েছে। ঘুমিয়ে পড়ো, সকালে ভালো লাগবে।",
-  speakHabits: ", আজকের অভ্যাসগুলো একবার চেক করে নাও।",
+  // v4.2 (owner round-17): আগের মতই পুরো ডাক বাংলায় — নাম আগের মতো ডাকবে,
+  // কথাটাও বাংলায় বলবে। পানির বার্তাটা আগের পুরো লম্বা বাক্যই থাকবে।
+  speakWater: ", পানি খাও। পানি খেলে শরীর সুস্থ থাকবে।",
+  speakSleep: ", এখন ঘুমানোর সময় হয়েছে। সময়মতো ঘুমিয়ে নাও।",
+  speakHabits: ", তোমার অভ্যাসের রিমাইন্ডার চালু হয়েছে। তোমার কাজগুলো এখন কমপ্লিট করো। আর একটু জিকির করে নাও।",
   speakMealPre15: "খাওয়ার সময় হতে আর মাত্র ১৫ মিনিট বাকি।",
   speakMeal: "খাওয়ার সময় হয়েছে। হাত ধুয়ে খেয়ে নাও।",
+  // v5.0 (owner round-19): the exact sentences the owner dictated — the meal
+  // call is one standalone sentence now (no “breakfast/lunch/dinner” prefix).
+  speakMealFull: ", তোমার এখন খাবার খাওয়ার সময় হয়েছে। সময়মতো খাওয়া-দাওয়া করে নাও।",
   speakCheckin: ", আজকের দিনটা কেমন গেল একবার দেখে নাও।",
   speakAyat: ", আজকের আয়াতটা একবার পড়ে নাও।",
-  speakReelsWarn: ", রিলস দেখা এখনই বন্ধ করো! আজ অনেক বেশি রিলস দেখেছো — চোখের বড় ক্ষতি হচ্ছে।",
+  speakReelsWarn: ", তুমি অনেকক্ষণ ধরে রিলস দেখছ। চোখের যত্ন নাও এবং কিছুক্ষণ বিশ্রাম নাও।",
+  // v4.2 (owner round-17): আজানের ১৫ মিনিট পরের নামাজের ডাক —
+  // "নামাজে যান, নামাজ পড়ার সময় হইছে" (আজানের অনেকক্ষণ পরে না)
+  speakNamaz: ", নামাজের সময় হয়েছে। মসজিদে যাও।",
+  namazTitle: "নামাজের রিমাইন্ডার",
+  namazBody: "নামাজের সময় হয়েছে। মসজিদে যাও 🕌",
+  sleepAlarmMsg: "এখন ঘুমানোর সময় হয়েছে। সময়মতো ঘুমিয়ে নাও 😴",
+
+  // ---------- v4.0: ভয়েস (অ্যালার্মে নাম ধরে ডাকা) ----------
+  voiceGenderTitle: "ভয়েস (অ্যালার্মে নাম ধরে ডাকা)",
+  voiceGenderSub: "নাম ইংলিশেই থাকবে, বাট ডাকবে বাংলা উচ্চারণে। অ্যালার্মে শুনবে —",
+  voiceGenderExample: "— এভাবেই ডাকবে।",
+  voiceGenderEn: "নাম ইংলিশেই থাকবে, বাট ডাকবে বাংলা উচ্চারণে।",
+  voiceGenderNote: "মেয়ে নাম হলে মেয়ে কণ্ঠ, ছেলে নাম হলে ছেলে কণ্ঠ বসাও। নাম একবার সেভ করলে পরের অ্যালার্ম থেকেই নতুন কণ্ঠে ডাকবে।",
+  // ---------- v4.1: ভয়েসের ভাষা (English default / বাংলা optional) ----------
+  voiceLangTitle: "ডাকটা কোন ভাষায় হবে?",
+  voiceLangBnOpt: "🇧🇩 বাংলা (ডিফল্ট — আগের মতোই)",
+  voiceLangEnOpt: "🇬🇧 English (যারা ইংলিশে ডাক চায়)",
+  voiceLangExBn: "— এভাবেই ডাকবে।",
+  voiceLangExEn: "— এভাবেই ডাকবে।",
+  voiceLangNote: "ডিফল্টে ফোন বাংলায় ডাকবে — বাংলাদেশি উচ্চারণে (নাম ইংলিশেই থাকবে, কিন্তু ডাকবে বাংলা ঢঙে)। কারো ফোনে বাংলা TTS ভয়েস না থাকলে অ্যাপ নিজে থেকেই ইংলিশে ডাকবে — তাই ডাক কখনো নীরব হবে না। ইংলিশে ডাক চাইলে উপরের অপশনটা বেছে নাও।",
   voiceAlertsOn: "নাম ধরে ডাক",
   voiceAlertsSub: "অ্যালার্মে তোমার নাম ধরে ডেকে মনে করাবে (আজান অপরিবর্তিত)",
 
@@ -735,56 +976,17 @@ const bn: Dict = {
   reelsLimitSub: "লিমিট ছুঁলে নোটিফিকেশনে সতর্ক করবে",
   reelsLimitOff: "বন্ধ",
   reelsLimitNotifTitle: "🎬 Reels লিমিট পার হয়েছে",
-  reelsLimitNotifBody: "আজকের লিমিট শেষ — এবার হ্যাবিটে ফেরার সময়!",
+  reelsLimitNotifBody: "তুমি অনেকক্ষণ ধরে রিলস দেখছ। চোখের যত্ন নাও এবং কিছুক্ষণ বিশ্রাম নাও।",
+  // v5.0: the video countdown (used / left / over-limit) + the honest note
+  videoUsedLabel: "ব্যবহৃত",
+  videoLeftLabel: "বাকি",
+  videoOverLimit: "নির্ধারিত সীমা পার হয়ে গেছে!",
+  videoTimeNote: "Android-এর Usage ডেটা থেকে অটো-মাপা — শুধু ভিডিও অ্যাপের স্ক্রিনে থাকা সময় গণনা হয়। প্রতিটা ভিডিওর আলাদা প্লেব্যাক সরাসরি শনাক্ত করা অ্যান্ড্রয়েডে সম্ভব নয় — তাই এটিই সবচেয়ে নির্ভুল আনুমানিক হিসাব।",
 
   // ---------- Misc ----------
   aboutTitle: "About",
   offlineMode: "অফলাইন মোড — সব ডেটা এই ফোনেই থাকছে",
   syncOn: "ক্লাউড সিঙ্ক চালু ✓",
-
-  // ---------- v5.1: অ্যাডমিন প্যানেল — সিস্টেম স্ট্যাটাস + অ্যাকাউন্ট বক্স ----------
-  sysTitle: "সিস্টেম স্ট্যাটাস",
-  sysSub: "মেসেজ/আপডেট নোটিফিকেশন যাতে অ্যাপ বন্ধ থাকলেও যায় — তার জীবন্ত রিপোর্ট",
-  stService: "ব্যাকগ্রাউন্ড সার্ভিস",
-  stListener: "মেসেজ লিসেনার",
-  stListenerAlive: "জীবিত ✓",
-  stListenerDead: "সাড়া দিচ্ছে না",
-  stNotifPerm: "নোটিফিকেশন পারমিশন",
-  stBattery: "ব্যাটারি ছাড়",
-  stBatteryAsk: "ছাড় নাও",
-  stGrant: "পারমিশন দাও",
-  svcOn: "চালু ✓",
-  svcOff: "বন্ধ",
-  testNotifDeny: "পারমিশন নেই — আগে উপরের পারমিশন দাও চেপে চালু করো",
-  testNotifWeb: "ওয়েব প্রিভিউতে হয় না — এটা APK-তে কাজ করবে",
-  refreshNow: "রিফ্রেশ নাউ",
-  refreshNowSub: "কনফিগ + সব অ্যাকাউন্ট এখনই আবার লোড হবে",
-  accountsTitle: "অ্যাকাউন্ট তালিকা",
-  accountsSub: "৩টা ভাগে সবাই — যে ভাগে দেখতে চাও চাপ দাও",
-  acctTotal: "মোট অ্যাকাউন্ট",
-  acctGoogle: "ইমেইল",
-  acctGoogleSub: "Google অ্যাকাউন্ট",
-  acctMail: "মেইল",
-  acctMailSub: "নিজে ইমেইল দিয়ে অ্যাকাউন্ট",
-  acctUnknown: "আনকনাউন",
-  acctUnknownSub: "ইমেইল দেয়নি — খালি অ্যাকাউন্ট",
-  acctNoneHere: "এই ভাগে এখনো কেউ নেই",
-  lastSeen: "শেষ অ্যাক্টিভ",
-  offlineNow: "অফলাইন",
-  bannedTag: "ব্যান",
-
-  // ---------- v5.1: চ্যাট — ডিলিট + presence ----------
-  chatOnline: "অনলাইন",
-  chatOffline: "অফলাইন",
-  chatDeleteTitle: "মেসেজটা কী করবে?",
-  delForAll: "🗑️ সবার জন্য ডিলিট করো",
-  delForAllSub: "দুই ফোন থেকেই মুছে যাবে",
-  delForMe: "🙈 শুধু আমার থেকে লুকাও",
-  delForMeSub: "শুধু তোমার ফোনে লুকাবে, বন্ধু দেখতে পাবে",
-  cancelBtn: "বাতিল",
-  adminPinMismatch: "দুইটা PIN মিলছে না",
-  adminPinRepeat: "PIN আবার লিখো",
-  adminNotAdmin: "লেখা যায়নি — অ্যাডমিন অন্য অ্যাকাউন্ট। Firebase Console → app/meta → adminUid-এ যে অ্যাকাউন্টের UID আছে, সেই অ্যাকাউন্ট দিয়ে ঢুকে চেষ্টা করো",
 };
 
 const en: Dict = {
@@ -1008,7 +1210,6 @@ const en: Dict = {
   requestSent: "Request sent",
   friendAdded: "Friend added! 🎉",
   selfCode: "You can't add yourself 😄",
-  onlineNow: "Online now",
   lastSeenAgo: "Last seen",
   refresh: "Refresh",
   challenges: "Challenges",
@@ -1033,6 +1234,13 @@ const en: Dict = {
   profile: "Profile",
   yourName: "Your name",
   language: "Language",
+  langDeviceNote: "The app now follows your PHONE's language — no separate setting. Bengali phone → the whole app in Bangla; English phone → English. (Change it from the phone's Settings → System → Languages)",
+  // v5.2 (owner round-22): the manual language picker is BACK — Bangla
+  // DEFAULT, English an option.
+  langTitle: "Language",
+  langBnOpt: "🇧🇩 বাংলা (default)",
+  langEnOpt: "🇬🇧 English",
+  langNote: "Bangla is the default — pick English if you prefer it, the whole app switches instantly.",
   theme: "Theme",
   dark: "Dark",
   light: "Light",
@@ -1050,14 +1258,14 @@ const en: Dict = {
   waterAlarmSub: "Reminds you to drink water at a fixed interval",
   waterEvery: "Every",
   waterWindow: "Active window",
-  waterAlarmBody: "Time to drink water! 💧 Have a glass now",
+  waterAlarmBody: "Drink water. Water keeps the body healthy. 💧",
   waterDone: "I drank it ✓",
   waterSnooze: "Remind me later 💤",
   waterSnoozed: "Okay — I'll remind you again in 15 minutes 💧",
   waterLogged: "Great! 1 glass of water added ✓",
   habitsReminder: "Our Habit Reminder 🕌",
   habitsReminderSub: "Once a day — nudges you to track today's habits",
-  habitsAlarmMsg: "Tracked today's habits yet? Prayers, water, dhikr — all in one place 🕌",
+  habitsAlarmMsg: "Your habit reminder is on — complete your tasks, and do a little dhikr 🕌",
   alarmOnToast: "Your alarm has been successfully turned on",
   alarmOffToast: "Alarm turned off",
   alarmPermWarn: "⚠️ Notification permission missing — alarms cannot ring! Opening settings…",
@@ -1127,7 +1335,7 @@ const en: Dict = {
   meal_breakfast: "Breakfast",
   meal_lunch: "Lunch",
   meal_dinner: "Dinner",
-  mealAlarmMsg: "It's time to eat! 🍽",
+  mealAlarmMsg: "It's your meal time now. Eat on time. 🍽",
   mealAlarmsCfg: "Meal alarms",
   mealAlarmsCfgSub: "Bangladesh regular times as default — change as you like",
   alarmRang: "🔔 Alarm ringing",
@@ -1140,6 +1348,15 @@ const en: Dict = {
   reel_ytlong: "YouTube (long videos)",
   reel_tiktok: "TikTok",
   reel_instagram: "Instagram",
+  // v5.0 (owner round-19): en mirror of the new video-app list.
+  reel_x: "X",
+  reel_kukutv: "Kuku TV",
+  reel_moj: "Moj",
+  reel_chorki: "Chorki",
+  reel_hoichoi: "Hoichoi",
+  reel_bongo: "Bongo",
+  reel_bioscope: "Bioscope",
+  reel_toffee: "Toffee",
   reel_other: "Others",
   shortsVsLong: "Shorts vs Long",
   estReelsCount: "Estimated reels/shorts count",
@@ -1162,6 +1379,50 @@ const en: Dict = {
   adminSecretHint: "v",
   adminTapHint: "Tap the lock icon 5 times",
   adminPanel: "Admin Panel",
+  admVerifyTitle: "Admin verification",
+  admVerifySub: "PIN accepted — now the server checks the admin permission",
+  admVerifyHolder: "Admin is currently held by this account",
+  admVerifyCurAcc: "Currently signed in on this phone",
+  admVerifyNeedSignIn: "Sign in with the admin account to open the panel — from any phone.",
+  admVerifySignIn: "Sign in as admin",
+  admVerifyNote: "On a friend's phone: sign out from the app when you're done — your friend logs back in afterwards.",
+  admVerifyWrong: "This account is not the admin — sign in with the admin's email",
+  admVerifyErr: "Sign-in failed — check the email and password",
+  // v5.1 (owner round-21): in-app admin status (GitHub-Pages panel retired)
+  admTabStatus: "📊 Status",
+  admTabSettings: "⚙️ Settings",
+  admStatusTitle: "All users' status",
+  admStatusSub: "Everything inside the app — no separate server needed",
+  admStatTotal: "Total accounts",
+  admStatGoogle: "Google accounts",
+  admStatEmail: "Email accounts",
+  admStatBanned: "Banned",
+  admStatActive: "Active today",
+  admStatOnline: "Online now",
+  admRefresh: "🔄 Refresh now",
+  admAutoRefresh: "Auto-updates every 30 seconds",
+  // v5.2 (owner round-22): 3 small filter boxes under the refresh button
+  admFbGoogle: "Google",
+  admFbEmail: "Email",
+  admFbUnknown: "Unknown",
+  admFbHint: "Tap a box to see only that group — tap again for everyone",
+  admFbNone: "No accounts in this group",
+  admFbShowing: "Now showing",
+  admStatusOffline: "Can't reach Firebase — check the internet and refresh again.",
+  admNoUsers: "No accounts yet",
+  admUserVideo: "🎬 Today's video",
+  admUserHabits: "✅ Today's work",
+  admVideoNone: "No video today",
+  admLastSeen: "Last seen",
+  admJustNow: "just now",
+  admMinAgo: "min ago",
+  admHourAgo: "h ago",
+  admDayAgo: "d ago",
+  admNever: "never",
+  admOnline: "Online",
+  admOffline: "Offline",
+  admFriendsOf: "friends",
+  admMlUnit: "ml",
   adminPanelSub: "Only yours — nobody else sees this",
   adminPinSet: "Set admin PIN",
   adminPinSetSub: "4-6 digits — don't forget it!",
@@ -1272,6 +1533,11 @@ const en: Dict = {
   firstNameNeeded: "Enter your first name",
   // v2.8: name capture + editor (registered full name — never the Gmail name)
   yourNameQ: "What's your name?",
+  nameBnPh: "Bengali spelling (optional) — e.g. নাদিরা মণি",
+  nameBnNote: "With this, the alarm calls your name in perfect Bengali pronunciation. Without it, English letters are read Bengali-style.",
+  genderBoy: "Boy",
+  genderGirl: "Girl",
+  genderNote: "Boys get a male voice, girls a female — the alarm calls the name exactly as you wrote it.",
   yourNameSub: "The name everyone knows you by — shown across the app and shares",
   yourNameNote: "This is the name friends and shared notes will see — not your Gmail account name.",
   saveBtn: "Save",
@@ -1359,16 +1625,62 @@ const en: Dict = {
   chatAudio: "🎙️ Voice",
   chatRecordHold: "Hold to record",
   chatRecording: "🔴 Recording…",
+  chatDelete: "Delete",
+  // v5.0: the TWO delete modes (owner round-19) — en mirror of the bn block.
+  chatDelForMe: "For me only",
+  chatDelForMeSub: "Goes from YOUR phone only — it stays on the friend's phone",
+  chatDelForBoth: "For everyone",
+  chatDelForBothSub: "Deleted from BOTH phones — allowed only for messages YOU sent",
+  chatDelOnlyMe: "Others' messages can only be deleted from your own side",
+  chatDeletedForMe: "🙈 Hidden from your chat",
+  chatDeletedForBoth: "🗑️ Message deleted from both phones",
+  chatDelHidden: "🙈 This message was deleted from your side",
+  chatDelFailNet: "⚠️ You're offline — try again when the network returns",
+  chatDeleteAsk: "How do you want to delete it?",
+  chatDeleted: "🗑️ Message deleted",
+  chatDeleteFail: "⚠️ Couldn't delete — check your connection and try again",
+  chatClearAll: "Delete all messages",
+  chatClearAsk: "Clear the whole chat? YOUR sent messages go from both phones — and the friend's messages hide from your phone only.",
+  chatCleared: "🗑️ Conversation deleted",
+  chatClearFail: "⚠️ Couldn't clear — check your connection and try again",
+  chatHoldToDelete: "Press and hold a message to delete it",
+  // v5.0: presence (green/red)
+  onlineNow: "Online",
+  offlineNow: "Offline",
+  presenceSub: "Connected to the server",
+  presenceOffSub: "No connection",
 
   // ---------- v2.9: named voice alerts (TTS) ----------
-  speakWater: ", it's your time to drink water. Drink up, stay healthy.",
-  speakSleep: ", it's bedtime. Go to sleep, you'll feel great in the morning.",
-  speakHabits: ", time to check today's habits.",
+  // v4.2 (owner round-17): Bangla is the DEFAULT call again — like before.
+  speakWater: ", drink water. Water keeps the body healthy.",
+  speakSleep: ", it's bedtime now. Sleep on time.",
+  speakHabits: ", your habit reminder is on. Complete your tasks now — and do a little dhikr.",
   speakMealPre15: " is in just 15 minutes.",
   speakMeal: " time — wash your hands and eat.",
+  // v5.0 (owner round-19): one standalone meal sentence (bn/en parity).
+  speakMealFull: ", it's your meal time now. Eat on time.",
   speakCheckin: ", take a moment to review how today went.",
   speakAyat: ", read today's verse.",
-  speakReelsWarn: ", stop watching reels right now! You've watched way too many today — it's hurting your eyes.",
+  speakReelsWarn: ", you've been watching reels for a long time. Take care of your eyes and rest a while.",
+  speakNamaz: ", it's time for prayer. Go to the masjid.",
+  namazTitle: "Prayer reminder",
+  namazBody: "It's time for prayer. Go to the masjid 🕌",
+  sleepAlarmMsg: "It's bedtime now. Sleep on time 😴",
+
+
+  // ---------- v4.0: voice (name call in alarms) ----------
+  voiceGenderTitle: "Voice (name call in alarms)",
+  voiceGenderSub: "The name stays English, but it is CALLED in Bangla pronunciation —",
+  voiceGenderExample: "— that's how the alarm calls you.",
+  voiceGenderEn: "The name stays English, but it is CALLED in Bangla pronunciation.",
+  voiceGenderNote: "Pick a girl's voice for a girl's name, a boy's voice for a boy's name. Save once — every alarm after that uses the new voice.",
+  // ---------- v4.1: voice language (v4.2: Bangla is the default again) ----------
+  voiceLangTitle: "Which language should the call be in?",
+  voiceLangBnOpt: "🇧🇩 Bangla (default — like before)",
+  voiceLangEnOpt: "🇬🇧 English (for those who prefer it)",
+  voiceLangExBn: "— that's how the alarm calls you.",
+  voiceLangExEn: "— that's how the alarm calls you.",
+  voiceLangNote: "By default the phone calls in BANGLA with a Bangladeshi accent (the name stays in English letters but is pronounced Bangla-style). If a phone has no Bangla TTS voice installed, the app automatically calls in English instead — the call never goes silent. Want the English call? Just pick the option above.",
   voiceAlertsOn: "Call me by name",
   voiceAlertsSub: "Alarms call your name out loud (adhan stays unchanged)",
 
@@ -1502,56 +1814,16 @@ const en: Dict = {
   reelsLimitSub: "Get a notification when today's limit is crossed",
   reelsLimitOff: "Off",
   reelsLimitNotifTitle: "🎬 Reels limit reached",
-  reelsLimitNotifBody: "Today's limit is done — time to get back to your habits!",
+  reelsLimitNotifBody: "You've been watching reels for a long time. Take care of your eyes and rest a while.",
+  videoUsedLabel: "Used",
+  videoLeftLabel: "Left",
+  videoOverLimit: "Daily limit crossed!",
+  videoTimeNote: "Auto-measured from Android's Usage data — only time spent on video-app screens counts. Android cannot detect each video's playback separately, so this is the most accurate approximation possible.",
 
   // ---------- Misc ----------
   aboutTitle: "About",
   offlineMode: "Offline mode — all data stays on this phone",
   syncOn: "Cloud sync on ✓",
-
-  // ---------- v5.1: admin panel — system status + account boxes ----------
-  sysTitle: "System status",
-  sysSub: "Live report of message/update notifications even when the app is closed",
-  stService: "Background service",
-  stListener: "Message listener",
-  stListenerAlive: "Alive ✓",
-  stListenerDead: "No response",
-  stNotifPerm: "Notification permission",
-  stBattery: "Battery exemption",
-  stBatteryAsk: "Get exemption",
-  stGrant: "Grant permission",
-  svcOn: "On ✓",
-  svcOff: "Off",
-  testNotifDeny: "No permission — turn on the permission above first",
-  testNotifWeb: "Not possible in the web preview — works in the APK",
-  refreshNow: "Refresh Now",
-  refreshNowSub: "Config + all accounts reload immediately",
-  accountsTitle: "Account list",
-  accountsSub: "Everyone in 3 groups — tap a group to view it",
-  acctTotal: "Total accounts",
-  acctGoogle: "Email",
-  acctGoogleSub: "Google accounts",
-  acctMail: "Mail",
-  acctMailSub: "Signed up manually with email",
-  acctUnknown: "Unknown",
-  acctUnknownSub: "No email given — empty accounts",
-  acctNoneHere: "No one in this group yet",
-  lastSeen: "Last active",
-  offlineNow: "Offline",
-  bannedTag: "Banned",
-
-  // ---------- v5.1: chat — delete + presence ----------
-  chatOnline: "Online",
-  chatOffline: "Offline",
-  chatDeleteTitle: "What to do with this message?",
-  delForAll: "🗑️ Delete for everyone",
-  delForAllSub: "Removed from both phones",
-  delForMe: "🙈 Hide from me only",
-  delForMeSub: "Hides on your phone; your friend still sees it",
-  cancelBtn: "Cancel",
-  adminPinMismatch: "The two PINs don't match",
-  adminPinRepeat: "Repeat the PIN",
-  adminNotAdmin: "Couldn't save — a different account is admin. Use the account whose UID is in app/meta → adminUid (Firebase Console)",
 };
 
 const dicts: Record<Lang, Dict> = { bn, en };
@@ -1561,40 +1833,3 @@ export function makeT(lang: Lang) {
 }
 
 export type T = ReturnType<typeof makeT>;
-
-/**
- * v5.1 — বাংলাদেশের ১২-ঘণ্টা সময় (owner: "আমাদের দেশে ১২-ঘণ্টা হিসাব চলে")।
- * Every user-visible clock in the app (chat timestamps, alarm chips, presence
- * times) renders through this — always 12-hour with AM/PM, never the 24-hour
- * "14:30" form regardless of the device locale.
- */
-export function fmtClock(ts: number | Date | string): string {
-  try {
-    const d = ts instanceof Date ? ts : new Date(ts);
-    if (!d || isNaN(d.getTime())) return "";
-    let h = d.getHours();
-    const m = d.getMinutes();
-    const am = h < 12;
-    h = h % 12;
-    if (h === 0) h = 12;
-    return `${h}:${String(m).padStart(2, "0")} ${am ? "AM" : "PM"}`;
-  } catch {
-    return "";
-  }
-}
-
-/** "09:05" → "9:05 AM" (for "HH:MM" strings from settings/alarm configs). */
-export function fmtClockHM(hm: string): string {
-  try {
-    const m = /^ (\d{1,2}):(\d{2})/.exec(" " + String(hm || ""));
-    if (!m) return String(hm || "");
-    let h = Number(m[1]);
-    const mm = Number(m[2]);
-    const am = h < 12;
-    h = h % 12;
-    if (h === 0) h = 12;
-    return `${h}:${String(mm).padStart(2, "0")} ${am ? "AM" : "PM"}`;
-  } catch {
-    return String(hm || "");
-  }
-}
