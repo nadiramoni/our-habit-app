@@ -3,6 +3,7 @@ name: Build Android APK (free, on GitHub's servers)
 on:
   workflow_dispatch: {} # "Run workflow" button
   push:
+    branches: ["main", "master"] # v4.0: ANY upload to the repo → auto-build (no Run-workflow step needed)
     tags: ["v*"] # push a tag like v1.2.0 → also creates a GitHub Release
 
 jobs:
@@ -13,6 +14,28 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # v4.0: THE ONE-FILE UPDATE PATH. The owner uploads
+      # our-habit-github-upload.zip (a FULL snapshot of the project) to the
+      # repo root via GitHub's web "Add file → Upload files". This step
+      # unpacks it OVER the checkout, so the build always uses the zip's
+      # contents — no path mistakes, no missed files, no stale sources
+      # (that's how the "same version 3.2.0 again and again" mess happened).
+      # Old files that the zip no longer contains are simply overwritten or
+      # ignored; every path the build needs comes from the zip.
+      - name: Unpack our-habit-github-upload.zip (if present)
+        run: |
+          if [ -f our-habit-github-upload.zip ]; then
+            unzip -o -q our-habit-github-upload.zip
+            echo "✓ Unpacked our-habit-github-upload.zip — building ITS contents"
+            APP_VER=$(sed -n 's/.*APP_VERSION = "\([^"]*\)".*/\1/p' src/lib/version.ts | head -1)
+            echo "APP_VER=$APP_VER" >> "$GITHUB_ENV"
+            echo "✓ App version from the zip: v${APP_VER:-?}"
+          else
+            echo "No our-habit-github-upload.zip at the repo root — building the repo's own files"
+            APP_VER=$(sed -n 's/.*APP_VERSION = "\([^"]*\)".*/\1/p' src/lib/version.ts | head -1)
+            echo "APP_VER=$APP_VER" >> "$GITHUB_ENV"
+          fi
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -100,7 +123,7 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p apk-out
-          cp android/app/build/outputs/apk/debug/app-debug.apk apk-out/OurHabit-${GITHUB_REF_NAME:-build}.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk "apk-out/OurHabit-v${APP_VER:-x}-${GITHUB_REF_NAME:-build}.apk"
 
       - name: Upload APK artifact (download from the run page)
         uses: actions/upload-artifact@v4
@@ -117,16 +140,22 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # v4.0: the release TITLE now carries the real APP VERSION (from
+      # src/lib/version.ts, read in the unpack step) — the owner kept seeing
+      # "same version / same MB" for every release; now every release shows
+      # exactly which app version it carries, e.g.
+      # "Our Habit v4.0.0 · 2026.10.30-0527".
       - name: Publish APK to public Releases repo (APK only — source stays private)
         if: ${{ env.RELEASE_TOKEN != '' }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           TAG="v$(date +'%Y.%m.%d-%H%M')"
+          TITLE="Our Habit v${APP_VER:-?} · ${TAG#v}"
           cd apk-out
           cp OurHabit-*.apk OurHabit-latest.apk
           gh release create "$TAG" --repo nadiramoni/our-habit-apk --latest \
-            --title "Our Habit $TAG" \
-            --notes "📱 Our Habit — latest Android APK. Download → open → allow 'install unknown apps' → install. The app code stays private; this page only serves the APK." \
+            --title "$TITLE" \
+            --notes "📱 Our Habit v${APP_VER:-?} — সর্বশেষ Android APK। Download → open → allow 'install unknown apps' → install. অ্যাপের ভেতরে Settings ⚙️ → About-এ ভার্সন দেখো। The app code stays private; this page only serves the APK." \
             OurHabit-latest.apk
-          echo "✅ Published: https://github.com/nadiramoni/our-habit-apk/releases/latest"
+          echo "✅ Published: https://github.com/nadiramoni/our-habit-apk/releases/latest (title: $TITLE)"
