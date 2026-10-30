@@ -68,6 +68,15 @@ public class OhKeepAliveService extends Service {
   public static final String KEY_REELS_WARN_EN = "reels_warn_text_en"; // v4.1: English fallback
   public static final String KEY_REELS_LANG = "reels_lang";
   public static final String KEY_LAST_REELS_WARN = "last_reels_warn_at";
+  // v5.0: the service's OWN liveness heartbeat (30s). status() only reports
+  // running while this beat is fresh (≤90s) — a service Android killed
+  // silently must NOT count as running, so the in-app watchdog knows to take
+  // the notification over (no more double notifications).
+  public static final String KEY_LAST_BEAT = "last_beat_at";
+  // v5.0: the pending chat deep link saved by MainActivity when the user
+  // TAPS a chat notification (PendingIntent extras) — consumed once by
+  // ChatServicePlugin.pendingOpenChat() from the web layer.
+  public static final String KEY_PENDING_CHAT = "pending_chat";
 
   private static final String LISTENER_URL = "https://localhost/chat-listener.html";
   private static final String CHANNEL_FGS = "oh_keepalive";
@@ -77,6 +86,7 @@ public class OhKeepAliveService extends Service {
   private WebView webView;
   private Handler handler;
   private Runnable reelsCheck;
+  private Runnable beatLoop;
 
   @Override
   public IBinder onBind(Intent intent) {
@@ -90,13 +100,17 @@ public class OhKeepAliveService extends Service {
     // NOTHING. The listener WebView + reels guard run the same either way.
     startListenerWebView();
     startReelsGuard();
+    startBeat();
     return START_STICKY;
   }
 
   @Override
   public void onDestroy() {
     try {
-      if (handler != null && reelsCheck != null) handler.removeCallbacks(reelsCheck);
+      if (handler != null) {
+        if (reelsCheck != null) handler.removeCallbacks(reelsCheck);
+        if (beatLoop != null) handler.removeCallbacks(beatLoop);
+      }
       if (webView != null) {
         webView.stopLoading();
         webView.loadUrl("about:blank");
@@ -106,6 +120,31 @@ public class OhKeepAliveService extends Service {
     } catch (Exception ignored) {
     }
     super.onDestroy();
+  }
+
+  // ---------------- v5.0: liveness heartbeat ----------------
+  // Every 30s while the service is ALIVE. ChatServicePlugin.status() reads
+  // it; a fresh beat = the service really exists (not just "was started").
+  private void startBeat() {
+    try {
+      if (handler == null) handler = new Handler(Looper.getMainLooper());
+      if (beatLoop != null) handler.removeCallbacks(beatLoop);
+      final SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
+      sp.edit().putLong(KEY_LAST_BEAT, System.currentTimeMillis()).apply();
+      beatLoop = new Runnable() {
+        @Override
+        public void run() {
+          try {
+            getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit().putLong(KEY_LAST_BEAT, System.currentTimeMillis()).apply();
+          } catch (Exception ignored) {
+          }
+          if (handler != null) handler.postDelayed(this, 30 * 1000L);
+        }
+      };
+      handler.postDelayed(beatLoop, 30 * 1000L);
+    } catch (Exception ignored) {
+    }
   }
 
   // ---------------- the headless chat listener ----------------
@@ -170,8 +209,14 @@ public class OhKeepAliveService extends Service {
   /** JS bridge the listener page calls (window.OHNative.*). */
   private class ChatBridge {
 
+    /**
+     * v5.0: postNotification(title, body, tag, openUid, openName) — the
+     * last two are the DEEP-LINK payload: tapping the notification opens
+     * the app straight INTO that friend's chat (owner: "নোটিফিকেশনে ক্লিক
+     * করলে সরাসরি সংশ্লিষ্ট চ্যাটে প্রবেশ করতে পারবে")।
+     */
     @JavascriptInterface
-    public void postNotification(String title, String body, String tag) {
+    public void postNotification(String title, String body, String tag, String openUid, String openName) {
       try {
         SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
         if (sp.getBoolean(KEY_MUTED, false)) return; // app in foreground
@@ -193,8 +238,8 @@ public class OhKeepAliveService extends Service {
           }
           nm.createNotificationChannel(ch);
         }
-        PendingIntent pi = ExactAlarmPlugin.launchPendingIntent(getApplicationContext(), 7);
         int id = Math.abs(("chat" + tag).hashCode()) % 2000000000;
+        PendingIntent pi = chatPendingIntent(id, openUid, openName);
         NotificationCompat.Builder b = new NotificationCompat.Builder(getApplicationContext(), CHANNEL_CHAT)
             .setSmallIcon(android.R.drawable.sym_action_chat)
             .setContentTitle(title)
@@ -211,6 +256,32 @@ public class OhKeepAliveService extends Service {
         } catch (SecurityException ignored) {
         }
       } catch (Exception ignored) {
+      }
+    }
+
+    /**
+     * v5.0: the app's launch intent + the chat deep-link extras. MainActivity
+     * reads the extras on create/newIntent and saves them to SharedPreferences
+     * (KEY_PENDING_CHAT); the web layer consumes them via
+     * ChatServicePlugin.pendingOpenChat().
+     */
+    private PendingIntent chatPendingIntent(int req, String uid, String name) {
+      try {
+        Context ctx = getApplicationContext();
+        Intent launch = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
+        if (launch == null) launch = new Intent(ctx, MainActivity.class);
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        if (uid != null && !uid.isEmpty()) {
+          launch.putExtra("oh_open_chat_uid", uid);
+          launch.putExtra("oh_open_chat_name", name == null ? "" : name);
+        }
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+          flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        return PendingIntent.getActivity(ctx, req, launch, flags);
+      } catch (Exception e) {
+        return ExactAlarmPlugin.launchPendingIntent(getApplicationContext(), req);
       }
     }
 
