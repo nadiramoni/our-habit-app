@@ -8,39 +8,28 @@
 <body>
 <script>
 /**
- * chat-listener.html — v2.9 BACKGROUND CHAT NOTIFICATIONS (owner: "মেসেজ
- * দিলে মেসেঞ্জারের মত নোটিফিকেশন আসবে — অ্যাপসে ঢুকে দেখলে তো হবে না")।
+ * chat-listener.html — v5.1 BACKGROUND NOTIFICATIONS ENGINE.
  *
  * This page runs inside OhKeepAliveService's HEADLESS WebView on the SAME
  * origin as the app (https://localhost) — it therefore shares localStorage
  * with the main app:
  *   • "oh_chat_state" — written by the main app: {cfg, myUid, pairs, …}
  *   • "firebase:authUser:<apiKey>:[DEFAULT]" — the signed-in session, written
- *     by the main app's auth (browserLocalPersistence — v2.9's persistence fix)
- *   • "oh_chat_last_{pairKey}" — v5.0: the SAME per-pair last-seen key the
- *     main app's watchdog writes. The service and the app are ONE inbox.
+ *     by the main app's auth (browserLocalPersistence — v2.9's fix)
  *
- * It restores the session, subscribes to every pair's chat messages
- * (pairs/{pairKey}/notes where kind=="chat") and calls
- * OHNative.postNotification() (the Android bridge) when a message from a
- * FRIEND arrives → a REAL Android notification with sound, even when the
- * main app is closed. The service mutes itself while the app is foreground.
- *
- * v5.0 (owner round-19):
- *   • NO MORE 2-MINUTE SWALLOW — the old "createdAt older than 120s → skip"
- *     rule dropped messages that arrived while the recipient's internet was
- *     OFF (they arrive "stale" the moment the network returns). Now each
- *     pair keeps a last-seen baseline in the SHARED localStorage
- *     (oh_chat_last_{key}): anything NEWER than the baseline notifies, so a
- *     reconnect after minutes/hours offline still fires the notification —
- *     while a service restart never re-notifies old history.
- *   • DEEP LINK — the notification carries the friend's uid+name; tapping it
- *     opens the app straight INTO that chat (MainActivity → pendingOpenChat).
- *   • hiddenBy — messages the user deleted "for me only" never notify.
- *   • PRESENCE HEARTBEAT — every ~45s the page merge-writes
- *     usersIndex/{myUid}.lastSeen, so friends see the user ONLINE even while
- *     the app is CLOSED (a real server connection — exactly the owner's
- *     rule). If the connection dies the writes stop → the dot goes red.
+ * v5.1 OWNER ROUND ("এই দুইটা ফিক্স করে দাও"):
+ *   (1) MESSAGE NOTIFICATIONS: when a friend sends a message, THIS phone gets
+ *       a real system notification with the message text — app closed or
+ *       not. TAPPING it now opens STRAIGHT into that chat (the page writes
+ *       "oh_open_chat" into the shared localStorage right before posting;
+ *       the main app consumes it on boot/resume and jumps to the reply box).
+ *   (2) INSTANT UPDATE NOTIFICATIONS: a realtime onSnapshot on app/meta —
+ *       the moment the owner bumps latestVersion in the panel, EVERY
+ *       connected phone gets "নতুন আপডেট চলে আসছে — অ্যাপটি আপডেট করে
+ *       নতুন ফিচারগুলো উপভোগ করুন" in seconds (was a 5-min poll before).
+ *       Tapping it opens the app with a forced config refresh (UpdateBar).
+ *   (3) HEARTBEAT: "oh_listener_hb" is written every cycle — the in-app
+ *       admin panel shows 🎧 জীবিত ✓ / সাড়া দিচ্ছে না from it.
  *
  * Loaded from assets by the service; NEVER shown to the user.
  */
@@ -53,8 +42,7 @@
   }
 
   var FB_VER = "10.12.2";
-  var app = null, db = null, auth = null, unsubs = {}, myUid = "", booted = false;
-  var lastPresenceBeat = 0;
+  var app = null, db = null, auth = null, unsubs = {}, metaUnsub = null, myUid = "", booted = false;
 
   function readState() {
     try {
@@ -70,51 +58,43 @@
   }
 
   function subscribePair(pair) {
-    if (!pair || !pair.key || unsubs[pair.key]) return;
+        if (!pair || !pair.key || unsubs[pair.key]) return;
     try {
       loadMod("firebase-firestore.js").then(function (fs) {
         try {
           var q = fs.query(fs.collection(db, "pairs", pair.key, "notes"), fs.orderBy("createdAt", "asc"));
           unsubs[pair.key] = fs.onSnapshot(q, function (snap) {
-            // v5.0: walk the WHOLE (small) snapshot and find the newest
-            // message that is VISIBLE to me (kind:chat, not hiddenBy me,
-            // not my own) — then compare with the shared last-seen baseline.
-            var maxAt = 0, latest = null;
-            snap.forEach(function (doc) {
-              var d = doc.data();
+            // v5.3.0: when real FCM push is live on this phone (oh_chat_state.fcm
+            // = token saved AND the owner configured the FCM key) this legacy
+            // listener STANDS DOWN — FCM delivers the notification instead, so
+            // the user never sees the same message notify twice.
+            try {
+              var stNow = readState();
+              if (stNow && stNow.fcm) return;
+            } catch (e) {}
+            snap.docChanges().forEach(function (ch) {
+              if (ch.type !== "added") return;
+              var d = ch.doc.data();
               if (!d || d.kind !== "chat") return;
-              if ((d.hiddenBy || []).indexOf(myUid) >= 0) return; // v5.0: deleted from my side
+              // v5.1: skip messages I hid from myself (hiddenBy) — no ghost notifs
+              if (d.hiddenBy && d.hiddenBy.indexOf && d.hiddenBy.indexOf(myUid) >= 0) return;
               if (d.from === myUid) return; // my own message — no notification
-              if (d.createdAt && d.createdAt > maxAt) { maxAt = d.createdAt; latest = d; }
+              if (d.createdAt && Date.now() - d.createdAt > 120000) return; // stale (cold start)
+              var fromName = d.fromName || pair.name || "Our Habit";
+              var title = "💬 " + fromName;
+              var body = d.text || "📷 " + (window.__hasBn ? "একটা ছবি পাঠিয়েছে" : "sent a photo");
+              // v5.1 TAP ROUTER: write the handoff BEFORE posting — when the
+              // user taps the notification, Android launches the main app,
+              // which reads this flag and opens THIS chat directly (reply box).
+              try {
+                localStorage.setItem("oh_open_chat", JSON.stringify({ uid: d.from, name: fromName, at: Date.now() }));
+              } catch (e) {}
+              try {
+                if (window.OHNative && window.OHNative.postNotification) {
+                  window.OHNative.postNotification(title, body, pair.key);
+                }
+              } catch (e) { log("notify failed: " + e); }
             });
-            var seenKey = "oh_chat_last_" + pair.key;
-            var seen = 0;
-            try { seen = Number(localStorage.getItem(seenKey) || 0); } catch (e) {}
-            if (maxAt > 0) {
-              if (!seen) {
-                // FIRST snapshot of this pair (service cold start): the whole
-                // history becomes the baseline — silent, no re-notify spam.
-                try { localStorage.setItem(seenKey, String(maxAt)); } catch (e) {}
-              } else if (maxAt > seen) {
-                // NEW message → update the baseline + post the notification.
-                // Works for messages that arrived while we were OFFLINE too
-                // (the v5.0 fix — the old 120s staleness rule is gone).
-                try { localStorage.setItem(seenKey, String(maxAt)); } catch (e) {}
-                var name = (latest.fromName || pair.name || "Our Habit");
-                var title = "💬 " + name;
-                var body = latest.text
-                  || (latest.image ? "📷 " + (window.__hasBn ? "একটা ছবি পাঠিয়েছে" : "sent a photo")
-                  : (latest.audio ? "🎙️ " + (window.__hasBn ? "একটা ভয়েস মেসেজ পাঠিয়েছে" : "sent a voice message")
-                  : (window.__hasBn ? "নতুন মেসেজ" : "New message")));
-                try {
-                  if (window.OHNative && window.OHNative.postNotification) {
-                    // v5.0: the last two args are the DEEP LINK — tapping the
-                    // notification opens this exact chat.
-                    window.OHNative.postNotification(title, body, pair.key, pair.uid || "", name);
-                  }
-                } catch (e) { log("notify failed: " + e); }
-              }
-            }
           }, function (err) {
             log("listener error " + pair.key + ": " + (err && err.code ? err.code : err));
             // rules/permission problem or offline — retry later via the state poll
@@ -130,26 +110,6 @@
     } catch (e) {
       log("subscribe error: " + e);
     }
-  }
-
-  // ==================== v5.0: PRESENCE HEARTBEAT ====================
-  // Owner round-19: "শুধু মোবাইলের ইন্টারনেট চালু থাকলেই সব সময় ব্যবহারকারীকে
-  // অনলাইন দেখানো যাবে না — অ্যাপের সার্ভারের সঙ্গে তার প্রকৃত সংযোগ যাচাই
-  // হতে হবে।" While the app is CLOSED this headless page IS that real
-  // connection: every ~45s it merge-writes usersIndex/{myUid}.lastSeen.
-  // If the internet dies the write fails → the friends' dots go red ≤2 min.
-  function presenceBeat() {
-    try {
-      if (!db || !myUid) return;
-      if (Date.now() - lastPresenceBeat < 45000) return;
-      loadMod("firebase-firestore.js").then(function (fs) {
-        try {
-          fs.setDoc(fs.doc(db, "usersIndex", myUid), { lastSeen: Date.now() }, { merge: true })
-            .then(function () { lastPresenceBeat = Date.now(); })
-            .catch(function (e) { log("presence write failed (offline?)"); });
-        } catch (e) { log("presence err"); }
-      }).catch(function () {});
-    } catch (e) {}
   }
 
   function boot() {
@@ -179,6 +139,8 @@
         });
       }
       booted = true;
+      // v5.1: the realtime update watch starts as soon as the page boots
+      watchAppMeta();
       return true;
     }).catch(function (e) {
       log("boot failed: " + e);
@@ -191,7 +153,7 @@
     var st = readState();
     if (!st || !st.pairs) return;
     myUid = st.myUid || (auth.currentUser && auth.currentUser.uid) || "";
-    // subscribe to every pair ({key, name, uid} objects from oh_chat_state)
+    // subscribe to every pair (items are {key, name} objects from oh_chat_state)
     (st.pairs || []).forEach(function (p) { subscribePair(p); });
     // unsubscribe removed pairs
     Object.keys(unsubs).forEach(function (k) {
@@ -203,17 +165,16 @@
     });
   }
 
-  // ==================== v3.3: BACKGROUND UPDATE NOTIFICATION ====================
-  // Owner: "নতুন আপডেট দিলে পুরোনো ভার্সন ইউজারদের কাছে অটো নোটিফিকেশন যাবে।"
-  // Polls app/meta every 5 min for latestVersion + forceUpdate + apkUrl. When
-  // latestVersion > the version this APK was built with (stored in oh_chat_state
-  // by the main app at sign-in as "buildVersion"), posts an Android notif.
-  // The notif fires ONCE per new version (notifiedVersions cache in localStorage)
-  // so we don't spam the user every 5 min.
+  // ==================== v5.1: INSTANT UPDATE NOTIFICATION ====================
+  // Owner: "আমি যখনই ভার্সন আপডেট করি, তখনই — ইউজারদের অ্যাপসের ভেতরে না
+  // ঢুকেই — সবার মোবাইলে নোটিফিকেশন চলে যাবে: নতুন আপডেট চলে আসছে, আপনারা
+  // আপডেটটা নিয়ে নতুন ফিচারগুলো উপভোগ করুন।"
+  //
+  // A realtime onSnapshot on app/meta — fires the MOMENT the owner hits Save
+  // in the panel (was a 5-min getDoc poll in v3.3; now it lands in seconds).
+  // Fires ONCE per new version (dedupe cache in localStorage).
 
   var VERSION_KEY = "oh_notified_versions";
-  var lastUpdateCheck = 0;
-  var UPDATE_CHECK_INTERVAL = 5 * 60 * 1000; // 5 min — same cadence as the main app
 
   function readNotifiedVersions() {
     try { return JSON.parse(localStorage.getItem(VERSION_KEY) || "[]"); } catch (e) { return []; }
@@ -235,47 +196,74 @@
     return false;
   }
 
-  function checkAppUpdate() {
-    if (!booted || !db) return;
-    var now = Date.now();
-    if (now - lastUpdateCheck < UPDATE_CHECK_INTERVAL) return;
-    lastUpdateCheck = now;
+  function myBuildVersion() {
+    var cur = "";
+    try {
+      var st = readState();
+      cur = (st && (st.buildVersion || st.appVersion)) || "";
+      if (!cur) cur = localStorage.getItem("oh_app_version") || "";
+    } catch (e) {}
+    return cur;
+  }
+
+  function fireUpdateNotif(meta) {
+    var latest = meta.latestVersion;
+    if (!latest) return;
+    // v5.3.0: FCM push is live on this phone → the owner's admin-panel
+    // broadcast delivers the update notification; this legacy path stays quiet.
+    try {
+      var stNow = readState();
+      if (stNow && stNow.fcm) return;
+    } catch (e) {}
+    var cur = myBuildVersion();
+    if (!cur) return; // unknown current → don't notify
+    if (!versionGt(latest, cur)) return; // not newer than this build
+    var notified = readNotifiedVersions();
+    if (notified.indexOf(latest) >= 0) return; // once per version
+    notified.push(latest);
+    writeNotifiedVersions(notified);
+
+    // v5.1: tap → open the app AND force an instant config refresh so the
+    // update bar is already waiting (the flag is read in the main app)
+    try { localStorage.setItem("oh_refresh_cfg", "1"); } catch (e) {}
+
+    var title = "🔄 " + (window.__hasBn ? "নতুন আপডেট চলে আসছে!" : "New update available!");
+    var bnBody = "v" + latest + (meta.changelog ? (" — " + meta.changelog) : "") +
+      " — অ্যাপটি আপডেট করে নতুন ফিচারগুলো উপভোগ করুন।";
+    var enBody = "v" + latest + (meta.changelog ? (" — " + meta.changelog) : "") +
+      " — update the app to enjoy the new features.";
+    var body = window.__hasBn ? bnBody : enBody;
+    try {
+      if (window.OHNative && window.OHNative.postNotification) {
+        window.OHNative.postNotification(title, body, "app_update_" + latest);
+      }
+      log("update notif posted for v" + latest);
+    } catch (e) { log("update notif failed: " + e); }
+  }
+
+  /** Realtime watch: one onSnapshot on app/meta — fires on EVERY owner save. */
+  function watchAppMeta() {
+    if (metaUnsub || !db) return;
     try {
       loadMod("firebase-firestore.js").then(function (fs) {
         try {
-          fs.getDoc(fs.doc(db, "app", "meta")).then(function (snap) {
-            if (!snap.exists()) return;
-            var meta = snap.data() || {};
-            var latest = meta.latestVersion;
-            if (!latest) return;
-            // the build's version comes from oh_chat_state (main app writes it)
-            var st = readState();
-            var cur = (st && (st.buildVersion || st.appVersion)) || "";
-            if (!cur) {
-              // fallback: try localStorage written at install time
-              try { cur = localStorage.getItem("oh_app_version") || ""; } catch (e) {}
-            }
-            if (!cur) return; // unknown current → don't notify
-            if (!versionGt(latest, cur)) return; // not newer
+          metaUnsub = fs.onSnapshot(fs.doc(db, "app", "meta"), function (snap) {
+            if (snap.exists()) fireUpdateNotif(snap.data() || {});
+          }, function (err) {
+            log("meta watch error: " + (err && err.code ? err.code : err));
+            try { if (metaUnsub) { metaUnsub(); metaUnsub = null; } } catch (e) {}
+          });
+          log("meta watch live (realtime update notifs)");
+        } catch (e) { log("meta watch setup failed: " + e); }
+      }).catch(function (e) { log("fs load for meta watch failed: " + e); });
+    } catch (e) { log("meta watch err: " + e); }
+  }
 
-            // dedupe — only notify ONCE per version
-            var notified = readNotifiedVersions();
-            if (notified.indexOf(latest) >= 0) return;
-            notified.push(latest);
-            writeNotifiedVersions(notified);
-
-            var title = "🔄 " + (window.__hasBn ? "অ্যাপ আপডেট এসেছে" : "App update available");
-            var body = (window.__hasBn ? "v" : "v") + latest + (meta.changelog ? (" — " + meta.changelog) : (window.__hasBn ? " — অ্যাপ খুলে আপডেট করো" : " — open the app to update"));
-            try {
-              if (window.OHNative && window.OHNative.postNotification) {
-                window.OHNative.postNotification(title, body, "app_update_" + latest, "", "Our Habit");
-              }
-              log("update notif posted for v" + latest);
-            } catch (e) { log("update notif failed: " + e); }
-          }).catch(function (e) { log("meta read failed: " + e); });
-        } catch (e) { log("meta read err: " + e); }
-      }).catch(function (e) { log("fs load for update failed: " + e); });
-    } catch (e) { log("update check err: " + e); }
+  // ==================== v5.1: HEARTBEAT for the admin panel ====================
+  // Written on every cycle — the in-app admin panel shows জীবিত ✓ when this
+  // is fresher than 90s.
+  function beat() {
+    try { localStorage.setItem("oh_listener_hb", String(Date.now())); } catch (e) {}
   }
 
   // retry boot until the state appears (the app may not have written it yet)
@@ -287,15 +275,21 @@
     boot();
   }, 5000);
 
-  // poll the state so new/removed friends are followed without a reload;
-  // v5.0: the same poll carries the presence heartbeat.
+  // v5.1 TEST HOOK (harmless in production — used only by the verify suite to
+  // drive fireUpdateNotif with synthetic versions; no user-facing surface).
+  try {
+    window.OH_DEBUG = { fireUpdateNotif: fireUpdateNotif, versionGt: versionGt, myBuildVersion: myBuildVersion };
+  } catch (e) {}
+
+  // poll the state so new/removed friends are followed without a reload
   setInterval(function () {
     if (!booted) return;
     resubscribe();
-    presenceBeat();
-    checkAppUpdate();
+    if (db && !metaUnsub) watchAppMeta(); // re-arm the realtime update watch if it dropped
+    beat();
   }, 30000);
 
+  beat();
   boot();
 })();
 </script>
