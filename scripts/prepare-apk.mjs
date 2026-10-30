@@ -132,7 +132,7 @@ if (!ma.includes("oh_mute_lifecycle_v51")) {
   // v5.1 oh_mute_lifecycle_v51 — foreground-mute truth for OhKeepAliveService:
   // the user is INSIDE the app while resumed, and OUT the moment it pauses.
   @Override
-  protected void onResume() {
+  public void onResume() {
     super.onResume();
     try {
       getSharedPreferences("oh_keepalive", MODE_PRIVATE)
@@ -142,7 +142,7 @@ if (!ma.includes("oh_mute_lifecycle_v51")) {
   }
 
   @Override
-  protected void onPause() {
+  public void onPause() {
     super.onPause();
     try {
       getSharedPreferences("oh_keepalive", MODE_PRIVATE)
