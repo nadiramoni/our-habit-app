@@ -47,6 +47,10 @@ const slim = {
   apkUrl: v.apkUrl ?? "",
   changelog: v.changelog ?? "",
   forceUpdate: Boolean(v.forceUpdate),
+  // v5.3.0: FCM push config — baked so even the FIRST run offline can push
+  fcmServerKey: v.fcmServerKey ?? "",
+  pushRelayUrl: v.pushRelayUrl ?? "",
+  pushRelaySecret: v.pushRelaySecret ?? "",
 };
 
 // NOTE: baked latestVersion/apkUrl snapshot the value at build time; the live
