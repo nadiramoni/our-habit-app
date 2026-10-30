@@ -76,14 +76,12 @@ public class ChatServicePlugin extends Plugin {
       if (ctx != null) {
         long limit = readLong(call, "limitMin", 0L);
         String warn = call.getString("warnText", "");
-        String warnEn = call.getString("warnTextEn", "");
-        String lang = call.getString("lang", "en");
+        String lang = call.getString("lang", "bn");
         ctx.getSharedPreferences(OhKeepAliveService.PREFS, Context.MODE_PRIVATE)
             .edit()
             .putLong(OhKeepAliveService.KEY_REELS_LIMIT, limit)
             .putString(OhKeepAliveService.KEY_REELS_WARN, warn == null ? "" : warn)
-            .putString(OhKeepAliveService.KEY_REELS_WARN_EN, warnEn == null ? "" : warnEn)
-            .putString(OhKeepAliveService.KEY_REELS_LANG, lang == null ? "en" : lang)
+            .putString(OhKeepAliveService.KEY_REELS_LANG, lang == null ? "bn" : lang)
             .apply();
       }
       call.resolve();
@@ -108,65 +106,14 @@ public class ChatServicePlugin extends Plugin {
       Context ctx = getContext() != null ? getContext() : getActivity();
       boolean on = false;
       if (ctx != null) {
-        android.content.SharedPreferences sp =
-            ctx.getSharedPreferences(OhKeepAliveService.PREFS, Context.MODE_PRIVATE);
-        boolean want = sp.getBoolean(OhKeepAliveService.KEY_ON, false);
-        // v5.0: ALIVE, not just “wanted” — the service writes a 30s beat
-        // (KEY_LAST_BEAT); a beat older than 90s means Android killed it.
-        long beat = sp.getLong(OhKeepAliveService.KEY_LAST_BEAT, 0L);
-        boolean fresh = beat > 0 && System.currentTimeMillis() - beat < 90_000L;
-        on = want && fresh;
+        on = ctx.getSharedPreferences(OhKeepAliveService.PREFS, Context.MODE_PRIVATE)
+            .getBoolean(OhKeepAliveService.KEY_ON, false);
       }
       JSObject r = new JSObject();
       r.put("running", on);
       call.resolve(r);
     } catch (Exception e) {
       call.reject("status_failed", e.getMessage());
-    }
-  }
-
-  /**
-   * v5.0: consume the pending chat deep link. MainActivity saves the friend's
-   * uid+name from the notification PendingIntent extras when the user TAPS a
-   * background chat notification; the web layer calls this on mount + every
-   * app resume and jumps straight into that chat. Returns the payload ONCE
-   * (then it is cleared); a tap older than 10 minutes is dropped so a stale
-   * notification never yanks the user into a chat.
-   */
-  @PluginMethod
-  public void pendingOpenChat(PluginCall call) {
-    try {
-      Context ctx = getContext() != null ? getContext() : getActivity();
-      JSObject r = new JSObject();
-      if (ctx == null) {
-        r.put("uid", "");
-        call.resolve(r);
-        return;
-      }
-      android.content.SharedPreferences sp =
-          ctx.getSharedPreferences(OhKeepAliveService.PREFS, Context.MODE_PRIVATE);
-      String raw = sp.getString(OhKeepAliveService.KEY_PENDING_CHAT, "");
-      sp.edit().remove(OhKeepAliveService.KEY_PENDING_CHAT).apply();
-      try {
-        org.json.JSONObject j = raw == null || raw.isEmpty() ? null : new org.json.JSONObject(raw);
-        if (j != null && j.has("uid") && !j.isNull("uid")) {
-          long at = j.optLong("at", 0L);
-          if (at > 0 && System.currentTimeMillis() - at > 10 * 60_000L) {
-            j = null; // stale tap — ignore
-          }
-        }
-        if (j != null && j.has("uid") && !j.isNull("uid")) {
-          r.put("uid", j.optString("uid", ""));
-          r.put("name", j.optString("name", ""));
-        } else {
-          r.put("uid", "");
-        }
-      } catch (Exception ignored) {
-        r.put("uid", "");
-      }
-      call.resolve(r);
-    } catch (Exception e) {
-      call.resolve(new JSObject());
     }
   }
 }
