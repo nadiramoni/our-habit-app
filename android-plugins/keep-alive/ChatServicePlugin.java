@@ -76,12 +76,14 @@ public class ChatServicePlugin extends Plugin {
       if (ctx != null) {
         long limit = readLong(call, "limitMin", 0L);
         String warn = call.getString("warnText", "");
-        String lang = call.getString("lang", "bn");
+        String warnEn = call.getString("warnTextEn", "");
+        String lang = call.getString("lang", "en");
         ctx.getSharedPreferences(OhKeepAliveService.PREFS, Context.MODE_PRIVATE)
             .edit()
             .putLong(OhKeepAliveService.KEY_REELS_LIMIT, limit)
             .putString(OhKeepAliveService.KEY_REELS_WARN, warn == null ? "" : warn)
-            .putString(OhKeepAliveService.KEY_REELS_LANG, lang == null ? "bn" : lang)
+            .putString(OhKeepAliveService.KEY_REELS_WARN_EN, warnEn == null ? "" : warnEn)
+            .putString(OhKeepAliveService.KEY_REELS_LANG, lang == null ? "en" : lang)
             .apply();
       }
       call.resolve();

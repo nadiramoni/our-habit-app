@@ -65,6 +65,7 @@ public class OhKeepAliveService extends Service {
   public static final String KEY_MUTED = "muted"; // main app in foreground → no chat notifs
   public static final String KEY_REELS_LIMIT = "reels_limit_min";
   public static final String KEY_REELS_WARN = "reels_warn_text";
+  public static final String KEY_REELS_WARN_EN = "reels_warn_text_en"; // v4.1: English fallback
   public static final String KEY_REELS_LANG = "reels_lang";
   public static final String KEY_LAST_REELS_WARN = "last_reels_warn_at";
 
@@ -241,14 +242,15 @@ public class OhKeepAliveService extends Service {
             SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
             long limit = sp.getLong(KEY_REELS_LIMIT, 0L);
             String warn = sp.getString(KEY_REELS_WARN, "");
-            String lang = sp.getString(KEY_REELS_LANG, "bn");
+            String warnEn = sp.getString(KEY_REELS_WARN_EN, ""); // v4.1: English fallback
+            String lang = sp.getString(KEY_REELS_LANG, "en");
             if (limit > 0 && warn != null && !warn.isEmpty()) {
               long mins = UsageTrackerPlugin.todayReelsMinutes(getApplicationContext());
               long lastWarn = sp.getLong(KEY_LAST_REELS_WARN, 0L);
               if (mins >= limit && System.currentTimeMillis() - lastWarn > 30 * 60 * 1000L) {
                 sp.edit().putLong(KEY_LAST_REELS_WARN, System.currentTimeMillis()).apply();
                 // speak the warning out loud even with the app closed
-                AlarmSpeakService.startSpeakOnly(getApplicationContext(), warn, lang);
+                AlarmSpeakService.startSpeakOnly(getApplicationContext(), warn, lang, warnEn);
                 // plus a visible notification
                 try {
                   postReelsNotif(mins, limit);

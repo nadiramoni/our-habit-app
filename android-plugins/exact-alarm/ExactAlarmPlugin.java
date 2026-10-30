@@ -114,7 +114,11 @@ public class ExactAlarmPlugin extends Plugin {
         String key = o.optString("key", id);
         String time = o.optString("time", "");
         String speak = o.optString("speak", ""); // v2.9: named-alert voice
-        String lang = o.optString("lang", "bn");
+        // v4.1: English copy of the same call + DEFAULT lang "en" — the
+        // English call works on every phone with zero setup (owner round-16:
+        // "আগের যেটা ইংলিশে ডাকত ওইটাই থাকবে")
+        String speakEn = o.optString("speakEn", "");
+        String lang = o.optString("lang", "en");
 
         int reqCode = reqCode(id, i);
         Intent intent = new Intent(ctx, AlarmFireReceiver.class);
@@ -126,6 +130,7 @@ public class ExactAlarmPlugin extends Plugin {
         payload.put("sound", sound);
         payload.put("time", time);
         payload.put("speak", speak);
+        payload.put("speakEn", speakEn);
         payload.put("lang", lang);
         intent.putExtra("payload", payload.toString());
 
@@ -305,7 +310,8 @@ public class ExactAlarmPlugin extends Plugin {
       Context ctx = getContext() != null ? getContext() : getActivity();
       String key = call.getString("key", "generic");
       String text = call.getString("text", "");
-      String lang = call.getString("lang", "bn");
+      String textEn = call.getString("textEn", "");
+      String lang = call.getString("lang", "en");
       Integer throttleMin = call.getInt("throttleMin", 30);
       long throttleMs = (throttleMin == null ? 30 : throttleMin) * 60_000L;
       // JS numbers may arrive as Double (bridge quirk) — clamp defensively
@@ -329,7 +335,7 @@ public class ExactAlarmPlugin extends Plugin {
         return;
       }
       sp.edit().putLong(throttleKey, System.currentTimeMillis()).apply();
-      AlarmSpeakService.startSpeakOnly(ctx, text, lang);
+      AlarmSpeakService.startSpeakOnly(ctx, text, lang, textEn == null ? "" : textEn);
       JSObject r = new JSObject();
       r.put("spoken", true);
       call.resolve(r);
@@ -420,7 +426,8 @@ public class ExactAlarmPlugin extends Plugin {
                 .put("sound", o.optString("sound", "adhan.mp3"))
                 .put("time", o.optString("time", ""))
                 .put("speak", o.optString("speak", ""))
-                .put("lang", o.optString("lang", "bn"))
+                .put("speakEn", o.optString("speakEn", ""))
+                .put("lang", o.optString("lang", "en"))
                 .toString());
         int flags = PendingIntent.FLAG_CANCEL_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {

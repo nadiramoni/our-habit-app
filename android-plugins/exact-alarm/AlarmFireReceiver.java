@@ -49,7 +49,8 @@ public class AlarmFireReceiver extends BroadcastReceiver {
       String sound = o.optString("sound", "adhan.mp3");
       String time = o.optString("time", "");
       String speak = o.optString("speak", "");
-      String lang = o.optString("lang", "bn");
+      String speakEn = o.optString("speakEn", ""); // v4.1: English fallback call
+      String lang = o.optString("lang", "en"); // v4.1: default ENGLISH
 
       // 1) remember the launch payload (the app may cold-start from the
       //    full-screen intent — JS picks it up with consumeLaunch())
@@ -64,7 +65,7 @@ public class AlarmFireReceiver extends BroadcastReceiver {
       // 2) v2.9 NAMED ALERT — speak the user's name first, the alarm sound
       //    follows right after the voice (sequenced inside AlarmSpeakService)
       if (speak != null && !speak.trim().isEmpty()) {
-        AlarmSpeakService.startForAlarm(context, speak, lang, title, body, sound, key, time);
+        AlarmSpeakService.startForAlarm(context, speak, lang, speakEn, title, body, sound, key, time);
         return;
       }
 
