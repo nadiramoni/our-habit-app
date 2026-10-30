@@ -1,29 +1,8 @@
-// v5.2 (owner round-22): বাংলা is the DEFAULT for both the UI language and
-// the alarm VOICE — the device language no longer decides anything (the
-// manual picker in Settings → থিম ও ভাষা is the only way to English). No
-// value import from i18n is needed anymore.
-
 export type PrayerKey = "fajr" | "dhuhr" | "asr" | "maghrib" | "isha";
 
 export const PRAYER_KEYS: PrayerKey[] = ["fajr", "dhuhr", "asr", "maghrib", "isha"];
 
-export type ReelApp =
-  | "facebook"
-  | "ytshorts"
-  | "ytlong"
-  | "tiktok"
-  | "instagram"
-  // v5.0 (owner round-19): the owner's video-app list — এক্স, কুকু টিভি,
-  // মোজ + BD drama/OTT apps. Package names verified from the Play Store.
-  | "x"
-  | "kukutv"
-  | "moj"
-  | "chorki"
-  | "hoichoi"
-  | "bongo"
-  | "bioscope"
-  | "toffee"
-  | "other";
+export type ReelApp = "facebook" | "ytshorts" | "ytlong" | "tiktok" | "instagram" | "other";
 
 export const REEL_APPS: { id: ReelApp; icon: string; short: boolean }[] = [
   { id: "facebook", icon: "📘", short: true },
@@ -31,14 +10,6 @@ export const REEL_APPS: { id: ReelApp; icon: string; short: boolean }[] = [
   { id: "ytlong", icon: "📺", short: false },
   { id: "tiktok", icon: "🎵", short: true },
   { id: "instagram", icon: "📸", short: true },
-  { id: "x", icon: "✖️", short: true },
-  { id: "kukutv", icon: "🍿", short: true },
-  { id: "moj", icon: "🎬", short: true },
-  { id: "chorki", icon: "🎥", short: false },
-  { id: "hoichoi", icon: "🎭", short: false },
-  { id: "bongo", icon: "🦎", short: false },
-  { id: "bioscope", icon: "🎞️", short: false },
-  { id: "toffee", icon: "🍬", short: false },
   { id: "other", icon: "📱", short: true },
 ];
 
@@ -52,10 +23,6 @@ export interface DayLog {
   waterMl: number;
   reelsMin: number | null; // null = not logged today; total across apps
   reels: Record<ReelApp, number>; // minutes per video platform (auto-track in APK phase)
-  // v5.0: SECONDS per video app (precise display source — 45s shows as
-  // "৪৫ সেকেন্ড", not a truncated 0 min). Written by auto-track from the
-  // OS; old days simply lack the field and fall back to minutes.
-  reelsSec?: Record<string, number>;
   dhikr: Record<string, number>; // dhikrId -> count today
   meditationMin: number;
   focusMin: number; // 25-min focus sessions completed today
@@ -95,10 +62,6 @@ export type Lang = "bn" | "en";
 export interface AppSettings {
   name: string;
   language: Lang;
-  // v5.2 (owner round-22): TRUE only when the user PICKED a language in
-  // Settings → থিম ও ভাষা. Until then the app stays on the বাংলা default —
-  // the v5.0 device-follow auto values are reset on load (mergeSettings).
-  langPicked?: boolean;
   theme: "dark" | "light";
   waterGoalMl: number;
   checkinTime: string;
@@ -124,24 +87,6 @@ export interface AppSettings {
   // single source of truth for every name display + share — the Google/Gmail
   // account name never overwrites it (owner: "ওর জিমেইলের নামটা থাকবে না")
   nameSet?: boolean;
-  // v3.3: the same name written in BENGALI script (optional). The alarm VOICE
-  // reads this when the app language is Bangla → perfect Bangladeshi
-  // pronunciation, while every DISPLAY keeps the English name.
-  // Owner: "নাম ইংলিশে থাকবে, কিন্তু কথা বলবে বাংলাতে — বাংলাদেশি উচ্চারণ"
-  nameBn?: string;
-  // v4.2 (owner round-17): the alarm voice speaks BANGLA by default again —
-  // the ORIGINAL system: the name is called like before and the sentence is
-  // Bangla. No Bangla TTS voice on the phone → auto-English fallback so the
-  // call is never silent. English stays as an option in Settings (owner:
-  // "আগের সিস্টেম — ঐরকম নাম ধরে ডাকবে কিন্তু কথাটা বলবে বাংলায়।").
-  // v5.2 (owner round-22): বাংলাই ডিফল্ট — "ঐটা টোটালি বাংলাতে বলবে"।
-  voiceLang?: "en" | "bn";
-  // v5.2: TRUE only when the user picked the ডাক-ভাষা in Settings — until
-  // then the Bengali default wins (the v5.0 device-follow auto value resets).
-  voiceLangPicked?: boolean;
-  // v3.3: the user's gender — the alarm voice TRIES to pick a female voice for
-  // girls and a male voice for boys (depends on the phone's TTS engine).
-  gender?: "male" | "female";
   // v2.9: messenger-like chat notifications — the background service keeps
   // listening even when the app is closed (Settings toggle)
   chatNotif?: boolean;
@@ -195,6 +140,17 @@ export interface ServerCfg {
   apkUrl: string;
   changelog: string;
   forceUpdate: boolean;
+  /** v5.3.0: FCM legacy Server Key (⚡ quick path — Google is shutting this
+   * API down, may not work). The OWNER pastes it in the admin panel; it rides
+   * app/meta.cfg to every install. Prefer the 🛡 Apps Script relay below. */
+  fcmServerKey: string;
+  /** v5.3.0 🛡 RECOMMENDED send path: a FREE Google Apps Script web app
+   * (scripts/our-habit-push-relay.gs) the owner deploys once. It signs with
+   * the project's service account and calls the CURRENT FCM v1 API — always
+   * works, no server cost, no card. The app POSTs {secret, messages} here. */
+  pushRelayUrl: string;
+  /** v5.3.0: the secret that authorizes posts to the relay URL. */
+  pushRelaySecret: string;
 }
 
 export function defaultAtCfg(): AtCfg {
@@ -224,6 +180,9 @@ export function defaultServerCfg(): ServerCfg {
     apkUrl: "",
     changelog: "",
     forceUpdate: false,
+    fcmServerKey: "",
+    pushRelayUrl: "",
+    pushRelaySecret: "",
   };
 }
 
@@ -356,11 +315,7 @@ export const DHIKRS: { id: string; ar: string; bn: string; en: string }[] = [
 ];
 
 export function emptyReels(): Record<ReelApp, number> {
-  return {
-    facebook: 0, ytshorts: 0, ytlong: 0, tiktok: 0, instagram: 0,
-    x: 0, kukutv: 0, moj: 0, chorki: 0, hoichoi: 0,
-    bongo: 0, bioscope: 0, toffee: 0, other: 0,
-  };
+  return { facebook: 0, ytshorts: 0, ytlong: 0, tiktok: 0, instagram: 0, other: 0 };
 }
 
 export function emptyLog(): DayLog {
@@ -385,15 +340,7 @@ export function emptyLog(): DayLog {
 export function defaultSettings(): AppSettings {
   return {
     name: "",
-    // v5.2 (owner round-22): বাংলা ডিফল্ট — "বাট ডিফল্ট হিসেবে বাংলাটাই থাকবে"।
-    // The device language no longer decides anything; Settings → থিম ও ভাষা
-    // has the manual picker (🇧🇩 বাংলা default + 🇬🇧 English).
     language: "bn",
-    langPicked: false,
-    // v5.2 (owner round-22): the alarm VOICE starts on BANGLA for every NEW
-    // install — "ঐটা টোটালি বাংলাতে বলবে" (round-17's system, restored).
-    voiceLang: "bn",
-    voiceLangPicked: false,
     theme: "dark",
     waterGoalMl: 3000,
     checkinTime: "21:00",

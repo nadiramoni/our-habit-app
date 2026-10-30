@@ -5,7 +5,6 @@ import { useStore } from "@/lib/store";
 import { Bar, Card, Ring, SectionTitle } from "@/components/ui-bits";
 import AdsBanner from "@/components/AdsBanner";
 import { addDays, getLog } from "@/lib/types";
-import { appLang } from "@/lib/i18n";
 import {
   BADGES,
   MAX_POINTS,
@@ -21,7 +20,7 @@ function LevelCard() {
   const total = useMemo(() => Object.values(state.logs).reduce((a, l) => a + dayPoints(l), 0), [state.logs]);
   const lv = levelInfo(total);
   const todayPts = dayPoints(getLog(state, today));
-  const bn = appLang() === "bn";
+  const bn = state.settings.language === "bn";
   return (
     <Card className="mb-4">
       <div className="flex items-center justify-between gap-3">
@@ -120,7 +119,7 @@ function WeeklyBars() {
   const max = Math.max(MAX_POINTS, ...days.map((x) => x.pts));
   const lbl = (d: string) => {
     const [y, m, dd] = d.split("-").map(Number);
-    return new Intl.DateTimeFormat(appLang() === "bn" ? "bn-BD" : "en-GB", { weekday: "narrow" }).format(
+    return new Intl.DateTimeFormat(state.settings.language === "bn" ? "bn-BD" : "en-GB", { weekday: "narrow" }).format(
       new Date(y, m - 1, dd)
     );
   };
@@ -287,7 +286,7 @@ function CalendarCard() {
     cells.push(`${ym.y}-${String(ym.m).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
   }
 
-  const monthLabel = new Intl.DateTimeFormat(appLang() === "bn" ? "bn-BD" : "en-GB", {
+  const monthLabel = new Intl.DateTimeFormat(state.settings.language === "bn" ? "bn-BD" : "en-GB", {
     month: "long",
     year: "numeric",
   }).format(first);
@@ -309,12 +308,12 @@ function CalendarCard() {
   }, [state.logs, ym]);
 
   const dowLabels = useMemo(() => {
-    const loc = appLang() === "bn" ? "bn-BD" : "en-GB";
+    const loc = state.settings.language === "bn" ? "bn-BD" : "en-GB";
     // Jan 1 2024 was a Monday — gives Mon..Sun
     return Array.from({ length: 7 }, (_, i) =>
       new Intl.DateTimeFormat(loc, { weekday: "narrow" }).format(new Date(2024, 0, 1 + i))
     );
-  }, []);
+  }, [state.settings.language]);
 
   const ringColor = (pct: number): React.CSSProperties | undefined => {
     if (pct <= 0) return undefined;

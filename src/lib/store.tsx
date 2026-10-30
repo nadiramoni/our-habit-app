@@ -13,12 +13,11 @@ import {
   randomMealMusic,
   todayStr,
   uid,
-  waterAlarmTimes,
-  WaterAlarmCfg,
 } from "./types";
-import { appLang, makeT, T } from "./i18n";
+import { makeT, T } from "./i18n";
 import { reminderOfTheDay } from "./logic";
 import { isNative } from "./native";
+import { waterAlarmTimes, WaterAlarmCfg, shiftTime } from "./types";
 
 const KEY = "ourhabit_v1";
 
@@ -109,7 +108,7 @@ const StoreCtx = createContext<Ctx | null>(null);
 
 function mergeSettings(saved: Partial<AppSettings> | undefined, base: AppSettings): AppSettings {
   if (!saved) return base;
-  const merged: AppSettings = {
+  return {
     ...base,
     ...saved,
     fajrAlarm: { ...base.fajrAlarm, ...(saved.fajrAlarm || {}) },
@@ -139,24 +138,6 @@ function mergeSettings(saved: Partial<AppSettings> | undefined, base: AppSetting
       isha: { ...base.adhanAlerts.isha, ...(saved.adhanAlerts?.isha || {}) },
     },
   };
-  // v5.2 (owner round-22): ডিফল্ট বাংলা — "বাট ম্যানুয়ালি কিন্তু বাংলাটাই তুমি
-  // দিবা… ডিফল্ট হিসেবে বাংলাটাই থাকবে"। A stored language only counts when
-  // the user PICKED it in the new Settings picker (langPicked); the v5.0
-  // device-follow auto values (English phones got "en" written silently) are
-  // reset to বাংলা here. Same rule for the alarm VOICE (voiceLangPicked).
-  if (merged.langPicked !== true) {
-    merged.language = "bn";
-    merged.langPicked = false;
-  } else {
-    merged.language = merged.language === "en" ? "en" : "bn";
-  }
-  if (merged.voiceLangPicked !== true) {
-    merged.voiceLang = "bn";
-    merged.voiceLangPicked = false;
-  } else {
-    merged.voiceLang = merged.voiceLang === "en" ? "en" : "bn";
-  }
-  return merged;
 }
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
@@ -173,18 +154,27 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (raw) {
         const parsed = JSON.parse(raw) as AppState;
         const base = defaultState();
+        // v5.1 ONE-TIME DEFAULT-LANGUAGE FIX (owner: "আগে বাংলা+ইংরেজি
+        // দুইটা অপশন ছিল, এখন সব ইংরেজি — ডিফল্ট বাংলা হবে")। Devices that
+        // were switched to English by the old device-language-follow build
+        // (never by an explicit choice) go back to বাংলা exactly once; anyone
+        // who truly wants English re-selects it in Settings and it sticks.
+        try {
+          if (!localStorage.getItem("oh_lang_v51")) {
+            localStorage.setItem("oh_lang_v51", "1");
+            if (parsed.settings && parsed.settings.language === "en") {
+              parsed.settings = { ...parsed.settings, language: "bn" };
+            }
+          }
+        } catch {
+          /* ignore */
+        }
          
         setState({
           ...base,
           ...parsed,
           settings: mergeSettings(parsed.settings, base.settings),
-          // v5.0 HARDENING: every persisted day log is re-normalized through
-          // emptyLog() on load — a partial/legacy/interrupted log can never
-          // crash any consumer (streaks, MonthCard, dayPoints…), exactly like
-          // updateLog has always guaranteed for freshly written logs.
-          logs: Object.fromEntries(
-            Object.entries(parsed.logs || {}).map(([d, l]) => [d, { ...emptyLog(), ...l }])
-          ),
+          logs: parsed.logs || {},
           personalNotes: parsed.personalNotes || [],
           customHabits: Array.isArray(parsed.customHabits) ? parsed.customHabits : [],
           // legacy PIN accounts are retired — identity is Firebase now
@@ -273,9 +263,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.classList.toggle("dark", state.settings.theme === "dark");
   }, [state.settings.theme, ready]);
 
-  // v5.2 (owner round-22): ডিফল্ট বাংলা — the manual picker is back; the UI
-  // language follows settings.language (default "bn"), NOT the device.
-  const t = useMemo(() => makeT(state.settings.language === "en" ? "en" : "bn"), [state.settings.language]);
+  const t = useMemo(() => makeT(state.settings.language), [state.settings.language]);
 
   const updateSettings = useCallback((patch: Partial<AppSettings>) => {
     setState((s) => {
@@ -487,7 +475,12 @@ export function checkReminders(
   const prayerKeys = ["fajr", "dhuhr", "asr", "maghrib", "isha"] as const;
   for (const pk of prayerKeys) {
     const cfg = s.adhanAlerts[pk];
-    if (cfg?.on && hm === cfg.time && !already(`adhan_${pk}`)) {
+    if (!cfg?.on) continue;
+    // v5.1 মাগরিব +৩ মিনিট (owner's 2-3-minute special case): the Maghrib
+    // reminder fires 3 minutes AFTER the azan time — everywhere (in-app engine
+    // here AND the native exact-alarm sync in page.tsx, so both worlds agree).
+    const fireAt = pk === "maghrib" ? shiftTime(cfg.time, 3) : cfg.time;
+    if (hm === fireAt && !already(`adhan_${pk}`)) {
       alarm(`adhan_${pk}`, t("appName"), t("adhanMsg"));
     }
   }
@@ -568,7 +561,7 @@ export function checkReminders(
 function reminderText(state: AppState, t: T): string {
   try {
     const r = reminderOfTheDay(todayStr());
-    return appLang() === "bn" ? `${r.bn} — ${r.src}` : `${r.en} — ${r.src}`;
+    return state.settings.language === "bn" ? `${r.bn} — ${r.src}` : `${r.en} — ${r.src}`;
   } catch {
     return t("dailyReminder");
   }

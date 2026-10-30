@@ -62,6 +62,24 @@ export function ServerCfgProvider({ children }: { children: React.ReactNode }) {
     };
   }, [refresh]);
 
+  // v5.3.0: tapping an FCM update notification (push.ts) sets oh_refresh_cfg
+  // + fires "oh:refresh-cfg" — the fresh cfg (new version + download link) is
+  // waiting BEFORE the user sees the app. Covers cold starts (flag read on
+  // mount) and already-open apps (live event) in one listener.
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("oh_refresh_cfg") === "1") {
+        localStorage.removeItem("oh_refresh_cfg");
+        void refresh();
+      }
+    } catch {
+      /* ignore */
+    }
+    const onRefresh = () => void refresh();
+    window.addEventListener("oh:refresh-cfg", onRefresh);
+    return () => window.removeEventListener("oh:refresh-cfg", onRefresh);
+  }, [refresh]);
+
   return <CfgContext.Provider value={{ cfg, loaded, refresh }}>{children}</CfgContext.Provider>;
 }
 
