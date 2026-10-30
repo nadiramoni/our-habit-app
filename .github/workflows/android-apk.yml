@@ -1,15 +1,15 @@
 name: Build Android APK (free, on GitHub's servers)
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch: {} # "Run workflow" button
   push:
-    tags: ["v*"]
+    tags: ["v*"] # push a tag like v1.2.0 → also creates a GitHub Release
 
 jobs:
   apk:
     runs-on: ubuntu-latest
     env:
-      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }} # optional — enables publishing the APK to the public Releases repo
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -69,6 +69,9 @@ jobs:
 
       - name: Place keystore at the path Gradle's signing config expects
         run: |
+          # build.gradle uses '../../android-keystore/...' (2 ../ from android/app/ → workspace root)
+          # → the keystore must be at <workspace>/android-keystore/, which is exactly where the repo is checked out
+          # → no mirroring needed; we just confirm the file is in place
           if [ -f android-keystore/ourhabit-debug.keystore ]; then
             echo "✓ Keystore confirmed at workspace root: android-keystore/ourhabit-debug.keystore"
           else
@@ -79,7 +82,7 @@ jobs:
       - name: Create Capacitor Android project + native plugin
         run: node scripts/prepare-apk.mjs
 
-      - name: Re-confirm keystore after Capacitor ran
+      - name: Re-confirm keystore after Capacitor ran (workspace root copy is never touched by cap add)
         run: |
           if [ -f android-keystore/ourhabit-debug.keystore ]; then
             echo "✓ Keystore still present at workspace root after Capacitor setup"
@@ -124,6 +127,6 @@ jobs:
           cp OurHabit-*.apk OurHabit-latest.apk
           gh release create "$TAG" --repo nadiramoni/our-habit-apk --latest \
             --title "Our Habit $TAG" \
-            --notes "📱 Our Habit — latest Android APK." \
+            --notes "📱 Our Habit — latest Android APK. Download → open → allow 'install unknown apps' → install. The app code stays private; this page only serves the APK." \
             OurHabit-latest.apk
           echo "✅ Published: https://github.com/nadiramoni/our-habit-apk/releases/latest"
