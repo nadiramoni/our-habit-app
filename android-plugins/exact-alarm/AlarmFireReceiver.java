@@ -49,8 +49,8 @@ public class AlarmFireReceiver extends BroadcastReceiver {
       String sound = o.optString("sound", "adhan.mp3");
       String time = o.optString("time", "");
       String speak = o.optString("speak", "");
-      String speakEn = o.optString("speakEn", ""); // v4.1: English fallback call
-      String lang = o.optString("lang", "en"); // v4.1: default ENGLISH
+      String speakEn = o.optString("speakEn", ""); // English fallback call
+      String lang = o.optString("lang", "bn"); // v4.2: default BANGLA (owner round-17)
 
       // 1) remember the launch payload (the app may cold-start from the
       //    full-screen intent — JS picks it up with consumeLaunch())

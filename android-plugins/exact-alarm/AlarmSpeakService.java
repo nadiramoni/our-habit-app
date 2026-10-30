@@ -66,8 +66,8 @@ public class AlarmSpeakService extends Service {
   private boolean ttsReady = false;
   private boolean finished = false;
   private String pendingPayload = null;
-  private String lang = "en"; // v4.1: ENGLISH is the default call language
-  private String speakEn = ""; // v4.1: English copy for the no-bn-voice fallback
+  private String lang = "bn"; // v4.2: BANGLA is the default call language again
+  private String speakEn = ""; // English copy for the no-bn-voice fallback
 
   @Override
   public IBinder onBind(Intent intent) {
@@ -79,7 +79,7 @@ public class AlarmSpeakService extends Service {
     try {
       final String speak = intent.getStringExtra(EXTRA_SPEAK);
       lang = intent.getStringExtra(EXTRA_LANG);
-      if (lang == null || lang.isEmpty()) lang = "en"; // v4.1: default ENGLISH
+      if (lang == null || lang.isEmpty()) lang = "bn"; // v4.2: default BANGLA (owner round-17)
       speakEn = intent.getStringExtra(EXTRA_SPEAK_EN);
       if (speakEn == null) speakEn = "";
       final String title = intent.getStringExtra(EXTRA_TITLE);
@@ -141,14 +141,14 @@ public class AlarmSpeakService extends Service {
 
   private void configureVoiceAndSpeak(String speak, String speakEn) {
     try {
-      // v4.1: the VOICE language. "en" (default) = the old English call
-      // ("Sakib, it's your time to drink water…") — works on EVERY phone with
-      // zero setup. "bn" = the optional Bangla call; when this phone has NO
-      // Bangla TTS voice installed we fall back to the ENGLISH copy so the
-      // call is never silent (owner round-16: "অনেকে বাংলা ভয়েসের সেটিং
-      // করতে পারবে না — আগের ইংলিশটা থাকবে").
+      // v4.2 (owner round-17): the VOICE language. "bn" (DEFAULT) = the
+      // ORIGINAL call — the name is called like before and the sentence is
+      // Bangla ("সাকিব, তোমার পানি খাওয়ার সময় হয়েছে…"). When this phone
+      // has NO Bangla TTS voice installed we fall back to the ENGLISH copy
+      // so the call is never silent. "en" = the optional English call for
+      // those who pick it in Settings.
       String speakText = speak;
-      String spokenTag = "en";
+      String spokenTag = "bn";
       if ("bn".equals(lang)) {
         int r = tts.setLanguage(new Locale("bn", "BD"));
         if (langBad(r)) r = tts.setLanguage(new Locale("bn", "IN"));

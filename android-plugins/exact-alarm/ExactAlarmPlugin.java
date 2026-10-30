@@ -114,11 +114,12 @@ public class ExactAlarmPlugin extends Plugin {
         String key = o.optString("key", id);
         String time = o.optString("time", "");
         String speak = o.optString("speak", ""); // v2.9: named-alert voice
-        // v4.1: English copy of the same call + DEFAULT lang "en" — the
-        // English call works on every phone with zero setup (owner round-16:
-        // "আগের যেটা ইংলিশে ডাকত ওইটাই থাকবে")
+        // v4.2 (owner round-17): BANGLA is the default call language again —
+        // the ORIGINAL system (name called like before + Bangla sentence).
+        // speakEn is the English copy for the no-bn-voice fallback so the call
+        // is never silent.
         String speakEn = o.optString("speakEn", "");
-        String lang = o.optString("lang", "en");
+        String lang = o.optString("lang", "bn");
 
         int reqCode = reqCode(id, i);
         Intent intent = new Intent(ctx, AlarmFireReceiver.class);
@@ -311,7 +312,7 @@ public class ExactAlarmPlugin extends Plugin {
       String key = call.getString("key", "generic");
       String text = call.getString("text", "");
       String textEn = call.getString("textEn", "");
-      String lang = call.getString("lang", "en");
+      String lang = call.getString("lang", "bn"); // v4.2: Bangla default again
       Integer throttleMin = call.getInt("throttleMin", 30);
       long throttleMs = (throttleMin == null ? 30 : throttleMin) * 60_000L;
       // JS numbers may arrive as Double (bridge quirk) — clamp defensively
@@ -427,7 +428,7 @@ public class ExactAlarmPlugin extends Plugin {
                 .put("time", o.optString("time", ""))
                 .put("speak", o.optString("speak", ""))
                 .put("speakEn", o.optString("speakEn", ""))
-                .put("lang", o.optString("lang", "en"))
+                .put("lang", o.optString("lang", "bn"))
                 .toString());
         int flags = PendingIntent.FLAG_CANCEL_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
