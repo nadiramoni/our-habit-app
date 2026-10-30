@@ -1,23 +1,9 @@
-name: Build Android APK (manual — Run workflow)
+name: Build Android APK (free, on GitHub's servers)
 
-# v4.1 (owner round-16): MANUAL-ONLY builds. Uploading files to the repo
-# does NOT build anything anymore — the owner clicks the green "Run
-# workflow" button when they want a new APK (owner: "আমি নিজে থেকে
-# ম্যানুয়ালি বিল্ড করব — ওইটাই সবথেকে বেস্ট"). Every build gets a
-# VERSION + BUILD NUMBER (auto-incrementing) that shows up in:
-#   • the APK file name  → OurHabit-v4.1.0-b27.apk
-#   • the release title  → "Our Habit v4.1.0 · Build 27"
-#   • Settings → About   → v4.1.0 · Build 27
-# so two APKs can never be confused again — even when the MB size is close.
 on:
-  workflow_dispatch:
-    inputs:
-      note:
-        description: "এই বিল্ডে কী নতুন? (রিলিজ নোটে দেখাবে — ফাঁকা রাখলেও চলবে)"
-        required: false
-        default: ""
-
-run-name: "Manual APK build — run #${{ github.run_number }}"
+  workflow_dispatch: {} # "Run workflow" button
+  push:
+    tags: ["v*"] # push a tag like v1.2.0 → also creates a GitHub Release
 
 jobs:
   apk:
@@ -27,46 +13,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      # The owner uploads our-habit-github-upload.zip (a FULL snapshot of the
-      # project) to the repo root via GitHub's web "Add file → Upload files".
-      # This step unpacks it OVER the checkout, so the build always uses the
-      # zip's contents — no path mistakes, no missed files, no stale sources.
-      - name: Unpack our-habit-github-upload.zip (if present)
-        run: |
-          if [ -f our-habit-github-upload.zip ]; then
-            unzip -o -q our-habit-github-upload.zip
-            echo "✓ Unpacked our-habit-github-upload.zip — building ITS contents"
-          else
-            echo "No our-habit-github-upload.zip at the repo root — building the repo's own files"
-          fi
-
-      # v4.1: every manual build gets a unique, ALWAYS-INCREASING build number.
-      # It is the workflow run number, but never lower than (last released
-      # build + 1) — that protects against run-number resets (e.g. if the
-      # workflow file is ever deleted and re-created) so Android never sees a
-      # "downgrade" and install-over-update always works.
-      - name: Compute version + BUILD number
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-        run: |
-          set -e
-          APP_VER=$(sed -n 's/.*APP_VERSION = "\([^"]*\)".*/\1/p' src/lib/version.ts | head -1)
-          if [ -z "$APP_VER" ]; then echo "✗ APP_VERSION not found in src/lib/version.ts"; exit 1; fi
-          LAST=0
-          if [ -n "$GH_TOKEN" ]; then
-            LAST=$(gh release list --repo nadiramoni/our-habit-apk --limit 50 --json tagName --jq '.[].tagName' 2>/dev/null | grep -oE 'b[0-9]+$' | tr -d 'b' | sort -n | tail -1 || true)
-          fi
-          case "$LAST" in ''|*[!0-9]*) LAST=0;; esac
-          BUILD_NUM=${GITHUB_RUN_NUMBER}
-          if [ "$LAST" -ge "$BUILD_NUM" ]; then BUILD_NUM=$((LAST + 1)); fi
-          sed -i -E "s/APP_BUILD = [0-9]+/APP_BUILD = ${BUILD_NUM}/" src/lib/version.ts
-          if ! grep -q "APP_BUILD = ${BUILD_NUM}" src/lib/version.ts; then
-            echo "✗ could not stamp APP_BUILD into src/lib/version.ts"; exit 1
-          fi
-          echo "APP_VER=$APP_VER" >> "$GITHUB_ENV"
-          echo "BUILD_NUM=$BUILD_NUM" >> "$GITHUB_ENV"
-          echo "✓ Building Our Habit v${APP_VER} — Build ${BUILD_NUM} (workflow run #${GITHUB_RUN_NUMBER}, last released build: ${LAST})"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -116,12 +62,16 @@ jobs:
               -alias ourhabit -keyalg RSA -keysize 2048 -validity 10000 \
               -dname "CN=OurHabit, OU=App, O=OurHabit, L=Dhaka, ST=Dhaka, C=BD"
             echo "✓ Fresh debug keystore generated"
+            keytool -list -v -keystore android-keystore/ourhabit-debug.keystore -storepass ourhabit2026 -alias ourhabit | grep -E "SHA1|SHA256"
           else
             echo "✓ Using committed debug keystore"
           fi
 
-      - name: Confirm keystore is at the path Gradle's signing config expects
+      - name: Place keystore at the path Gradle's signing config expects
         run: |
+          # build.gradle uses '../../android-keystore/...' (2 ../ from android/app/ → workspace root)
+          # → the keystore must be at <workspace>/android-keystore/, which is exactly where the repo is checked out
+          # → no mirroring needed; we just confirm the file is in place
           if [ -f android-keystore/ourhabit-debug.keystore ]; then
             echo "✓ Keystore confirmed at workspace root: android-keystore/ourhabit-debug.keystore"
           else
@@ -129,10 +79,10 @@ jobs:
             exit 1
           fi
 
-      - name: Create Capacitor Android project + native plugins
+      - name: Create Capacitor Android project + native plugin
         run: node scripts/prepare-apk.mjs
 
-      - name: Re-confirm keystore after Capacitor ran
+      - name: Re-confirm keystore after Capacitor ran (workspace root copy is never touched by cap add)
         run: |
           if [ -f android-keystore/ourhabit-debug.keystore ]; then
             echo "✓ Keystore still present at workspace root after Capacitor setup"
@@ -147,68 +97,36 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
-      # v4.1: the VERSION + BUILD NUMBER is IN THE FILE NAME — no more
-      # "OurHabit-latest.apk" that always looked the same. Anyone can tell
-      # which APK is the newest just by reading the name.
-      - name: Rename APK (version + build in the FILE NAME)
+      - name: Rename APK
         run: |
           mkdir -p apk-out
-          cp android/app/build/outputs/apk/debug/app-debug.apk "apk-out/OurHabit-v${APP_VER}-b${BUILD_NUM}.apk"
-          ls -la apk-out
-          echo "✓ APK: OurHabit-v${APP_VER}-b${BUILD_NUM}.apk"
+          cp android/app/build/outputs/apk/debug/app-debug.apk apk-out/OurHabit-${GITHUB_REF_NAME:-build}.apk
 
       - name: Upload APK artifact (download from the run page)
         uses: actions/upload-artifact@v4
         with:
-          name: OurHabit-APK-v${{ env.APP_VER }}-b${{ env.BUILD_NUM }}
+          name: OurHabit-APK
           path: apk-out/*.apk
           if-no-files-found: error
 
-      # v4.1: publish to the PUBLIC releases repo with the version + build in
-      # the tag and title, the exact size + SHA256 in the notes (so every
-      # build is verifiably different even when the MB rounds the same), and
-      # auto-cleanup: only the newest 3 releases stay — the releases page is
-      # always clean and the "Latest" badge marks the real one.
-      - name: Publish to the public Releases repo (version + build + size + SHA256)
+      - name: Attach to GitHub Release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apk-out/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish APK to public Releases repo (APK only — source stays private)
         if: ${{ env.RELEASE_TOKEN != '' }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          NOTE: ${{ github.event.inputs.note }}
         run: |
-          set -e
-          APK=$(ls apk-out/OurHabit-v*.apk | head -1)
-          BYTES=$(stat -c%s "$APK")
-          MB=$(awk "BEGIN{printf \"%.1f\", ${BYTES}/1048576}")
-          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
-          TAG="v${APP_VER}-b${BUILD_NUM}"
-          DATE=$(date -u +'%d %b %Y, %H:%M UTC')
-          NOTE_TXT=$(printf '%s' "$NOTE" | tr -d '"`' | head -c 300)
-          [ -n "$NOTE_TXT" ] || NOTE_TXT="নতুন বিল্ড — আগের ভার্সনের সব ফিক্স ও উন্নতি সহ।"
-          NOTES_FILE=$(mktemp)
-          {
-            echo "📱 Our Habit v${APP_VER} — Build ${BUILD_NUM}"
-            echo ""
-            echo "🗓 ${DATE}"
-            echo "📦 ফাইল: OurHabit-v${APP_VER}-b${BUILD_NUM}.apk — ${MB} MB (${BYTES} bytes)"
-            echo "🔒 SHA256: ${SHA}"
-            echo ""
-            echo "🆕 এই বিল্ডে: ${NOTE_TXT}"
-            echo ""
-            echo "⬇️ ডাউনলোড: নিচের OurHabit-v${APP_VER}-b${BUILD_NUM}.apk ফাইলটা নামাও → খোলো → Allow install unknown apps → Install।"
-            echo "✅ ভার্সন দেখো: অ্যাপ → Settings → About — লেখা থাকবে v${APP_VER} · Build ${BUILD_NUM}"
-            echo "🔁 পুরনো অ্যাপের উপরেই বসে যাবে (আনইনস্টল করতে হবে না)।"
-          } > "$NOTES_FILE"
+          TAG="v$(date +'%Y.%m.%d-%H%M')"
+          cd apk-out
+          cp OurHabit-*.apk OurHabit-latest.apk
           gh release create "$TAG" --repo nadiramoni/our-habit-apk --latest \
-            --title "Our Habit v${APP_VER} · Build ${BUILD_NUM}" \
-            --notes-file "$NOTES_FILE" \
-            "$APK"
-          echo "✅ Published: https://github.com/nadiramoni/our-habit-apk/releases (tag ${TAG})"
-          # keep the releases page CLEAN: keep only the newest 3 releases
-          gh release list --repo nadiramoni/our-habit-apk --limit 100 --json tagName --jq '.[].tagName' \
-            | tail -n +4 \
-            | while read -r t; do
-                [ -n "$t" ] || continue
-                echo "deleting old release: $t"
-                gh release delete "$t" --repo nadiramoni/our-habit-apk --yes --cleanup-tag || true
-              done
-          echo "✓ Releases page cleaned (newest 3 kept)"
+            --title "Our Habit $TAG" \
+            --notes "📱 Our Habit — latest Android APK. Download → open → allow 'install unknown apps' → install. The app code stays private; this page only serves the APK." \
+            OurHabit-latest.apk
+          echo "✅ Published: https://github.com/nadiramoni/our-habit-apk/releases/latest"
