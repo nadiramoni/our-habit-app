@@ -1272,6 +1272,10 @@ export interface FbStatusSnapshot {
     total: number;
     google: number;
     email: number;
+    // v5.2 (owner round-22): accounts with NO email at all (blank) — the
+    // admin panel's ৩-বক্স ফিল্টারের "আননোন" দল (owner: "যারা ইমেইল টিমেইল
+    // কিছুই করে না ওদেরগুলা ফাঁকা")।
+    unknown: number;
     banned: number;
     activeToday: number;
     onlineNow: number;
@@ -1375,8 +1379,11 @@ export async function fbReadStatus(serverCfg?: Partial<ServerCfg> | null): Promi
     return {
       stats: {
         total: users.length,
+        // v5.2 (owner round-22): তিন দল — গুগল (provider=google) / ইমেইল
+        // (ম্যানুয়াল মেইল, ইমেইল আছে) / আননোন (ইমেইল একদম ফাঁকা)।
         google: users.filter((u) => u.provider === "google").length,
-        email: users.filter((u) => u.provider === "password").length,
+        email: users.filter((u) => u.provider !== "google" && u.email).length,
+        unknown: users.filter((u) => !u.email).length,
         banned: users.filter((u) => u.banned).length,
         activeToday: users.filter((u) => u.habitsToday !== null).length,
         onlineNow: users.filter((u) => u.online).length,

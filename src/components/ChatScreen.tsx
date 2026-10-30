@@ -39,8 +39,7 @@ import { ChatMsg, FbProfile, chatQueueSize, fbClearChat, fbDeleteChat, fbHideCha
 import { uid as newId } from "@/lib/types";
 import { isNative, nativeChatServiceRunning, nativePendingOpenChat, nativeVibrate } from "@/lib/native";
 import { APP_VERSION } from "@/lib/version";
-import { banglaNameFromEnglish } from "@/lib/translit";
-import { deviceLang, fmtDateHM, makeT } from "@/lib/i18n";
+import { appLang, fmtDateHM, makeT } from "@/lib/i18n";
 
 export interface ChatTarget {
   uid: string;
@@ -88,10 +87,11 @@ async function compressImage(file: File, maxSide = 1280, quality = 0.62): Promis
 // ---------------- the chat screen ----------------
 
 function timeOf(ts: number): string {
-  // v5.0: the clock follows the DEVICE language — রাত ১২:৩০ / সকাল ৯:৩০ in
-  // Bengali (Bangladesh 12-hour convention), “9:30 AM” in English.
+  // v5.2: the clock follows the APP language (default বাংলা) — রাত ১২:৩০ /
+  // সকাল ৯:৩০ in Bengali (Bangladesh 12-hour convention), "9:30 AM" in
+  // English (only when the user picked English in Settings).
   try {
-    return fmtDateHM(ts, deviceLang());
+    return fmtDateHM(ts, appLang());
   } catch {
     return "";
   }
@@ -546,27 +546,18 @@ export function ChatWatchdog() {
 
   const chatNotifOn = state.settings.chatNotif !== false;
 
-  // v4.1→v4.2 (owner round-17): the SPOKEN reels warning — follows the VOICE
-  // language setting, which is BANGLA by default again (the ORIGINAL system:
-  // name called like before + Bangla sentence). reelsWarnTextEn is the English
-  // copy the native side speaks when the phone has no Bangla TTS voice
-  // installed — the warning never goes silent. (Also fixes a v4.0 latent
-  // bug: banglaNameFromEnglish was used here without being imported — the
-  // reels warning crashed at runtime.)
+  // v4.1→v5.2 (owner round-22): the SPOKEN reels warning — follows the VOICE
+  // language setting (BANGLA by default). The name is said AS ENTERED —
+  // "নামও বলবে। তোমার যে ইংলিশ নামটা ঐটা বলবে" — no Bangla-script
+  // substitution. reelsWarnTextEn is the English copy the native side speaks
+  // when the phone has no Bangla TTS voice installed (never silent).
   const vlang: "en" | "bn" = state.settings.voiceLang === "en" ? "en" : "bn";
   const reelsWarnText = useCallback(
-    () =>
-      `${
-        vlang === "bn" && (state.settings.nameBn || "").trim()
-          ? (state.settings.nameBn || "").trim()
-          : vlang === "bn"
-            ? banglaNameFromEnglish(state.settings.name || "") || (state.settings.name || "")
-            : (state.settings.name || "").trim()
-      }${makeT(vlang)("speakReelsWarn")}`,
-    [vlang, state.settings.name, state.settings.nameBn]
+    () => `${(state.settings.name || "").trim()}${makeT(vlang)("speakReelsWarn")}`.replace(/^\s+/, ""),
+    [vlang, state.settings.name]
   );
   const reelsWarnTextEn = useCallback(
-    () => `${(state.settings.name || "").trim()}${makeT("en")("speakReelsWarn")}`,
+    () => `${(state.settings.name || "").trim()}${makeT("en")("speakReelsWarn")}`.replace(/^\s+/, ""),
     [state.settings.name]
   );
 
@@ -611,9 +602,9 @@ export function ChatWatchdog() {
           // deep-link STRAIGHT INTO the chat when tapped (owner round-19:
           // "নোটিফিকেশনে ক্লিক করলে সরাসরি সংশ্লিষ্ট চ্যাটে প্রবেশ করতে পারবে")।
           pairs: pairs.map((p) => ({ key: p.key, name: p.name, uid: p.uid })),
-          // v5.0: the language follows the DEVICE (owner round-19) — the
+          // v5.2: the language follows the SETTINGS (default বাংলা) — the
           // background page builds its notification strings from it.
-          lang: deviceLang(),
+          lang: appLang(),
           reelsLimitMin: state.settings.reelsLimitMin || 0,
           reelsWarn: reelsWarnText(), // v4.1: follows the VOICE language setting
           reelsWarnEn: reelsWarnTextEn(), // v4.1: English copy for the no-bn-voice fallback

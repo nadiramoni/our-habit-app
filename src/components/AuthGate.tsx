@@ -443,10 +443,10 @@ export function NameCapture() {
   // prefill from whatever name we already have (Google name split, etc.)
   const [first, setFirst] = useState("");
   const [last, setLast] = useState("");
-  // v3.3: Bengali spelling of the name (for the alarm VOICE) + gender
-  // (the voice tries to pick a female voice for girls / male for boys).
-  // Owner: "নাম ইংলিশে থাকবে, কিন্তু কথা বলবে বাংলাতে — বাংলাদেশি উচ্চারণ"
-  const [nameBn, setNameBn] = useState("");
+  // v3.3 gender (the voice tries to pick a female voice for girls / male for
+  // boys). v5.2 (owner round-22): the Bengali-spelling field is GONE — the
+  // alarm now says the name AS ENTERED ("নামও বলবে — তোমার যে ইংলিশ নামটা
+  // ঐটা বলবে"), so there is nothing left to spell in Bangla script.
   const [gender, setGender] = useState<"" | "male" | "female">("");
 
   useEffect(() => {
@@ -473,8 +473,8 @@ export function NameCapture() {
     updateSettings({
       name: full,
       nameSet: true,
-      // v3.3: optional Bengali spelling + gender for the spoken alarm
-      ...(nameBn.trim() ? { nameBn: nameBn.trim() } : {}),
+      // v3.3 gender for the spoken alarm voice (v5.2: nameBn is retired —
+      // the English name itself is spoken now)
       ...(gender ? { gender } : {}),
     });
     setAccount({ ...acc, name: full });
@@ -516,16 +516,6 @@ export function NameCapture() {
           />
         </div>
         <p className="text-[10px] text-muted-foreground mb-3 leading-relaxed">{t("yourNameNote")}</p>
-        {/* v3.3: Bengali spelling — the alarm VOICE reads THIS so the name is
-            pronounced perfectly in Bangladeshi Bengali, while every display keeps
-            the English name. Optional; if empty the Bengali TTS voice reads the
-            English letters Bengali-style. */}
-        <input
-          value={nameBn}
-          onChange={(e) => setNameBn(e.target.value)}
-          placeholder={t("nameBnPh")}
-          className="w-full bg-muted rounded-xl px-4 py-3 text-sm border border-border outline-none focus:ring-2 focus:ring-ring/50 mb-2"
-        />
         {/* v3.3: gender — the alarm voice tries female for girls, male for boys */}
         <div className="flex gap-2 mb-1">
           {([
@@ -546,7 +536,7 @@ export function NameCapture() {
             </button>
           ))}
         </div>
-        <p className="text-[10px] text-muted-foreground mb-3 leading-relaxed">{t("nameBnNote")}</p>
+        <p className="text-[10px] text-muted-foreground mb-3 leading-relaxed">{t("genderNote")}</p>
         <div className="flex gap-2">
           <button
             type="button"

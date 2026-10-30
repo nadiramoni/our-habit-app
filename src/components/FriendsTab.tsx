@@ -12,7 +12,7 @@ import { useServerCfg } from "@/lib/cfg";
 import { Card, SectionTitle, Bar, Chip } from "@/components/ui-bits";
 import { PRAYER_KEYS, REEL_APPS, emptyReels, getLog } from "@/lib/types";
 import { DaySummary, FbProfile, addFriendByCode, isPresenceOnline, listenDay, listenProfile, removeFriend, pairKeyOf } from "@/lib/cloud";
-import { deviceLang, fmtHM } from "@/lib/i18n";
+import { appLang, fmtHM } from "@/lib/i18n";
 import AdsBanner from "@/components/AdsBanner";
 import { openChat, chatUnreadCount } from "@/components/ChatScreen";
 
@@ -179,7 +179,7 @@ function PartnerCard({ p, meUid, onRemoved }: { p: FbProfile; meUid: string; onR
                   )}
                 </div>
               ) : null}
-              <DetailRow label={`😴 ${t("detailSleep")}`} value={day.sleepBed && day.sleepWake ? `${fmtHM(day.sleepBed, deviceLang())} → ${fmtHM(day.sleepWake, deviceLang())}` : "—"} />
+              <DetailRow label={`😴 ${t("detailSleep")}`} value={day.sleepBed && day.sleepWake ? `${fmtHM(day.sleepBed, appLang())} → ${fmtHM(day.sleepWake, appLang())}` : "—"} />
             </div>
           ) : null}
         </>

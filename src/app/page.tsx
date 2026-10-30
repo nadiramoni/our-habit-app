@@ -18,8 +18,7 @@ import { dayPoints, dhikrTotal, computeStreaks, dayCompletion } from "@/lib/logi
 import { getLog, todayStr } from "@/lib/types";
 import { pushDay, ensureProfile, fbIsBanned, fbSignOut, DaySummary } from "@/lib/cloud";
 import { APP_VERSION } from "@/lib/version";
-import { banglaNameFromEnglish } from "@/lib/translit";
-import { deviceLang, makeT } from "@/lib/i18n";
+import { alarmSpeakText, makeT } from "@/lib/i18n";
 import { warmAudio, playChime } from "@/lib/audio";
 import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm, AlarmSyncResult, nativeScheduleExactAlarms, nativeCancelExactAlarms, nativeSetVoiceGender, nativeExactPending, nativeConsumeAlarmLaunch, ExactAlarmSpec } from "@/lib/native";
 import { waterAlarmTimes, shiftTime, randomMealMusic, PRAYER_KEYS, dateAtHM, addDays } from "@/lib/types";
@@ -310,7 +309,8 @@ function Shell() {
         state.settings.mealPreAlert,
         state.settings.azanSound, // v2.8: azan recitation changes the alarm sound
         state.settings.name,     // v2.9: the name-call text follows the name
-        deviceLang(), // v5.0: follows the DEVICE language
+        state.settings.voiceLang, // v4.2: a ডাক-ভাষা change re-composes every call
+        state.settings.language, // v5.2: the UI language drives every label now
       ])
     : "";
 
@@ -360,38 +360,33 @@ function Shell() {
     const now = Date.now();
     const azanSound = s.settings.azanSound || "adhan.mp3";
     // v2.9 NAMED ALERTS: the user's REGISTERED FULL NAME is spoken aloud by
-    // AlarmSpeakService at ring time — "আনোয়ারুল সন সাকিব, তোমার পানি খাওয়ার
-    // সময় হইছে…" (owner's exact request). Adhan alarms NEVER speak —
+    // AlarmSpeakService at ring time — "Anwar Hossen Sakib, পানি খাও…"
+    // (owner's exact request). Adhan alarms NEVER speak —
     // "আজানের ক্ষেত্রে না ভাই, আজানটা আজানি দিবে".
     const myName = (s.settings.name || "").trim();
     // v4.2 (owner round-17): the VOICE language is BANGLA by default again —
     // the ORIGINAL system (owner: "আগের সিস্টেম — ঐরকম নাম ধরে ডাকবে কিন্তু
     // কথাটা বলবে বাংলায়। ম্যানুয়ালে সিলেক্ট না থাকলেও বাংলায়ই বলবে।").
-    // bn (default) = Bangla-script name + Bangla sentence — the name STAYS
-    // English in every display, the voice says it Bangla-style; if the phone
-    // has no Bangla TTS voice the native side auto-falls back to the English
-    // copy (speakEn) so the call is never silent. en = the optional English
-    // call for those who pick it in Settings → প্রোফাইল।
+    // v5.2 (owner round-22): bn (default) = the name AS ENTERED (English
+    // letters stay English) + the Bangla sentence — "নামও বলবে। তোমার যে
+    // ইংলিশ নামটা ঐটা বলবে… ঐটা টোটালি বাংলাতে বলবে" — no Bangla-script
+    // substitution, no transliteration; the Bengali TTS voice reads the
+    // English name Bengali-style and the words beside it stay the owner's
+    // previous Bengali sentences. If the phone has no Bangla TTS voice the
+    // native side auto-falls back to the English copy (speakEn) so the call
+    // is never silent. en = the optional English call for those who pick it
+    // in Settings → প্রোফাইল.
     const vlang: "en" | "bn" = s.settings.voiceLang === "en" ? "en" : "bn";
     const lang = vlang; // passed to the native TTS engine
     const tv = makeT(vlang); // spoken sentences in the VOICE language
     const te = makeT("en"); // English fallback — used by the native side when
     //                           the phone has NO Bangla TTS voice installed
-    // v4.0 (kept for the bn option): the SPOKEN name — Bangla TTS reads a
-    // Bangla-script name like a Bangladeshi person would say it. Priority:
-    // (1) a manually saved Bangla spelling (settings.nameBn), (2) AUTO-
-    // TRANSLITERATION of the English name (Nadiramoni → নাদিরামনি).
-    // v4.1: only used when voiceLang = বাংলা. Every DISPLAY everywhere keeps
-    // the English name in both modes.
-    const spokenName =
-      vlang === "bn" && (s.settings.nameBn || "").trim()
-        ? (s.settings.nameBn || "").trim()
-        : vlang === "bn"
-          ? banglaNameFromEnglish(myName) || myName
-          : myName;
+    // v5.2: one helper composes every call — the name + the sentence
+    // (i18n.alarmSpeakText); the name part is ALWAYS the name as entered.
+    const spokenName = myName; // the name part of the call (as entered)
     const spokenNameEn = myName; // the English fallback name
-    const named = (key: string) => (spokenName ? `${spokenName}${tv(key)}` : "");
-    const namedEn = (key: string) => (spokenNameEn ? `${spokenNameEn}${te(key)}` : "");
+    const named = (key: string) => alarmSpeakText(myName, key, vlang);
+    const namedEn = (key: string) => alarmSpeakText(myName, key, "en");
     // v4.1: normalize whitespace in the composed meal sentences (the English
     // dictionary pieces carry their own leading space → "Lunch  time")
     const norm = (s: string) => (s ? s.replace(/\s+/g, " ").trim() : s);

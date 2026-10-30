@@ -1,5 +1,21 @@
 // App version — bump this when you ship an update.
 // The admin panel's "latest version" is compared against this to trigger auto-update.
+// v5.2.0 (owner round-22 — ভাষা ডিফল্ট বাংলা + অ্যাডমিন ৩-বক্স + ইংলিশ নামেই ডাক):
+//           (1) ভাষার ম্যানুয়াল পিকার ফিরে এসেছে (Settings → থিম ও ভাষা) —
+//           owner: "আগে কিন্তু বাংলা ইংলিশ দুটাই ভাষা ছিল… বাট ডিফল্ট হিসেবে
+//           বাংলাটাই থাকবে"। সবার জন্য ডিফল্ট 🇧🇩 বাংলা; যারা চায় তারা 🇬🇧
+//           English সিলেক্ট করবে (langPicked)। ফোনের ভাষা আর কিছু ঠিক করে
+//           না — v5.0-এর device-follow ব্যবস্থাটা বাদ।
+//           (2) অ্যাডমিন প্যানেলের স্ট্যাটাস ট্যাবে রিফ্রেশ বাটনের নিচে ৩টা
+//           ছোট বক্স — 🔵 গুগল (গুগল দিয়ে অ্যাকাউন্ট) / ✉️ ইমেইল (ম্যানুয়ালি
+//           মেইল দিয়ে) / ❓ আননোন (ইমেইল ফাঁকা)। বক্সে চাপ দিলে শুধু ওই দলের
+//           অ্যাকাউন্ট দেখায়, আবার চাপ দিলে সবাই। Owner: "এর নিচে তিনটা
+//           লেআউট বানাবা ছোট ছোট বক্সের মধ্যে।"
+//           (3) অ্যালার্মের ডাক — নাম বলবে যেভাবে লেখা আছে (ইংলিশ নামই),
+//           আর পাশের কথাগুলা (পানি/ঘুম/খাওয়া/সুস্থ থাকো) আগের মতোই বাংলায়।
+//           Owner: "নামও বলবে — তোমার যে ইংলিশ নামটা ঐটা বলবে… ঐটা টোটালি
+//           বাংলাতে বলবে"। বাংলা-বানান (nameBn) আর অটো-ট্রান্সলিটারেশন বাদ —
+//           সাইন-আপ ফর্মের বাংলা-বানান ঘরটাও গেছে।
 // v5.1.0 (owner round-21 — admin panel এখন পুরোটা অ্যাপের ভেতরে):
 //           GitHub Pages-এর আলাদা স্ট্যাটাস প্যানেল সম্পূর্ণ বাদ — owner:
 //           “আলাদাভাবে করার প্রয়োজন নাই, অ্যাপসেই সব সিস্টেম দিয়ে দাও”।
@@ -211,7 +227,7 @@
 //           minutes + start sound, sleep tracker + bedtime alert, points moved
 //           to Settings profile (full name), YouTube Shorts vs Long split
 // v2.2.1 — REAL Adsterra banners + REAL adhan recording wired end-to-end
-export const APP_VERSION = "5.1.0";
+export const APP_VERSION = "5.2.0";
 
 // v4.1: BUILD NUMBER — 0 in the repo; GitHub CI overwrites it with the
 // workflow run number (27, 28, 29…) before every APK build. It lands in the

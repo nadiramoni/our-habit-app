@@ -6,7 +6,7 @@ import { startAlarmMusic, startMealMusic, startAzan, stopAlarmMusic } from "@/li
 import { PRAYER_KEYS } from "@/lib/types";
 // v5.0: the clock follows the DEVICE language — রাত ১২:৩০ / সকাল ৯:৩০ in
 // Bengali (Bangladesh 12-hour convention, owner round-19), "9:30 AM" in English.
-import { deviceLang, fmtHM } from "@/lib/i18n";
+import { appLang, fmtHM } from "@/lib/i18n";
 
 export interface ActiveAlarm {
   key: string;
@@ -20,7 +20,7 @@ export interface ActiveAlarm {
 
 /** v5.0: HH:MM → localized 12h display (Bengali day-parts + Bengali digits). */
 function fmt12(hhmm: string): string {
-  return fmtHM(hhmm, deviceLang());
+  return fmtHM(hhmm, appLang());
 }
 
 /**

@@ -1,7 +1,7 @@
-// v5.0: defaultSettings() reads the DEVICE language (bn* → বাংলা, else
-// English) for both the UI language and the alarm VOICE. i18n's import of
-// types is TYPE-ONLY (erased at runtime), so this value import is safe.
-import { deviceLang } from "./i18n";
+// v5.2 (owner round-22): বাংলা is the DEFAULT for both the UI language and
+// the alarm VOICE — the device language no longer decides anything (the
+// manual picker in Settings → থিম ও ভাষা is the only way to English). No
+// value import from i18n is needed anymore.
 
 export type PrayerKey = "fajr" | "dhuhr" | "asr" | "maghrib" | "isha";
 
@@ -95,6 +95,10 @@ export type Lang = "bn" | "en";
 export interface AppSettings {
   name: string;
   language: Lang;
+  // v5.2 (owner round-22): TRUE only when the user PICKED a language in
+  // Settings → থিম ও ভাষা. Until then the app stays on the বাংলা default —
+  // the v5.0 device-follow auto values are reset on load (mergeSettings).
+  langPicked?: boolean;
   theme: "dark" | "light";
   waterGoalMl: number;
   checkinTime: string;
@@ -127,11 +131,14 @@ export interface AppSettings {
   nameBn?: string;
   // v4.2 (owner round-17): the alarm voice speaks BANGLA by default again —
   // the ORIGINAL system: the name is called like before and the sentence is
-  // Bangla ("Sakib" → Bangla-script name + Bangla sentence). No Bangla TTS
-  // voice on the phone → auto-English fallback so the call is never silent.
-  // English stays as an option in Settings (owner: "আগের সিস্টেম — ঐরকম নাম
-  // ধরে ডাকবে কিন্তু কথাটা বলবে বাংলায়।").
+  // Bangla. No Bangla TTS voice on the phone → auto-English fallback so the
+  // call is never silent. English stays as an option in Settings (owner:
+  // "আগের সিস্টেম — ঐরকম নাম ধরে ডাকবে কিন্তু কথাটা বলবে বাংলায়।").
+  // v5.2 (owner round-22): বাংলাই ডিফল্ট — "ঐটা টোটালি বাংলাতে বলবে"।
   voiceLang?: "en" | "bn";
+  // v5.2: TRUE only when the user picked the ডাক-ভাষা in Settings — until
+  // then the Bengali default wins (the v5.0 device-follow auto value resets).
+  voiceLangPicked?: boolean;
   // v3.3: the user's gender — the alarm voice TRIES to pick a female voice for
   // girls and a male voice for boys (depends on the phone's TTS engine).
   gender?: "male" | "female";
@@ -378,14 +385,15 @@ export function emptyLog(): DayLog {
 export function defaultSettings(): AppSettings {
   return {
     name: "",
-    // v5.0 (owner round-19): the language follows the DEVICE — bn* → বাংলা,
-    // anything else → English. The manual picker is gone from Settings; the
-    // stored value is only a legacy field (the UI reads deviceLang() now).
-    language: deviceLang(),
-    // v5.0: the alarm VOICE also starts on the DEVICE language for NEW
-    // installs (existing users keep their saved choice — Settings → প্রোফাইল
-    // still has the ডাক-ভাষা picker, so anyone can override it).
-    voiceLang: deviceLang(),
+    // v5.2 (owner round-22): বাংলা ডিফল্ট — "বাট ডিফল্ট হিসেবে বাংলাটাই থাকবে"।
+    // The device language no longer decides anything; Settings → থিম ও ভাষা
+    // has the manual picker (🇧🇩 বাংলা default + 🇬🇧 English).
+    language: "bn",
+    langPicked: false,
+    // v5.2 (owner round-22): the alarm VOICE starts on BANGLA for every NEW
+    // install — "ঐটা টোটালি বাংলাতে বলবে" (round-17's system, restored).
+    voiceLang: "bn",
+    voiceLangPicked: false,
     theme: "dark",
     waterGoalMl: 3000,
     checkinTime: "21:00",

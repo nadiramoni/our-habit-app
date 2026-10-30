@@ -15,7 +15,6 @@ import AdsBanner from "@/components/AdsBanner";
 import { AppState } from "@/lib/types";
 import { APP_VERSION, APP_BUILD } from "@/lib/version";
 import { SmartlinkButton } from "@/components/AdsBanner";
-import { banglaNameFromEnglish } from "@/lib/translit";
 import { makeT } from "@/lib/i18n";
 import { backupState, ensureFirebase, fbSignOut, fbUpdateProfileName, restoreState } from "@/lib/cloud";
 import { totalPoints, levelInfo } from "@/lib/logic";
@@ -198,20 +197,18 @@ export default function SettingsTab() {
               </div>
             )}
 
-            {/* v4.2 (owner round-17): অ্যালার্মের কণ্ঠ — বাংলা ডিফল্ট (আগের
-                সিস্টেম) + লিঙ্গ। Owner: "আগের সিস্টেম — ঐরকম নাম ধরে ডাকবে
-                কিন্তু কথাটা বলবে বাংলায়। ম্যানুয়ালে সিলেক্ট না থাকলেও
-                বাংলায়ই বলবে।" So the BANGLA call ("সাকিব, তোমার পানি খাওয়ার
-                সময় হয়েছে…") is the DEFAULT — like before, zero setup. When the
-                phone has no Bangla TTS voice the app auto-falls back to
-                English. English is right here as an option for those who
-                prefer it. */}
+            {/* v4.2 (owner round-17) → v5.2 (owner round-22): অ্যালার্মের কণ্ঠ —
+                বাংলা ডিফল্ট (আগের সিস্টেম) + লিঙ্গ। Owner: "আগের সিস্টেম — ঐরকম
+                নাম ধরে ডাকবে কিন্তু কথাটা বলবে বাংলায়।" v5.2: নামটা বলবে যেভাবে
+                লেখা আছে (ইংলিশ নাম) — "নামও বলবে। তোমার যে ইংলিশ নামটা ঐটা
+                বলবে" — আর পাশের কথাগুলা আগের মতোই বাংলায়। ফোনে বাংলা TTS
+                ভয়েস না থাকলে অ্যাপ নিজে থেকেই ইংলিশে ডাকবে। */}
             <div className="mt-3 rounded-xl bg-background/60 border border-border p-2.5">
               <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">🗣️ {t("voiceGenderTitle")}</div>
               <div className="text-[11px] font-semibold mb-1.5">{t("voiceLangTitle")}</div>
               <Seg<"en" | "bn">
                 value={s.voiceLang === "en" ? "en" : "bn"}
-                onChange={(v) => updateSettings({ voiceLang: v })}
+                onChange={(v) => updateSettings({ voiceLang: v, voiceLangPicked: true })}
                 options={[
                   { value: "bn", label: t("voiceLangBnOpt") },
                   { value: "en", label: t("voiceLangEnOpt") },
@@ -221,13 +218,13 @@ export default function SettingsTab() {
                 <div className="text-[11px] text-muted-foreground mt-2 leading-relaxed">
                   {"\""}
                   <b>
-                    {s.voiceLang === "en"
-                      ? s.name.trim()
-                      : (s.nameBn || "").trim() || banglaNameFromEnglish(s.name) || s.name}
-                    {s.voiceLang === "en" ? makeT("en")("speakWater") : makeT("bn")("speakWater")}
+                    {/* v5.2: the name AS ENTERED (English letters) + the
+                        sentence in the voice language — exactly what the
+                        alarm speaks (alarmSpeakText). No transliteration. */}
+                    {`${s.name.trim()}${makeT(s.voiceLang === "en" ? "en" : "bn")("speakWater")}`}
                   </b>
                   {"\" "}
-                  {s.voiceLang === "en" ? t("voiceLangExEn") : t("voiceLangExBn")}
+                  {t("voiceLangExBn")}
                 </div>
               ) : null}
               <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">{t("voiceLangNote")}</p>
@@ -302,15 +299,25 @@ export default function SettingsTab() {
         ) : null}
       </Card>
 
-      {/* ---------- v5.0: THEME (language picker REMOVED — owner round-19:
-          "অ্যাপের সেটিংসে গিয়ে আলাদাভাবে বাংলা ভাষা নির্বাচন করার বর্তমান
-          ব্যবস্থাটি বাদ দিতে হবে") — the app now follows the DEVICE language:
-          বাংলা ডিভাইস → পুরো অ্যাপ বাংলায়, English ডিভাইস → English। ---------- */}
+      {/* ---------- v5.2 (owner round-22): THEME + LANGUAGE — the manual
+          language picker is BACK. Round-19 had removed it (app followed the
+          device), but on the owner's English-locale phone the whole app turned
+          English: "এখানে দেওয়া কিন্তু সবগুলা ইংলিশ ভাই। আগে কিন্তু বাংলা
+          ইংলিশ দুটাই ভাষা ছিল… বাট ডিফল্ট হিসেবে বাংলাটাই থাকবে।" So:
+          🇧🇩 বাংলা DEFAULT for everyone, 🇬🇧 English right next to it —
+          "যারা ইংলিশ প্রয়োজন ওরা ইংলিশ সিলেক্ট করবে"। ---------- */}
       <Card className="mb-4">
-        <SectionTitle title={`🎨 ${t("theme")}`} />
-        <div className="text-[10px] text-muted-foreground mb-2 leading-relaxed">
-          🌍 {t("langDeviceNote")}
-        </div>
+        <SectionTitle title={`🌐 ${t("langTitle")} · 🎨 ${t("theme")}`} />
+        <div className="text-[10px] text-muted-foreground mb-2 leading-relaxed">{t("langNote")}</div>
+        <Seg<"bn" | "en">
+          value={s.language === "en" ? "en" : "bn"}
+          onChange={(v) => updateSettings({ language: v, langPicked: true })}
+          options={[
+            { value: "bn", label: t("langBnOpt") },
+            { value: "en", label: t("langEnOpt") },
+          ]}
+        />
+        <div className="border-t border-border my-3" />
         <Seg<"dark" | "light">
           value={s.theme}
           onChange={(v) => updateSettings({ theme: v })}

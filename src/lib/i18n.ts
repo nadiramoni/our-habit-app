@@ -2,11 +2,27 @@ import type { Lang } from "./types";
 
 type Dict = Record<string, string>;
 
-// ==================== v5.0: LANGUAGE FOLLOWS THE DEVICE ====================
-// Owner round-19: "অ্যাপের সেটিংসে গিয়ে আলাদাভাবে বাংলা ভাষা নির্বাচন করার
-// বর্তমান ব্যবস্থাটি বাদ দিতে হবে" — the manual language picker is GONE.
-// The app now reads the DEVICE language on every launch: bn* → বাংলা,
-// anything else → English. The stored settings.language value is ignored.
+// ==================== v5.2: LANGUAGE — MANUAL AGAIN, BANGLA DEFAULT ====================
+// Owner round-19 made the app follow the DEVICE language (picker removed) —
+// but on the owner's own English-locale phone the WHOLE app turned English,
+// and the owner did not like it (round-22: "এখানে দেওয়া কিন্তু সবগুলা ইংলিশ
+// ভাই। আগে কিন্তু বাংলা ইংলিশ দুটাই ভাষা ছিল… বাট ডিফল্ট হিসেবে বাংলাটাই
+// থাকবে")। So the manual picker is BACK (Settings → থিম ও ভাষা) with
+// 🇧🇡 বাংলা as the DEFAULT for everyone and 🇬🇧 English right next to it —
+// "যারা ইংলিশ প্রয়োজন ওরা ইংলিশ সিলেক্ট করবে"। The device language no
+// longer decides anything; the STORED settings.language does.
+export function appLang(): Lang {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return "bn"; // SSR/prerender → default Bangla
+    const st = JSON.parse(window.localStorage.getItem("ourhabit_v1") || "{}") as { settings?: { language?: string } };
+    return st?.settings?.language === "en" ? "en" : "bn";
+  } catch {
+    return "bn";
+  }
+}
+
+// v5.0 legacy: the device-language detector (round-19). Kept for reference —
+// nothing calls it anymore; appLang() above is the single language truth.
 export function deviceLang(): Lang {
   try {
     const s = String((typeof navigator !== "undefined" && navigator.language) || "bn").toLowerCase();
@@ -14,6 +30,19 @@ export function deviceLang(): Lang {
   } catch {
     return "bn";
   }
+}
+
+/** v5.2 (owner round-22): the alarm's SPOKEN sentence — the name AS ENTERED
+ *  (English letters stay English) followed by the sentence in the voice
+ *  language. Owner: "নামও বলবে — তোমার যে ইংলিশ নামটা ঐটা বলবে… ঐটা টোটালি
+ *  বাংলাতে বলবে" — no transliteration, no Bangla-script substitution: the
+ *  Bengali TTS voice reads the English name Bengali-style and the words
+ *  beside it (পানি/ঘুম/খাওয়া/সুস্থ থাকো) stay exactly the owner's previous
+ *  Bengali sentences. Empty name → empty string (nothing spoken). */
+export function alarmSpeakText(name: string, key: string, lang: Lang = "bn"): string {
+  const n = (name || "").trim();
+  if (!n) return "";
+  return `${n}${makeT(lang)(key)}`;
 }
 
 // ==================== v5.0: TIME FORMATTING (Bangladesh 12-hour rule) ====================
@@ -347,6 +376,13 @@ const bn: Dict = {
   // v5.0: shown where the language picker used to be — the app follows the
   // DEVICE language now (owner round-19).
   langDeviceNote: "ভাষা এখন ফোনের ভাষা অনুযায়ী — আলাদা করে সেট করতে হবে না। ফোনের ভাষা বাংলা থাকলে পুরো অ্যাপ বাংলায় দেখাবে, ইংলিশ থাকলে ইংলিশে। (ফোনের Settings → System → Languages থেকে বদলানো যায়)",
+  // v5.2 (owner round-22): the manual language picker is BACK — বাংলা
+  // DEFAULT, English an option. "বাংলাও চাই ইংলিশও চাই… বাট ডিফল্ট হিসেবে
+  // বাংলাটাই থাকবে।"
+  langTitle: "ভাষা",
+  langBnOpt: "🇧🇩 বাংলা (ডিফল্ট)",
+  langEnOpt: "🇬🇧 English",
+  langNote: "ডিফল্ট বাংলা — যারা ইংলিশ দরকার তারা English বেছে নিবে, পুরো অ্যাপ সাথে সাথে ইংলিশ হয়ে যাবে।",
   theme: "থিম",
   dark: "ডার্ক",
   light: "লাইট",
@@ -515,6 +551,15 @@ const bn: Dict = {
   admStatOnline: "এখন অনলাইন",
   admRefresh: "🔄 এখনই রিফ্রেশ",
   admAutoRefresh: "প্রতি ৩০ সেকেন্ডে নিজে নিজে আপডেট হয়",
+  // v5.2 (owner round-22): রিফ্রেশ বাটনের নিচে ৩টা ছোট বক্স — গুগল /
+  // ইমেইল / আননোন অ্যাকাউন্ট; বক্সে চাপ দিলে শুধু ওই দলের অ্যাকাউন্ট
+  // দেখাবে। Owner: "এর নিচে তিনটা লেআউট বানাবা ছোট ছোট বক্সের মধ্যে।"
+  admFbGoogle: "গুগল",
+  admFbEmail: "ইমেইল",
+  admFbUnknown: "আননোন",
+  admFbHint: "বক্সে চাপ দিলে শুধু ওই দলের অ্যাকাউন্ট দেখাবে — আবার চাপ দিলে সবাই",
+  admFbNone: "এই দলে কোনো অ্যাকাউন্ট নেই",
+  admFbShowing: "এখন দেখানো হচ্ছে",
   admStatusOffline: "Firebase-এ পৌঁছানো যাচ্ছে না — ইন্টারনেট দেখে আবার রিফ্রেশ করো।",
   admNoUsers: "এখনো কোনো অ্যাকাউন্ট নেই",
   admUserVideo: "🎬 আজকের ভিডিও",
@@ -644,6 +689,9 @@ const bn: Dict = {
   yourNameNote: "এই নামটাই শেয়ার করা নোট ও বন্ধুদের কাছে দেখাবে — জিমেইল অ্যাকাউন্টের নাম নয়।",
   nameBnPh: "নামের বাংলা বানান (ঐচ্ছিক) — যেমন: নাদিরা মণি",
   nameBnNote: "বানানটা দিলে অ্যালার্মে তোমার নাম শুদ্ধ বাংলা উচ্চারণে ডাকবে। না দিলে ইংরেজি অক্ষর বাংলা ঢঙে পড়বে।",
+  // v5.2 (owner round-22): the name is spoken AS ENTERED now, so the gender
+  // note replaced the old Bangla-spelling note under the picker.
+  genderNote: "ছেলে হলে ছেলে কণ্ঠে ডাকবে, মেয়ে হলে মেয়ে কণ্ঠে — অ্যালার্মে নাম ধরে ডাকবে যেভাবে লেখা আছে সেভাবেই।",
   genderBoy: "ছেলে",
   genderGirl: "মেয়ে",
   saveBtn: "সেভ করো",
@@ -1187,6 +1235,12 @@ const en: Dict = {
   yourName: "Your name",
   language: "Language",
   langDeviceNote: "The app now follows your PHONE's language — no separate setting. Bengali phone → the whole app in Bangla; English phone → English. (Change it from the phone's Settings → System → Languages)",
+  // v5.2 (owner round-22): the manual language picker is BACK — Bangla
+  // DEFAULT, English an option.
+  langTitle: "Language",
+  langBnOpt: "🇧🇩 বাংলা (default)",
+  langEnOpt: "🇬🇧 English",
+  langNote: "Bangla is the default — pick English if you prefer it, the whole app switches instantly.",
   theme: "Theme",
   dark: "Dark",
   light: "Light",
@@ -1347,6 +1401,13 @@ const en: Dict = {
   admStatOnline: "Online now",
   admRefresh: "🔄 Refresh now",
   admAutoRefresh: "Auto-updates every 30 seconds",
+  // v5.2 (owner round-22): 3 small filter boxes under the refresh button
+  admFbGoogle: "Google",
+  admFbEmail: "Email",
+  admFbUnknown: "Unknown",
+  admFbHint: "Tap a box to see only that group — tap again for everyone",
+  admFbNone: "No accounts in this group",
+  admFbShowing: "Now showing",
   admStatusOffline: "Can't reach Firebase — check the internet and refresh again.",
   admNoUsers: "No accounts yet",
   admUserVideo: "🎬 Today's video",
@@ -1476,6 +1537,7 @@ const en: Dict = {
   nameBnNote: "With this, the alarm calls your name in perfect Bengali pronunciation. Without it, English letters are read Bengali-style.",
   genderBoy: "Boy",
   genderGirl: "Girl",
+  genderNote: "Boys get a male voice, girls a female — the alarm calls the name exactly as you wrote it.",
   yourNameSub: "The name everyone knows you by — shown across the app and shares",
   yourNameNote: "This is the name friends and shared notes will see — not your Gmail account name.",
   saveBtn: "Save",

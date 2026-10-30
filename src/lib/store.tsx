@@ -16,7 +16,7 @@ import {
   waterAlarmTimes,
   WaterAlarmCfg,
 } from "./types";
-import { deviceLang, makeT, T } from "./i18n";
+import { appLang, makeT, T } from "./i18n";
 import { reminderOfTheDay } from "./logic";
 import { isNative } from "./native";
 
@@ -109,7 +109,7 @@ const StoreCtx = createContext<Ctx | null>(null);
 
 function mergeSettings(saved: Partial<AppSettings> | undefined, base: AppSettings): AppSettings {
   if (!saved) return base;
-  return {
+  const merged: AppSettings = {
     ...base,
     ...saved,
     fajrAlarm: { ...base.fajrAlarm, ...(saved.fajrAlarm || {}) },
@@ -139,6 +139,24 @@ function mergeSettings(saved: Partial<AppSettings> | undefined, base: AppSetting
       isha: { ...base.adhanAlerts.isha, ...(saved.adhanAlerts?.isha || {}) },
     },
   };
+  // v5.2 (owner round-22): ডিফল্ট বাংলা — "বাট ম্যানুয়ালি কিন্তু বাংলাটাই তুমি
+  // দিবা… ডিফল্ট হিসেবে বাংলাটাই থাকবে"। A stored language only counts when
+  // the user PICKED it in the new Settings picker (langPicked); the v5.0
+  // device-follow auto values (English phones got "en" written silently) are
+  // reset to বাংলা here. Same rule for the alarm VOICE (voiceLangPicked).
+  if (merged.langPicked !== true) {
+    merged.language = "bn";
+    merged.langPicked = false;
+  } else {
+    merged.language = merged.language === "en" ? "en" : "bn";
+  }
+  if (merged.voiceLangPicked !== true) {
+    merged.voiceLang = "bn";
+    merged.voiceLangPicked = false;
+  } else {
+    merged.voiceLang = merged.voiceLang === "en" ? "en" : "bn";
+  }
+  return merged;
 }
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
@@ -255,7 +273,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.classList.toggle("dark", state.settings.theme === "dark");
   }, [state.settings.theme, ready]);
 
-  const t = useMemo(() => makeT(deviceLang()), []); // v5.0: the language follows the DEVICE (owner round-19)
+  // v5.2 (owner round-22): ডিফল্ট বাংলা — the manual picker is back; the UI
+  // language follows settings.language (default "bn"), NOT the device.
+  const t = useMemo(() => makeT(state.settings.language === "en" ? "en" : "bn"), [state.settings.language]);
 
   const updateSettings = useCallback((patch: Partial<AppSettings>) => {
     setState((s) => {
@@ -548,7 +568,7 @@ export function checkReminders(
 function reminderText(state: AppState, t: T): string {
   try {
     const r = reminderOfTheDay(todayStr());
-    return deviceLang() === "bn" ? `${r.bn} — ${r.src}` : `${r.en} — ${r.src}`;
+    return appLang() === "bn" ? `${r.bn} — ${r.src}` : `${r.en} — ${r.src}`;
   } catch {
     return t("dailyReminder");
   }

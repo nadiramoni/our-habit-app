@@ -22,7 +22,7 @@ import AdsBanner from "@/components/AdsBanner";
 import { isNative, nativeGetVideoUsage, nativeOpenUsageAccess, nativeVibrate, nativeEnsureNotifPermission, nativeConfirmNotification, nativeRequestNotifications, nativeOpenNotificationSettings, UsageResult } from "@/lib/native";
 // v5.0: localized 12h clocks (রাত ১২:৩০ / সকাল ৯:৩০), the video duration
 // format (৪৫ সেকেন্ড / ৫ মিনিট / ১ ঘণ্টা ১০ মিনিট) + the device language.
-import { deviceLang, fmtDur, fmtHM } from "@/lib/i18n";
+import { appLang, fmtDur, fmtHM } from "@/lib/i18n";
 import { playAdd, playAlarmOn, playChime, playFanfare, playMinus, playStart, playTick, previewSound } from "@/lib/audio";
 import { glassesOf, waterAlarmTimes, WaterAlarmCfg, shiftTime, AZAN_SOUNDS } from "@/lib/types";
 
@@ -54,7 +54,7 @@ function AlarmConfirm({ text, warn }: { text: string; warn?: boolean }) {
  * convention in Bengali (রাত ১২:৩০, সকাল ৯:৩০, দুপুর ১২:৩০…) and AM/PM in
  * English. Used for EVERY clock the user sees (alarms, prayers, sleep). */
 function fmt12(hhmm: string): string {
-  return fmtHM(hhmm, deviceLang());
+  return fmtHM(hhmm, appLang());
 }
 
 /**
@@ -234,7 +234,7 @@ function Header({ onSecret }: { onSecret?: () => void }) {
   const dateLabel = useMemo(() => {
     try {
       const d = new Date();
-      const loc = deviceLang() === "bn" ? "bn-BD" : "en-GB";
+      const loc = appLang() === "bn" ? "bn-BD" : "en-GB";
       return new Intl.DateTimeFormat(loc, { weekday: "long", day: "numeric", month: "long" }).format(d);
     } catch {
       return today;
@@ -324,7 +324,7 @@ function MosqueBadge() {
 function ReminderCard() {
   const { today, state, t } = useStore();
   const r = reminderOfTheDay(today);
-  const bn = deviceLang() === "bn";
+  const bn = appLang() === "bn";
   return (
     <div
       className="mb-4 rounded-3xl border border-primary/25 overflow-hidden relative"
@@ -371,7 +371,7 @@ function MonthCard() {
 
   const monthLabel = useMemo(() => {
     try {
-      return new Intl.DateTimeFormat(deviceLang() === "bn" ? "bn-BD" : "en-GB", {
+      return new Intl.DateTimeFormat(appLang() === "bn" ? "bn-BD" : "en-GB", {
         month: "long",
         year: "numeric",
       }).format(new Date(view.y, view.m - 1, 1));
@@ -408,7 +408,7 @@ function MonthCard() {
     // one fixed reference week starting on a Saturday (2026-10-24 = শনিবার)
     const fmt = (d: string) => {
       const [y, m, dd] = d.split("-").map(Number);
-      return new Intl.DateTimeFormat(deviceLang() === "bn" ? "bn-BD" : "en-GB", { weekday: "narrow" }).format(
+      return new Intl.DateTimeFormat(appLang() === "bn" ? "bn-BD" : "en-GB", { weekday: "narrow" }).format(
         new Date(y, m - 1, dd)
       );
     };
@@ -431,7 +431,7 @@ function MonthCard() {
   const selDateLabel = useMemo(() => {
     try {
       const [y, m, d] = sel.split("-").map(Number);
-      return new Intl.DateTimeFormat(deviceLang() === "bn" ? "bn-BD" : "en-GB", {
+      return new Intl.DateTimeFormat(appLang() === "bn" ? "bn-BD" : "en-GB", {
         weekday: "long",
         day: "numeric",
         month: "long",
@@ -1035,7 +1035,7 @@ function ReelsCard() {
   // returns an `apps` map of SECONDS (autoTrack stores it as log.reelsSec).
   // Display: <1 মিনিট → সেকেন্ড; ≥1 মিনিট → মিনিট; >60 মিনিট → ঘণ্টা+মিনিট।
   // Old days without reelsSec fall back to the legacy minutes × 60.
-  const lang = deviceLang();
+  const lang = appLang();
   const secsOf = (id: string): number => {
     const s = (log.reelsSec || {})[id];
     if (typeof s === "number") return s;
@@ -1198,7 +1198,7 @@ function DhikrCard() {
   const [pulse, setPulse] = useState(false);
   const [doneMsg, setDoneMsg] = useState(false);
   const dhikr = DHIKRS.find((d) => d.id === sel) || DHIKRS[0];
-  const bn = deviceLang() === "bn";
+  const bn = appLang() === "bn";
   const total = dhikrTotal(log);
 
   const tap = () => {
@@ -1633,7 +1633,7 @@ function AzanSoundCard() {
       <div className="flex flex-col gap-1.5">
         {AZAN_SOUNDS.map((a, i) => {
           const isOn = chosen === a.file;
-          const label = deviceLang() === "bn" ? a.labelBn : a.labelEn;
+          const label = appLang() === "bn" ? a.labelBn : a.labelEn;
           return (
             <div
               key={a.file}

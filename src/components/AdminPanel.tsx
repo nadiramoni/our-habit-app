@@ -10,7 +10,7 @@ import { mirrorMeta, readRawMeta, writeRawMeta, panelSaveCfg, PanelSaveResult, f
 import { isNative } from "@/lib/native";
 import { APP_VERSION, APP_BUILD } from "@/lib/version";
 import { REEL_APPS } from "@/lib/types";
-import { deviceLang } from "@/lib/i18n";
+import { appLang } from "@/lib/i18n";
 
 /**
  * v2.4: LIVE banner health — reads window.__atHealth (written by AdsBanner
@@ -381,7 +381,7 @@ function StatusTab() {
   // Bengali digits on Bengali devices — same as every other number in the app
   const num = (n: number | string) => {
     const s = String(n);
-    return deviceLang() === "bn" ? s.replace(/[0-9]/g, (d) => "০১২৩৪৫৬৭৮৯"[Number(d)]) : s;
+    return appLang() === "bn" ? s.replace(/[0-9]/g, (d) => "০১২৩৪৫৬৭৮৯"[Number(d)]) : s;
   };
 
   const stat = (v: number, label: string, cls: string) => (
@@ -391,7 +391,32 @@ function StatusTab() {
     </div>
   );
 
+  // v5.2 (owner round-22): রিফ্রেশ বাটনের নিচে ৩টা ছোট বক্স — কোন দলের
+  // অ্যাকাউন্ট দেখা যাবে সেটা বাছাই করার জন্য। Owner: "এর নিচে তিনটা লেআউট
+  // বানাবা ছোট ছোট বক্সের মধ্যে — একটা হচ্ছে ইমেইল (গুগল দিয়ে অ্যাকাউন্ট
+  // করছে), তারপর যারা ম্যানুয়ালি মেইল দিয়ে অ্যাকাউন্ট করছে, তারপর আননোন
+  // (যারা ইমেইল টিমেইল কিছুই করে না — ফাঁকা)।" বক্সে চাপ দিলে শুধু ওই
+  // দলের অ্যাকাউন্ট দেখায়; আবার চাপ দিলে সবাই ফিরে আসে।
+  type Group = "google" | "email" | "unknown";
+  const [grp, setGrp] = useState<Group | "all">("all");
+  const inGrp = (u: FbStatusUser): boolean =>
+    grp === "all"
+      ? true
+      : grp === "google"
+        ? u.provider === "google"
+        : grp === "email"
+          ? u.provider !== "google" && Boolean(u.email)
+          : !u.email; // আননোন — ইমেইল ফাঁকা
+  const groups: { id: Group; icon: string; label: string; count: number }[] = snap
+    ? [
+        { id: "google", icon: "🔵", label: t("admFbGoogle"), count: snap.stats.google },
+        { id: "email", icon: "✉️", label: t("admFbEmail"), count: snap.stats.email },
+        { id: "unknown", icon: "❓", label: t("admFbUnknown"), count: snap.stats.unknown },
+      ]
+    : [];
+
   const users = (snap?.users || []).slice().sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0) || String(a.name).localeCompare(String(b.name)));
+  const shown = users.filter(inGrp);
 
   return (
     <div>
@@ -423,15 +448,42 @@ function StatusTab() {
             <button type="button" onClick={() => void load()} className="mt-2 rounded-xl bg-secondary px-4 py-2 text-xs font-bold">
               {t("admRefresh")}
             </button>
+
+            {/* v5.2 (owner round-22): রিফ্রেশের ঠিক নিচে ৩টা ছোট বক্স —
+                🔵 গুগল (গুগল দিয়ে অ্যাকাউন্ট) / ✉️ ইমেইল (ম্যানুয়ালি মেইল
+                দিয়ে) / ❓ আননোন (ইমেইল ফাঁকা)। চাপ দিলে শুধু ওই দল দেখায়,
+                আবার চাপ দিলে সবাই। */}
+            <div className="grid grid-cols-3 gap-2 mt-2">
+              {groups.map((g) => {
+                const active = grp === g.id;
+                return (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onClick={() => setGrp(active ? "all" : g.id)}
+                    className={`rounded-xl border p-2 text-center transition-colors ${
+                      active ? "border-primary bg-primary/10" : "border-border bg-secondary/60"
+                    }`}
+                  >
+                    <div className="text-base leading-none">{g.icon}</div>
+                    <div className="text-[10px] font-bold mt-1 leading-tight">{g.label}</div>
+                    <div className={`text-lg font-extrabold leading-tight mt-0.5 ${active ? "text-primary" : ""}`}>{num(g.count)}</div>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1.5 leading-relaxed">
+              {grp === "all" ? t("admFbHint") : `${t("admFbShowing")}: ${groups.find((g) => g.id === grp)?.icon} ${groups.find((g) => g.id === grp)?.label} (${num(shown.length)})`}
+            </p>
           </>
         )}
       </Card>
 
-      {users.length === 0 && !loading ? (
-        <Card><p className="text-xs text-muted-foreground text-center py-3">{t("admNoUsers")}</p></Card>
+      {shown.length === 0 && !loading ? (
+        <Card><p className="text-xs text-muted-foreground text-center py-3">{grp === "all" ? t("admNoUsers") : t("admFbNone")}</p></Card>
       ) : null}
 
-      {users.map((u: FbStatusUser) => (
+      {shown.map((u: FbStatusUser) => (
         <Card key={u.uid} className="mb-3">
           <div className="flex items-start justify-between gap-2 mb-1.5">
             <div className="flex items-center gap-2 min-w-0">
@@ -447,7 +499,7 @@ function StatusTab() {
               </div>
             </div>
             <div className="text-[9px] font-bold rounded-full border border-border px-2 py-0.5 shrink-0 text-muted-foreground">
-              {u.provider === "google" ? "🔵 Google" : "✉️ ইমেইল"}
+              {u.provider === "google" ? "🔵 Google" : u.email ? "✉️ ইমেইল" : "❓ আননোন"}
             </div>
           </div>
 
