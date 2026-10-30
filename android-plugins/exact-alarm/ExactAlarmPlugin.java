@@ -55,6 +55,36 @@ public class ExactAlarmPlugin extends Plugin {
   private static final String PREFS = "oh_exact_alarm";
   private static final String KEY_SCHEDULE = "schedule_json"; // full last schedule (boot restore)
   private static final String KEY_LAUNCH = "launch_payload"; // alarm that launched the app
+  // v3.3: the alarm voice's gender ("male"|"female") — written by the app
+  // (SettingsTab / page.tsx effect), read by AlarmSpeakService to TRY to pick
+  // a female voice for girls and a male voice for boys. Best-effort: depends
+  // on the TTS engine exposing gendered voices.
+  private static final String KEY_VOICE_GENDER = "voice_gender";
+
+  // ---------------- v3.3: voice gender ----------------
+  @PluginMethod
+  public void setVoiceGender(PluginCall call) {
+    try {
+      Context ctx = getContext() != null ? getContext() : getActivity();
+      String gender = call.getString("gender", "male");
+      if (ctx != null) {
+        prefs(ctx).edit().putString(KEY_VOICE_GENDER, gender).apply();
+      }
+      call.resolve();
+    } catch (Exception e) {
+      call.resolve();
+    }
+  }
+
+  /** The gender stored by the app ("male" | "female") — voice pick fuel. */
+  static String storedVoiceGender(Context ctx) {
+    try {
+      String g = prefs(ctx).getString(KEY_VOICE_GENDER, "male");
+      return "female".equals(g) ? "female" : "male";
+    } catch (Exception e) {
+      return "male";
+    }
+  }
 
   // ---------------- schedule ----------------
   @PluginMethod

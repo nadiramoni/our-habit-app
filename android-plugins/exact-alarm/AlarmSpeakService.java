@@ -23,6 +23,9 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
+// v3.3: Voice selection needs the Voice class from android.speech.tts
+import android.speech.tts.Voice;
+
 /**
  * AlarmSpeakService — v2.9: THE NAMED ALERT (owner: "আমার নাম আনোয়ারুল সন
  * সাকিব... আমাকে ডাকবে — আনোয়ারুল সন সাকিব, তোমার পানি খাওয়ার সময় হইছে,
@@ -138,7 +141,21 @@ public class AlarmSpeakService extends Service {
           : new Locale("en", "US");
       int r = tts.setLanguage(target);
       if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+        // v3.3: try plain "bn" before giving up and falling back to English —
+        // some engines expose only the bare language tag.
+        r = tts.setLanguage(new Locale("bn"));
+      }
+      if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
         tts.setLanguage(new Locale("en", "US"));
+      }
+      // v3.3 GENDER: try to pick a female voice for girls / a male voice for
+      // boys (owner: "মেয়ের নাম হলে একটা মেয়ে বলবে, ছেলের নাম হলে একটা ছেলে
+      // বলবে"). Best-effort — Android's Voice API has no official gender field,
+      // so we match engine voices whose name/features hint at the gender and
+      // silently keep the default voice when the engine exposes none.
+      try {
+        applyGenderedVoice("bn".equals(lang) ? "bn" : "en");
+      } catch (Exception ignored) {
       }
       tts.setAudioAttributes(new AudioAttributes.Builder()
           .setUsage(AudioAttributes.USAGE_ALARM)
@@ -160,6 +177,8 @@ public class AlarmSpeakService extends Service {
           onSpeakDone();
         }
       });
+      // v2.9.1 FIX: 4-arg speak() needs a Bundle, NOT a HashMap — javac
+      // error "HashMap cannot be converted to Bundle" broke the whole APK build.
       tts.speak(speak, TextToSpeech.QUEUE_FLUSH, null, "ohAlert");
       // if the engine never calls back (some OEMs), the voice still ends →
       // estimate the duration and continue
@@ -176,6 +195,62 @@ public class AlarmSpeakService extends Service {
       return Math.min(20000, Math.max(3000, words * 420L));
     } catch (Exception e) {
       return 8000;
+    }
+  }
+
+  /**
+   * v3.3 GENDER-AWARE VOICE: try to switch to a female/male voice of the
+   * given language. The app writes the user's gender via ExactAlarmPlugin
+   * .setVoiceGender (SettingsTab effect). Android's Voice API has no
+   * official gender, so we look for engine voices whose NAME or FEATURES
+   * hint at the gender ("female"/"male", "f"/"m" word-bounded, some engines
+   * expose it in getFeatures()). If nothing matches we keep the current
+   * voice — the sentence still speaks in Bengali either way.
+   */
+  private void applyGenderedVoice(String langTag) {
+    try {
+      final String gender = ExactAlarmPlugin.storedVoiceGender(getApplicationContext());
+      if (tts == null) return;
+      java.util.Set<Voice> voices;
+      try {
+        voices = tts.getVoices();
+      } catch (Exception e) {
+        return;
+      }
+      if (voices == null || voices.isEmpty()) return;
+      final String want = "female".equals(gender) ? "female" : "male";
+      final String other = "female".equals(want) ? "male" : "female";
+      Voice best = null;
+      for (Voice v : voices) {
+        if (v == null || v.getLocale() == null) continue;
+        if (!langTag.equalsIgnoreCase(v.getLocale().getLanguage())) continue;
+        String name = (v.getName() == null ? "" : v.getName()).toLowerCase();
+        StringBuilder feats = new StringBuilder();
+        try {
+          for (String f : v.getFeatures()) {
+            if (f != null) feats.append(f.toLowerCase()).append(' ');
+          }
+        } catch (Exception ignored) {
+        }
+        String hay = name + " " + feats;
+        if (hay.contains(want)) {
+          // a voice that explicitly matches the wanted gender wins immediately
+          if (!hay.contains(other) || best == null) {
+            best = v;
+            if (!hay.contains(other)) break; // clean match — stop searching
+          }
+        } else if (best == null && (name.startsWith("bn") || name.contains(langTag))) {
+          // remember the first plain bn voice as a neutral fallback (already
+          // the active language — setVoice below only fires on an explicit hit)
+        }
+      }
+      if (best != null) {
+        try {
+          tts.setVoice(best);
+        } catch (Exception ignored) {
+        }
+      }
+    } catch (Exception ignored) {
     }
   }
 

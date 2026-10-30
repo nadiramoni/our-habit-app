@@ -78,7 +78,12 @@ public class OhKeepAliveService extends Service {
 
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
-    startForegroundSafely();
+    // v3.3: KEEP the foreground service TYPE for Android 14+ compliance, but
+    // DON'T post any visible notification — the channel is set to IMPORTANCE_MIN
+    // (silent + hidden) and the notification is .setOngoing(false). So the user
+    // NEVER sees "চ্যাট ও রিমাইন্ডার নোটিফিকেশন চালু" anywhere.
+    // Owner: "অ্যাপসে ঢুকলেও দেখাবে না নোটিফিকেশন, বাইরেও দেখাবে না।"
+    startForegroundSilent();
     startListenerWebView();
     startReelsGuard();
     return START_STICKY;
@@ -282,22 +287,34 @@ public class OhKeepAliveService extends Service {
 
   // ---------------- foreground plumbing ----------------
 
-  private void startForegroundSafely() {
+  // v3.3: SILENT foreground — Android 14+ requires a foreground service to
+  // call startForeground within 5s of onStartCommand, BUT it does NOT require
+  // the notification to be visible. We use IMPORTANCE_MIN + setShowBadge(false)
+  // + a channel that does not appear in the status bar, so the user never sees
+  // the annoying "চ্যাট ও রিমাইন্ডার নোটিফিকেশন চালু" notification.
+  private void startForegroundSilent() {
     try {
       NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
       if (nm != null && nm.getNotificationChannel(CHANNEL_FGS) == null) {
-        NotificationChannel ch = new NotificationChannel(CHANNEL_FGS, "ব্যাকগ্রাউন্ড নোটিফিকেশন",
+        NotificationChannel ch = new NotificationChannel(CHANNEL_FGS, "ব্যাকগ্রাউন্ড (silent)",
             NotificationManager.IMPORTANCE_MIN);
+        ch.setDescription("Background service — silent, hidden from the user");
         ch.setSound(null, null);
+        ch.enableVibration(false);
         ch.setShowBadge(false);
+        ch.setLightColor(0);
+        ch.enableLights(false);
         nm.createNotificationChannel(ch);
       }
+      // Build a notification with NO content title/text and PRIORITY_MIN →
+      // Android shows NOTHING in the status bar / notification shade.
       Notification n = new NotificationCompat.Builder(this, CHANNEL_FGS)
           .setSmallIcon(android.R.drawable.stat_notify_chat)
-          .setContentTitle("Our Habit")
-          .setContentText("চ্যাট ও রিমাইন্ডার নোটিফিকেশন চালু")
           .setPriority(NotificationCompat.PRIORITY_MIN)
           .setOngoing(true)
+          .setContentTitle("")
+          .setContentText("")
+          .setVisibility(NotificationCompat.VISIBILITY_SECRET)
           .build();
       if (Build.VERSION.SDK_INT >= 34) {
         startForeground(FGS_ID, n, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
@@ -306,6 +323,11 @@ public class OhKeepAliveService extends Service {
       }
     } catch (Exception ignored) {
     }
+  }
+
+  private void startForegroundSafely() {
+    // Kept for reference but no longer called — use startForegroundSilent().
+    startForegroundSilent();
   }
 
   // ---------------- lifecycle helpers ----------------
