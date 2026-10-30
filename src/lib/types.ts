@@ -92,6 +92,16 @@ export interface AppSettings {
   // pronunciation, while every DISPLAY keeps the English name.
   // Owner: "নাম ইংলিশে থাকবে, কিন্তু কথা বলবে বাংলাতে — বাংলাদেশি উচ্চারণ"
   nameBn?: string;
+  // v4.1: the LANGUAGE THE ALARM VOICE SPEAKS — fully separate from the UI
+  // language. "en" (default) = the old way everyone knows: the phone CALLS the
+  // user's English name in English ("Sakib, it's your time to drink water…")
+  // and it works on EVERY phone with zero setup. "bn" = Bangladeshi
+  // pronunciation (Bangla-script name + Bangla sentence) — needs the phone's
+  // Bangla TTS voice installed; if it's missing the app auto-falls back to
+  // English so the call is never silent.
+  // Owner (round-16): "আগের যেটা ইংলিশে ডাকত ওইটাই থাকবে — বাংলাটাও থাকবে,
+  // সেটিংসে — অনেকে বাংলা ভয়েসের সেটিং করতে পারবে না।"
+  voiceLang?: "en" | "bn";
   // v3.3: the user's gender — the alarm voice TRIES to pick a female voice for
   // girls and a male voice for boys (depends on the phone's TTS engine).
   gender?: "male" | "female";
@@ -335,6 +345,9 @@ export function defaultSettings(): AppSettings {
   return {
     name: "",
     language: "bn",
+    // v4.1: the alarm VOICE speaks ENGLISH by default (works on every phone,
+    // no setup) — বাংলা কণ্ঠ Settings → প্রোফাইল থেকে চালু করা যায়
+    voiceLang: "en",
     theme: "dark",
     waterGoalMl: 3000,
     checkinTime: "21:00",

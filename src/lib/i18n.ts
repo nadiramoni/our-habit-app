@@ -611,6 +611,13 @@ const bn: Dict = {
   voiceGenderExample: "— এভাবেই ডাকবে।",
   voiceGenderEn: "নাম ইংলিশেই থাকবে, বাট ডাকবে বাংলা উচ্চারণে।",
   voiceGenderNote: "মেয়ে নাম হলে মেয়ে কণ্ঠ, ছেলে নাম হলে ছেলে কণ্ঠ বসাও। নাম একবার সেভ করলে পরের অ্যালার্ম থেকেই নতুন কণ্ঠে ডাকবে।",
+  // ---------- v4.1: ভয়েসের ভাষা (English default / বাংলা optional) ----------
+  voiceLangTitle: "ডাকটা কোন ভাষায় হবে?",
+  voiceLangEnOpt: "🇬🇧 English (সব ফোনে চলে)",
+  voiceLangBnOpt: "🇧🇩 বাংলা (বাংলা ভয়েস লাগবে)",
+  voiceLangExEn: "— এভাবেই ডাকবে।",
+  voiceLangExBn: "— এভাবেই ডাকবে।",
+  voiceLangNote: "English দিলে কোনো এক্সট্রা সেটিং লাগবে না — সব ফোনে কাজ করবে। বাংলা দিলে ফোনে বাংলা TTS ভয়েস ইনস্টল থাকতে হবে (Settings → Text-to-speech)। বাংলা ভয়েস না থাকলে অ্যাপ নিজে থেকেই ইংলিশে ডাকবে — তাই ডাক কখনো বন্ধ হয়ে যাবে না।",
   voiceAlertsOn: "নাম ধরে ডাক",
   voiceAlertsSub: "অ্যালার্মে তোমার নাম ধরে ডেকে মনে করাবে (আজান অপরিবর্তিত)",
 
@@ -1347,6 +1354,13 @@ const en: Dict = {
   voiceGenderExample: "— that's how the alarm calls you.",
   voiceGenderEn: "The name stays English, but it is CALLED in Bangla pronunciation.",
   voiceGenderNote: "Pick a girl's voice for a girl's name, a boy's voice for a boy's name. Save once — every alarm after that uses the new voice.",
+  // ---------- v4.1: voice language (English default / Bangla optional) ----------
+  voiceLangTitle: "Which language should the call be in?",
+  voiceLangEnOpt: "🇬🇧 English (works on every phone)",
+  voiceLangBnOpt: "🇧🇩 Bangla (needs Bangla voice)",
+  voiceLangExEn: "— that's how the alarm calls you.",
+  voiceLangExBn: "— that's how the alarm calls you.",
+  voiceLangNote: "English needs zero extra setup and works on every phone. Bangla needs the phone's Bangla TTS voice installed (Settings → Text-to-speech). If the Bangla voice is missing, the app automatically calls in English instead — the call never goes silent.",
   voiceAlertsOn: "Call me by name",
   voiceAlertsSub: "Alarms call your name out loud (adhan stays unchanged)",
 

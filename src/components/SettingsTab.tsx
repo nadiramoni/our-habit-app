@@ -13,9 +13,10 @@ import { useServerCfg } from "@/lib/cfg";
 import { Card, SectionTitle, Seg, ToggleRow } from "@/components/ui-bits";
 import AdsBanner from "@/components/AdsBanner";
 import { AppState, Lang } from "@/lib/types";
-import { APP_VERSION } from "@/lib/version";
+import { APP_VERSION, APP_BUILD } from "@/lib/version";
 import { SmartlinkButton } from "@/components/AdsBanner";
 import { banglaNameFromEnglish } from "@/lib/translit";
+import { makeT } from "@/lib/i18n";
 import { backupState, ensureFirebase, fbSignOut, fbUpdateProfileName, restoreState } from "@/lib/cloud";
 import { totalPoints, levelInfo } from "@/lib/logic";
 import {
@@ -197,25 +198,39 @@ export default function SettingsTab() {
               </div>
             )}
 
-            {/* v4.0: ভয়েসের লিঙ্গ (alarm TTS) — মেয়ে নাম হলে মেয়ে কণ্ঠ, ছেলে
-                নাম হলে ছেলে কণ্ঠ। Android TTS engines rarely expose gendered
-                Bangla voices, so we ALSO shift the pitch as a best-effort.
-                The SPOKEN name is auto-transliterated to Bangla
-                (Nadiramoni → নাদিরামনি) so the bn voice pronounces it the
-                Bangladeshi way — the DISPLAY name stays English everywhere. */}
+            {/* v4.1: অ্যালার্মের কণ্ঠ — ভাষা (English ডিফল্ট) + লিঙ্গ।
+                Owner (round-16): "আগের যেটা ইংলিশে ডাকত ওইটাই থাকবে —
+                বাংলাটাও থাকবে, সেটিংসে। অনেকে বাংলা ভয়েসের সেটিং করতে
+                পারবে না।" So the English call ("Sakib, it's your time to
+                drink water…") is the DEFAULT — works on every phone, zero
+                setup. বাংলা is right here as an option; when the phone has
+                no Bangla TTS voice the app auto-falls back to English. */}
             <div className="mt-3 rounded-xl bg-background/60 border border-border p-2.5">
               <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">🗣️ {t("voiceGenderTitle")}</div>
-              <div className="text-[11px] text-muted-foreground mb-2 leading-relaxed">
-                {t("voiceGenderSub")}{" "}
-                {s.language === "bn" && (s.name || "").trim() ? (
-                  <>
-                    {"\""}
-                    <b>{(s.nameBn || "").trim() || banglaNameFromEnglish(s.name) || s.name}</b>
-                    {"\" "}
-                    {t("voiceGenderExample")}
-                  </>
-                ) : t("voiceGenderEn")}
-              </div>
+              <div className="text-[11px] font-semibold mb-1.5">{t("voiceLangTitle")}</div>
+              <Seg<"en" | "bn">
+                value={s.voiceLang === "bn" ? "bn" : "en"}
+                onChange={(v) => updateSettings({ voiceLang: v })}
+                options={[
+                  { value: "en", label: t("voiceLangEnOpt") },
+                  { value: "bn", label: t("voiceLangBnOpt") },
+                ]}
+              />
+              {(s.name || "").trim() ? (
+                <div className="text-[11px] text-muted-foreground mt-2 leading-relaxed">
+                  {"\""}
+                  <b>
+                    {s.voiceLang === "bn"
+                      ? (s.nameBn || "").trim() || banglaNameFromEnglish(s.name) || s.name
+                      : s.name.trim()}
+                    {s.voiceLang === "bn" ? makeT("bn")("speakWater") : makeT("en")("speakWater")}
+                  </b>
+                  {"\" "}
+                  {s.voiceLang === "bn" ? t("voiceLangExBn") : t("voiceLangExEn")}
+                </div>
+              ) : null}
+              <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">{t("voiceLangNote")}</p>
+              <div className="border-t border-border my-2.5" />
               <Seg<"female" | "male">
                 value={s.gender === "male" ? "male" : "female"}
                 onChange={(v) => updateSettings({ gender: v })}
@@ -633,7 +648,7 @@ export default function SettingsTab() {
         <SectionTitle title={`ℹ️ About`} />
         <p className="text-xs text-muted-foreground leading-relaxed">{t("aboutText")}</p>
         <div className="flex items-center justify-between gap-2 mt-3">
-          <p className="text-[10px] text-muted-foreground opacity-70">© 2026 Our Habit v{APP_VERSION}</p>
+          <p className="text-[10px] text-muted-foreground opacity-70">© 2026 Our Habit v{APP_VERSION}{APP_BUILD > 0 ? ` · Build ${APP_BUILD}` : ""}</p>
           <SmartlinkButton />
         </div>
       </Card>

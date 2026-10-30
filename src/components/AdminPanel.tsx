@@ -8,7 +8,7 @@ import { AtCfg, AtZone, ServerCfg } from "@/lib/types";
 import { extractScriptUrl } from "@/components/AdsBanner";
 import { mirrorMeta, readRawMeta, writeRawMeta } from "@/lib/cloud";
 import { isNative } from "@/lib/native";
-import { APP_VERSION } from "@/lib/version";
+import { APP_VERSION, APP_BUILD } from "@/lib/version";
 
 /**
  * v2.4: LIVE banner health — reads window.__atHealth (written by AdsBanner
@@ -510,7 +510,7 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
               INSTALLED on this phone right next to it so the two can never be
               confused again. */}
           <p className="text-[11px] text-muted-foreground mb-2 leading-relaxed">
-            📱 এই ফোনে এখন ইনস্টল হয়ে আছে: <b>v{APP_VERSION}</b> — নতুন APK বানালে নিচের ঘরে নতুন নাম্বারটা (যেমন 4.1.0) বসাও।
+            📱 এই ফোনে এখন ইনস্টল হয়ে আছে: <b>v{APP_VERSION}{APP_BUILD > 0 ? ` · Build ${APP_BUILD}` : ""}</b> — নতুন APK বানালে নিচের ঘরে নতুন নাম্বারটা (যেমন 4.1.0) বসাও।
           </p>
           <input
             value={draft.latestVersion}

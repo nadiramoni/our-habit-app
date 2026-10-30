@@ -577,10 +577,14 @@ export interface ExactAlarmSpec {
   body: string;
   sound: string; // res/raw file, e.g. "adhan.mp3"
   /** v2.9: the sentence SPOKEN at ring time with the user's registered name
-   * ("আনোয়ারুল সন সাকিব, তোমার পানি খাওয়ার সময় হইছে…") — empty for adhan
+   * ("Sakib, it's your time to drink water…") — empty for adhan
    * (owner: "আজানের ক্ষেত্রে না ভাই"). */
   speak?: string;
-  /** TTS language for the spoken sentence ("bn" | "en"). */
+  /** v4.1: the same call in ENGLISH — the native service speaks THIS when the
+   * user picked the বাংলা voice but the phone has no Bangla TTS voice
+   * installed (the call must never go silent/garbled). */
+  speakEn?: string;
+  /** TTS language for the spoken sentence ("en" default | "bn"). */
   lang?: string;
 }
 
@@ -609,7 +613,8 @@ export async function nativeScheduleExactAlarms(alarms: ExactAlarmSpec[]): Promi
         body: a.body,
         sound: a.sound,
         speak: a.speak || "",
-        lang: a.lang || "bn",
+        speakEn: a.speakEn || "",
+        lang: a.lang || "en",
       })),
     });
     return { scheduled: Number(res?.scheduled) || 0 };
@@ -709,12 +714,12 @@ export async function nativeOpenFullScreenSettings(): Promise<boolean> {
  * (throttled per key) — used by the Reels-limit warning while the app is
  * open (the background guard covers app-closed).
  */
-export async function nativeSpeakOnce(key: string, text: string, lang = "bn", throttleMin = 30): Promise<boolean> {
+export async function nativeSpeakOnce(key: string, text: string, lang = "en", throttleMin = 30, textEn = ""): Promise<boolean> {
   if (!isNative()) return false;
   const p = exactPlugin();
   if (!p?.speakOnce) return false;
   try {
-    const r = await p.speakOnce({ key, text, lang, throttleMin });
+    const r = await p.speakOnce({ key, text, lang, throttleMin, textEn: textEn || text });
     return Boolean(r?.spoken);
   } catch {
     return false;
@@ -767,11 +772,11 @@ export async function nativeChatServiceSetMuted(muted: boolean): Promise<void> {
 }
 
 /** Push the daily Reels limit + spoken warning to the background guard. */
-export async function nativeSetReelsLimit(limitMin: number, warnText: string, lang: string): Promise<void> {
+export async function nativeSetReelsLimit(limitMin: number, warnText: string, lang: string, warnTextEn = ""): Promise<void> {
   const p = chatPlugin();
   if (!p?.setReelsLimit) return;
   try {
-    await p.setReelsLimit({ limitMin, warnText, lang });
+    await p.setReelsLimit({ limitMin, warnText, lang, warnTextEn: warnTextEn || warnText });
   } catch {
     /* ignore */
   }

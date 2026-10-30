@@ -1,5 +1,27 @@
 // App version — bump this when you ship an update.
 // The admin panel's "latest version" is compared against this to trigger auto-update.
+// v4.1.0 — owner round-16 (the "build it MYSELF" release):
+//           (1) THE ENGLISH VOICE CALL IS BACK AS THE DEFAULT — the phone
+//           calls the English name in English ("Sakib, it's your time to
+//           drink water…") exactly like before, works on EVERY phone with
+//           zero setup. The Bangla call (v4.0) stays as an OPTION in Settings
+//           → প্রোফাইল → ডাকটা কোন ভাষায় হবে? — and when the phone has no
+//           Bangla TTS voice installed the app AUTO-FALLS BACK to English so
+//           the call is never silent (owner: "অনেকে বাংলা ভয়েসের সেটিং
+//           করতে পারবে না — আগের ইংলিশটা থাকবে").
+//           (2) EVERY BUILD NOW CARRIES A BUILD NUMBER — the CI stamps
+//           APP_BUILD below with the workflow run number. It shows up in the
+//           APK FILE NAME (OurHabit-v4.1.0-b27.apk), the release title
+//           ("Our Habit v4.1.0 · Build 27") and Settings → About — so no one
+//           can ever confuse two APKs again, even when the MB size looks
+//           similar.
+//           (3) MANUAL-ONLY BUILDS — the workflow no longer auto-builds on
+//           every upload; the owner clicks "Run workflow" when they want a
+//           new APK (owner: "আমি নিজে থেকে ম্যানুয়ালি বিল্ড করব — ওইটাই
+//           সবথেকে বেস্ট").
+//           (4) FIXED a v4.0 crash: the reels warning used
+//           banglaNameFromEnglish without importing it (the build had
+//           ignoreBuildErrors on, so it slipped through).
 // v4.0.0 — owner round-15 (the "one-shot total fix" release):
 //           (1) THE NAME CALL IS NOW FULLY BANGLA — the name STAYS English in
 //           every display, but the voice says it with BANGLADESHI
@@ -106,4 +128,10 @@
 //           minutes + start sound, sleep tracker + bedtime alert, points moved
 //           to Settings profile (full name), YouTube Shorts vs Long split
 // v2.2.1 — REAL Adsterra banners + REAL adhan recording wired end-to-end
-export const APP_VERSION = "4.0.0";
+export const APP_VERSION = "4.1.0";
+
+// v4.1: BUILD NUMBER — 0 in the repo; GitHub CI overwrites it with the
+// workflow run number (27, 28, 29…) before every APK build. It lands in the
+// APK file name, the release title, Android's versionName and Settings →
+// About, so every build is uniquely identifiable even when the size is same.
+export const APP_BUILD = 0;

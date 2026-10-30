@@ -591,6 +591,10 @@ export function writeChatListenerState(data: {
   lang: string;
   reelsLimitMin: number;
   reelsWarn: string;
+  /** v4.1: the reels warning in ENGLISH + the VOICE language — the background
+   * guard speaks the En copy when the phone has no Bangla TTS voice. */
+  reelsWarnEn?: string;
+  reelsLang?: string;
   /** v3.3: this APK's build version (e.g. "2.9.1") — the background listener
    * compares it against app/meta.latestVersion to fire update notifications. */
   buildVersion?: string;

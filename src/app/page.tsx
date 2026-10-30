@@ -19,6 +19,7 @@ import { getLog, todayStr } from "@/lib/types";
 import { pushDay, ensureProfile, fbIsBanned, fbSignOut, DaySummary } from "@/lib/cloud";
 import { APP_VERSION } from "@/lib/version";
 import { banglaNameFromEnglish } from "@/lib/translit";
+import { makeT } from "@/lib/i18n";
 import { warmAudio, playChime } from "@/lib/audio";
 import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm, AlarmSyncResult, nativeScheduleExactAlarms, nativeCancelExactAlarms, nativeSetVoiceGender, nativeExactPending, nativeConsumeAlarmLaunch, ExactAlarmSpec } from "@/lib/native";
 import { waterAlarmTimes, shiftTime, randomMealMusic, PRAYER_KEYS, dateAtHM, addDays } from "@/lib/types";
@@ -357,22 +358,35 @@ function Shell() {
     // সময় হইছে…" (owner's exact request). Adhan alarms NEVER speak —
     // "আজানের ক্ষেত্রে না ভাই, আজানটা আজানি দিবে".
     const myName = (s.settings.name || "").trim();
-    const lang = s.settings.language || "bn";
-    // v4.0: the SPOKEN name — Bangla TTS reads a Bangla-script name like a
-    // Bangladeshi person would say it. Priority: (1) a manually saved Bangla
-    // spelling (settings.nameBn), (2) AUTO-TRANSLITERATION of the English
-    // name (Nadiramoni → নাদিরামনি, Md. Tahmid Jamil → মোঃ তাহমিদ জামিল).
-    // Every DISPLAY everywhere still uses the English name — only the VOICE
-    // gets the Bangla spelling.
-    // Owner (round-15): "নাম টোটালি ইংলিশেই থাকবে, বাট কথাটা বলবে বাংলাদেশি
-    // উচ্চারণে — ইংলিশ প্রনাউন্স (ব্রিটিশ ইত্যাদি) দিয়ে নাম সুন্দর শোনায় না।"
+    // v4.1: the VOICE language is now its OWN setting (default ENGLISH) —
+    // completely separate from the UI language. Owner (round-16): "আগের যেটা
+    // ইংলিশে ডাকত ওইটাই থাকবে — বাংলাটাও থাকবে, সেটিংসে। অনেকে বাংলা TTS-এর
+    // সেটিং করতে পারবে না।" So: en (default) = the phone CALLS the English
+    // name in English ("Sakib, it's your time to drink water…") — works on
+    // EVERY phone, zero setup. bn = Bangla-script name + Bangla sentence.
+    const vlang: "en" | "bn" = s.settings.voiceLang === "bn" ? "bn" : "en";
+    const lang = vlang; // passed to the native TTS engine
+    const tv = makeT(vlang); // spoken sentences in the VOICE language
+    const te = makeT("en"); // English fallback — used by the native side when
+    //                           the phone has NO Bangla TTS voice installed
+    // v4.0 (kept for the bn option): the SPOKEN name — Bangla TTS reads a
+    // Bangla-script name like a Bangladeshi person would say it. Priority:
+    // (1) a manually saved Bangla spelling (settings.nameBn), (2) AUTO-
+    // TRANSLITERATION of the English name (Nadiramoni → নাদিরামনি).
+    // v4.1: only used when voiceLang = বাংলা. Every DISPLAY everywhere keeps
+    // the English name in both modes.
     const spokenName =
-      lang === "bn" && (s.settings.nameBn || "").trim()
+      vlang === "bn" && (s.settings.nameBn || "").trim()
         ? (s.settings.nameBn || "").trim()
-        : lang === "bn"
+        : vlang === "bn"
           ? banglaNameFromEnglish(myName) || myName
           : myName;
-    const named = (suffix: string) => (spokenName ? `${spokenName}${suffix}` : "");
+    const spokenNameEn = myName; // the English fallback name
+    const named = (key: string) => (spokenName ? `${spokenName}${tv(key)}` : "");
+    const namedEn = (key: string) => (spokenNameEn ? `${spokenNameEn}${te(key)}` : "");
+    // v4.1: normalize whitespace in the composed meal sentences (the English
+    // dictionary pieces carry their own leading space → "Lunch  time")
+    const norm = (s: string) => (s ? s.replace(/\s+/g, " ").trim() : s);
 
     // ---------- v2.8/v2.9 EXACT ALARMS (azan / Fajr / meals / water / sleep) ----------
     const exact: ExactAlarmSpec[] = [];
@@ -383,12 +397,13 @@ function Shell() {
       title: string,
       body: string,
       sound: string,
-      speak = ""
+      speak = "",
+      speakEn = ""
     ) => {
       if (!/^\d{1,2}:\d{2}$/.test(time)) return;
       for (const d of days) {
         const at = dateAtHM(d, time);
-        if (at > now + 30000) exact.push({ id: `${key}@${d}`, at, key, time, title, body, sound, speak, lang });
+        if (at > now + 30000) exact.push({ id: `${key}@${d}`, at, key, time, title, body, sound, speak, speakEn, lang });
       }
     };
     // azan + Fajr: the adhan itself, never a voice call (owner's rule)
@@ -411,13 +426,17 @@ function Shell() {
       if (c?.on) {
         // v2.5: RANDOM music — the owner's two tracks alternate. Re-synced on
         // every app open / settings change → real variety daily.
+        // v4.1: the sentence follows the VOICE language (tv) and an English
+        // copy (te) rides along as the fallback when the phone has no Bangla
+        // TTS voice installed.
         pushExact(
           `meal_${mk}`,
           c.time,
           `🍽 ${t(`meal_${mk}`)}`,
           t("mealAlarmMsg"),
           randomMealMusic(),
-          spokenName ? `${spokenName}, ${t(`meal_${mk}`)} ${t("speakMeal")}` : ""
+          norm(spokenName ? `${spokenName}, ${tv(`meal_${mk}`)} ${tv("speakMeal")}` : ""),
+          norm(spokenNameEn ? `${spokenNameEn}, ${te(`meal_${mk}`)} ${te("speakMeal")}` : "")
         );
         // v2.4: 15-min EARLY heads-up — spoken with the name
         if (s.settings.mealPreAlert !== false)
@@ -427,13 +446,14 @@ function Shell() {
             `🍽 ${t(`meal_${mk}`)}`,
             t("mealPreMsg"),
             "alarm.wav",
-            spokenName ? `${spokenName}, ${t(`meal_${mk}`)} ${t("speakMealPre15")}` : ""
+            norm(spokenName ? `${spokenName}, ${tv(`meal_${mk}`)} ${tv("speakMealPre15")}` : ""),
+            norm(spokenNameEn ? `${spokenNameEn}, ${te(`meal_${mk}`)} ${te("speakMealPre15")}` : "")
           );
       }
     });
     // sleep: spoken name-call + soft chime
     if (s.settings.sleepAlarm?.on)
-      pushExact("sleep", s.settings.sleepAlarm.time, `😴 ${t("sleep")}`, t("sleepAlarmMsg"), "alarm.wav", named(t("speakSleep")));
+      pushExact("sleep", s.settings.sleepAlarm.time, `😴 ${t("sleep")}`, t("sleepAlarmMsg"), "alarm.wav", named("speakSleep"), namedEn("speakSleep"));
     // v2.9 WATER — moved to the exact engine so it rings ON TIME and SPEAKS
     // the user's name first (owner: "পানি খাওয়ার রিমাইন্ডার হলে আমাকে ডাকবে")
     const wa = s.settings.waterAlarm?.on
@@ -449,7 +469,8 @@ function Shell() {
           `💧 ${t("appName")}`,
           t("waterAlarmBody"),
           "wateralarm.mp3",
-          named(t("speakWater"))
+          named("speakWater"),
+          namedEn("speakWater")
         );
       }
     }
@@ -468,7 +489,8 @@ function Shell() {
         `🕌 ${t("appName")}`,
         t("habitsAlarmMsg"),
         "alarm.wav",
-        named(t("speakHabits"))
+        named("speakHabits"),
+        namedEn("speakHabits")
       );
       // v2.5 APP-OPEN NUDGES — real notifications even when the app is closed.
       list.push({ id: "nudge_morning", time: "10:00", title: `👋 ${t("appName")}`, body: t("nudgeBody") });

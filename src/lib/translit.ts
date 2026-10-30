@@ -45,6 +45,11 @@ const KNOWN: Record<string, string> = {
   ali: "আলী",
   allah: "আল্লাহ",
   ummah: "উম্মাহ",
+  // v4.1: the OWNER's own name — the algorithm would read the "o" in "moni"
+  // as ো (নাদিরামোনি); the correct Bangladeshi spelling is নাদিরামনি
+  // (owner: "নাদিরা মণি"). This dictionary is exactly for such cases.
+  nadiramoni: "নাদিরামনি", nadramoni: "নাদিরামনি",
+  nadira: "নাদিরা", moni: "মনি",
 };
 
 // ---------- single-letter maps ----------

@@ -28,6 +28,7 @@ import { uid as newId } from "@/lib/types";
 import { nativeVibrate } from "@/lib/native";
 import { APP_VERSION } from "@/lib/version";
 import { banglaNameFromEnglish } from "@/lib/translit";
+import { makeT } from "@/lib/i18n";
 
 export interface ChatTarget {
   uid: string;
@@ -313,20 +314,28 @@ export function ChatWatchdog() {
 
   const chatNotifOn = state.settings.chatNotif !== false;
 
-  // v4.0: the SPOKEN reels warning — the BANGLA spelling of the name (same as
-  // the alarms) so the bn TTS voice says it the Bangladeshi way.
-  // "Nadiramoni" → "নাদিরামনি"; a manually saved Bangla spelling (nameBn)
-  // always wins; English app language keeps the English name.
+  // v4.1: the SPOKEN reels warning — follows the VOICE language setting
+  // (default ENGLISH: "Sakib, stop watching reels right now!…" — the old way
+  // that works on every phone). বাংলা mode = Bangla-script name + Bangla
+  // sentence. reelsWarnTextEn is the English copy the native side speaks when
+  // the phone has no Bangla TTS voice installed — the warning never goes
+  // silent. (Also fixes a v4.0 latent bug: banglaNameFromEnglish was used
+  // here without being imported — the reels warning crashed at runtime.)
+  const vlang: "en" | "bn" = state.settings.voiceLang === "bn" ? "bn" : "en";
   const reelsWarnText = useCallback(
     () =>
       `${
-        state.settings.language === "bn" && (state.settings.nameBn || "").trim()
+        vlang === "bn" && (state.settings.nameBn || "").trim()
           ? (state.settings.nameBn || "").trim()
-          : state.settings.language === "bn"
+          : vlang === "bn"
             ? banglaNameFromEnglish(state.settings.name || "") || (state.settings.name || "")
-            : state.settings.name || ""
-      }${t("speakReelsWarn")}`,
-    [state.settings.language, state.settings.name, state.settings.nameBn, t]
+            : (state.settings.name || "").trim()
+      }${makeT(vlang)("speakReelsWarn")}`,
+    [vlang, state.settings.name, state.settings.nameBn]
+  );
+  const reelsWarnTextEn = useCallback(
+    () => `${(state.settings.name || "").trim()}${makeT("en")("speakReelsWarn")}`,
+    [state.settings.name]
   );
 
   // per-pair listeners + last-seen bookkeeping
@@ -369,7 +378,9 @@ export function ChatWatchdog() {
           pairs: pairs.map((p) => ({ key: p.key, name: p.name })),
           lang: state.settings.language || "bn",
           reelsLimitMin: state.settings.reelsLimitMin || 0,
-          reelsWarn: reelsWarnText(), // v4.0: Bangla-spelled name → bn voice
+          reelsWarn: reelsWarnText(), // v4.1: follows the VOICE language setting
+          reelsWarnEn: reelsWarnTextEn(), // v4.1: English copy for the no-bn-voice fallback
+          reelsLang: vlang,
           buildVersion: APP_VERSION, // v3.3: background listener fires update notifs against this
         });
       } catch {
@@ -485,11 +496,12 @@ export function ChatWatchdog() {
       nativeSetReelsLimit(
         state.settings.reelsLimitMin || 0,
         reelsWarnText(),
-        state.settings.language || "bn"
+        vlang,
+        reelsWarnTextEn()
       )
     );
 
-  }, [state.settings.reelsLimitMin, reelsWarnText, state.settings.language]);
+  }, [state.settings.reelsLimitMin, reelsWarnText, reelsWarnTextEn, vlang]);
 
   // SPEAK the reels warning when the app itself sees the limit crossed
   useEffect(() => {
@@ -499,7 +511,7 @@ export function ChatWatchdog() {
     const mins = log?.reelsMin ?? 0;
     if (limit > 0 && mins >= limit && acc?.uid) {
       void import("@/lib/native").then(({ nativeSpeakOnce }) =>
-        nativeSpeakOnce("reelsWarn", reelsWarnText(), state.settings.language || "bn", 30)
+        nativeSpeakOnce("reelsWarn", reelsWarnText(), vlang, 30, reelsWarnTextEn())
       );
     }
 
