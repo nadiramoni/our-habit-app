@@ -10,52 +10,75 @@ import android.content.SharedPreferences;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 
-import com.google.firebase.messaging.FirebaseMessagingService;
+import com.capacitorjs.plugins.pushnotifications.MessagingService;
 import com.google.firebase.messaging.RemoteMessage;
 
 import java.util.Map;
 
 /**
- * PushSpeakService — v5.5: THE UPDATE ANNOUNCEMENT THAT SPEAKS THE MOMENT IT
- * LANDS (owner: "নোটিফিকেশন যাবে, সাথে সাথে পড়ে শোনাবে — নাদিরা মনি। অ্যাপসে
- * নতুন আপডেট এসেছে, অ্যাপসটা আপনি ইনস্টল করুন... অ্যাপসের ভিতর ঢুকে পড়ে
- * শোনাতে হবে না")।
+ * PushSpeakService — v5.5.1 (BUILD-FIXED): THE UPDATE ANNOUNCEMENT THAT SPEAKS
+ * THE MOMENT IT LANDS (owner: "নোটিফিকেশন যাবে, সাথে সাথে পড়ে শোনাবে — নাদিরা
+ * মনি। অ্যাপসে নতুন আপডেট এসেছে, অ্যাপসটা আপনি ইনস্টল করুন... অ্যাপসের ভিতর
+ * ঢুকে পড়ে শোনাতে হবে না")।
  *
- * WHY A SECOND FirebaseMessagingService: the update broadcast now arrives as
- * a DATA-ONLY FCM message, so onMessageReceived fires even when the process
- * is dead (notification-payload messages never reach a killed app). This
- * service then:
+ * ⚠️ v5.5.1 FIX 1 — WHY THE APK BUILD FAILED (12 javac errors): this class
+ * used to extend com.google.firebase.messaging.FirebaseMessagingService, but
+ * the firebase-messaging library is only an `implementation` dependency of
+ * the @capacitor/push-notifications MODULE — never exposed to the app module's
+ * compile classpath. prepare-apk.mjs now declares
+ * com.google.firebase:firebase-messaging:25.0.1 in app/build.gradle itself.
+ *
+ * ⚠️ v5.5.1 FIX 2 — WHY THIS SERVICE NOW EXTENDS THE PLUGIN'S ONE: Firebase's
+ * ServiceStarter picks EXACTLY ONE service for the MESSAGING_EVENT intent
+ * (PackageManager.resolveService — singular — and it CACHES the choice). With
+ * two candidate services (the plugin's MessagingService + this one) delivery
+ * was a silent coin flip. So this class extends
+ * com.capacitorjs.plugins.pushnotifications.MessagingService and
+ * prepare-apk.mjs removes the plugin's own service from the merged manifest
+ * (tools:node="remove") → ONE deterministic handler that keeps EVERYTHING:
+ *   • super.onMessageReceived() → the JS pushNotificationReceived event
+ *     (the in-app UpdateBar refresh still fires while the app is open),
+ *   • inherited onNewToken() → the JS registration event (token rotation).
+ *
+ * WHAT THIS SERVICE DOES with the DATA-ONLY update broadcast (data messages
+ * wake a KILLED process; the payload carries NO notification block —
+ * deliverMany() in src/lib/push.ts sends it data-only on purpose):
  *   1. posts the update notification itself (data messages are NOT shown by
  *      the system — the tray entry would otherwise never appear),
  *   2. starts AlarmSpeakService so the phone immediately CALLS the user by
  *      their registered name through the TTS engine (the same voice that
  *      calls the alarms) — no app open required.
+ * v5.5.1: NATIVE owns the arrival voice in EVERY state (app open, background
+ * or killed). The JS layer no longer speaks on receive — exactly ONE
+ * announcement per broadcast, no doubled name-calls.
  *
- * DOUBLE-FREE GUARDS:
- *   • FOREGROUND: MainActivity.onResume writes muted=true into the
- *     oh_keepalive prefs; when muted this service does NOTHING — the JS
- *     layer (Capacitor pushNotificationReceived) already announces it inside
- *     the app. When the app is closed/backgrounded the flag is false and the
- *     native announcement happens.
- *   • DUPLICATE DELIVERY: every broadcast carries a ts (epoch ms). The last
- *     announced ts is persisted; a repeated delivery of the same ts is
- *     dropped (covers FCM retries + the Capacitor plugin's saved-message
- *     replay on next open — the JS side keeps the same dedup in localStorage).
+ * DOUBLE-FREE GUARD: every broadcast carries a ts (epoch ms). The last
+ * announced ts is persisted; a repeated delivery of the same ts is dropped
+ * (covers FCM retries). The tap-on-notification path in push.ts still speaks
+ * on PURPOSE (the owner may tap an old entry hours later to hear it again).
  *
  * Chat messages (ohChat) keep their notification payload — the system shows
- * them exactly as before; this service ignores them.
+ * them exactly as before; this service forwards them via super() unchanged.
  */
-public class PushSpeakService extends FirebaseMessagingService {
+public class PushSpeakService extends MessagingService {
 
   private static final String PREFS = "oh_push_speak";
   private static final String KEY_LAST_TS = "last_update_ts";
   private static final String CHANNEL_ID = "oh_fcm_update";
-  private static final String MUTE_PREFS = "oh_keepalive";
-  private static final String MUTE_KEY = "muted";
   private static final int NOTIF_ID = 43912;
 
   @Override
   public void onMessageReceived(RemoteMessage remoteMessage) {
+    // 1. Capacitor's logic ALWAYS runs first: app open → fires the JS
+    //    pushNotificationReceived event (cfg refresh → UpdateBar appears);
+    //    app killed → the plugin has no bridge → harmless no-op.
+    try {
+      super.onMessageReceived(remoteMessage);
+    } catch (Exception ignored) {
+    }
+
+    // 2. OUR update announcement — tray notification + the name-call voice,
+    //    the moment the DATA-ONLY message lands, whatever the app state.
     try {
       if (remoteMessage == null || remoteMessage.getData() == null) return;
       Map<String, String> d = remoteMessage.getData();
@@ -70,14 +93,6 @@ public class PushSpeakService extends FirebaseMessagingService {
       if (ts > 0) {
         if (sp.getLong(KEY_LAST_TS, 0L) == ts) return; // duplicate delivery
         sp.edit().putLong(KEY_LAST_TS, ts).apply();
-      }
-
-      // App in the foreground → MainActivity.onResume set muted=true and the
-      // JS listener is announcing it in-app. Never speak twice.
-      try {
-        SharedPreferences mute = getSharedPreferences(MUTE_PREFS, Context.MODE_PRIVATE);
-        if (mute.getBoolean(MUTE_KEY, false)) return;
-      } catch (Exception ignored) {
       }
 
       String title = d.get("title");
