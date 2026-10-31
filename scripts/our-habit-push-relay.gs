@@ -7,9 +7,16 @@
  *   { "secret": "<the same SECRET as below>", "messages": [ FCMv1Message, ... ] }
  *
  * each FCMv1Message is forwarded to FCM HTTP v1 (messages:send) signed with
- * the service account. v5.5 update broadcasts arrive as DATA-ONLY messages
- * (no `notification` block) — forward them EXACTLY as received, do NOT add
- * or require a notification block, or the closed-app voice announcement dies.
+ * the service account — EXACTLY as received (notification+data, data-only,
+ * any shape). v5.6 update broadcasts arrive as TWO messages per phone:
+ *   📢 notification+data — the system tray shows it on EVERY app version
+ *      (old 5.2–5.5 phones included; they have no PushSpeakService, so a
+ *      data-only update was invisible to them),
+ *   🗣 data-only — v5.6+ phones speak the name-call on arrival.
+ * Forward both as-is; add nothing, require nothing.
+ *
+ * (Deployed relays do NOT need re-deployment for v5.6 — this file only
+ *  documents the protocol; the app builds both message shapes itself.)
  *
  * Setup:
  *   1. Firebase Console → Project settings → Service accounts → Generate new
