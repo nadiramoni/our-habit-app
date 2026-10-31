@@ -137,6 +137,17 @@ function mergeSettings(saved: Partial<AppSettings> | undefined, base: AppSetting
       maghrib: { ...base.adhanAlerts.maghrib, ...(saved.adhanAlerts?.maghrib || {}) },
       isha: { ...base.adhanAlerts.isha, ...(saved.adhanAlerts?.isha || {}) },
     },
+    // v5.5: per-key merge so installs saved before মসজিদে যাওয়ার জন্য get the
+    // full default shape (all OFF, editable times)
+    mosquePrayers: {
+      ...base.mosquePrayers,
+      ...(saved.mosquePrayers || {}),
+      fajr: { ...base.mosquePrayers!.fajr, ...(saved.mosquePrayers?.fajr || {}) },
+      dhuhr: { ...base.mosquePrayers!.dhuhr, ...(saved.mosquePrayers?.dhuhr || {}) },
+      asr: { ...base.mosquePrayers!.asr, ...(saved.mosquePrayers?.asr || {}) },
+      maghrib: { ...base.mosquePrayers!.maghrib, ...(saved.mosquePrayers?.maghrib || {}) },
+      isha: { ...base.mosquePrayers!.isha, ...(saved.mosquePrayers?.isha || {}) },
+    },
   };
 }
 
@@ -482,6 +493,21 @@ export function checkReminders(
     const fireAt = pk === "maghrib" ? shiftTime(cfg.time, 3) : cfg.time;
     if (hm === fireAt && !already(`adhan_${pk}`)) {
       alarm(`adhan_${pk}`, t("appName"), t("adhanMsg"));
+    }
+  }
+  // v5.5 মসজিদে যাওয়ার জন্য — the owner's MANUAL jamat times fire exactly at
+  // the chosen minute (no +N offsets). The APK schedules the same alarms in
+  // the exact engine (page.tsx) with the name-call, so they ring + SPEAK even
+  // with the app closed. Boy → "মসজিদে যাও" · girl → "নামাজ পড়ো".
+  for (const pk of prayerKeys) {
+    const mc = s.mosquePrayers?.[pk];
+    if (mc?.on && hm === mc.time && !already(`mosque_${pk}`)) {
+      const girl = s.gender === "female";
+      alarm(
+        `mosque_${pk}`,
+        `🕌 ${t("mosqueFire")} — ${t(`prayer_${pk}`)}`,
+        girl ? t("mosqueBodyGirl") : t("mosqueBodyBoy")
+      );
     }
   }
   // meal alarms — direct music alarm (breakfast / lunch / dinner)

@@ -45,6 +45,8 @@ export default function SettingsTab() {
   const [fName, setFName] = useState("");
   const [lName, setLName] = useState("");
   const [nameSaved, setNameSaved] = useState(false);
+  // v5.4: ছেলে/মেয়ে সিলেক্ট — saved flash
+  const [genderSaved, setGenderSaved] = useState(false);
   const [locBusy, setLocBusy] = useState(false);
   const [fullScreenPerm, setFullScreenPerm] = useState<boolean | null>(null);
 
@@ -195,6 +197,37 @@ export default function SettingsTab() {
                 {nameSaved ? <span className="text-[11px] font-bold text-primary">✓ {t("nameSavedOk")}</span> : null}
               </div>
             )}
+
+            {/* v5.4: ছেলে/মেয়ে সিলেক্ট (owner: "প্রোফাইলে ছেলে সিলেক্ট করা যেত") —
+                পুরনো ফোনে যেটা ছিল সেটাই ফিরিয়ে আনা হলো */}
+            <div className="mt-3 rounded-xl bg-background/60 border border-border p-3">
+              <div className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">{t("pfGender")}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5 mb-2">{t("pfGenderSub")}</div>
+              <div className="grid grid-cols-2 gap-2">
+                {(
+                  [
+                    ["male", `👦 ${t("pfGenderMale")}`],
+                    ["female", `👧 ${t("pfGenderFemale")}`],
+                  ] as const
+                ).map(([val, label]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => {
+                      updateSettings({ gender: val });
+                      setGenderSaved(true);
+                      setTimeout(() => setGenderSaved(false), 2000);
+                    }}
+                    className={`rounded-xl border text-xs font-bold py-2.5 min-h-[44px] transition-colors ${
+                      s.gender === val ? "border-primary bg-primary/15 text-primary" : "border-border bg-secondary/60"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {genderSaved ? <div className="text-[11px] font-bold text-primary mt-1.5">✓ {t("pfGenderSaved")}</div> : null}
+            </div>
 
             {/* round-5: points LIVE here now (moved off the home header) */}
             <div className="mt-3 rounded-xl bg-background/60 border border-border px-3 py-2.5 flex items-center justify-between gap-2">

@@ -1733,6 +1733,65 @@ function AlarmsCard() {
         ))}
       </Card>
 
+      {/* ---------- v5.5: মসজিদে যাওয়ার জন্য (owner: "এটা আলাদা একটা লেআউটে
+          রাখবা... ফজরেরটা, জোহরের, আসরের, মাগরিব, ইশা — আমি নিজে মেনুয়ালে
+          সিলেক্ট করব") — FIVE manual jamat times; at the set minute the exact
+          alarm rings and the phone CALLS by name (boy → মসজিদে যাও · girl →
+          নামাজ পড়ো, from the profile's ছেলে/মেয়ে pick) ---------- */}
+      <Card className="mb-4 border-emerald-600/30 bg-gradient-to-br from-emerald-600/5 to-transparent">
+        <SectionTitle title={`🕌 ${t("mosqueTitle")}`} sub={t("mosqueSub")} />
+        {s.gender === "male" || s.gender === "female" ? (
+          <div className="rounded-xl bg-emerald-600/10 border border-emerald-600/25 px-3 py-2 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 mb-2">
+            {t("mosqueNote")}
+          </div>
+        ) : (
+          <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-[11px] font-semibold text-amber-700 dark:text-amber-300 mb-2">
+            ⚠️ {t("mosqueNeedGender")}
+          </div>
+        )}
+        {PRAYER_KEYS.map((k) => {
+          const mc = s.mosquePrayers?.[k] || { on: false, time: "05:30" };
+          const setMc = (patch: Partial<{ on: boolean; time: string }>) => {
+            const base = s.mosquePrayers || {
+              fajr: { on: false, time: "05:30" },
+              dhuhr: { on: false, time: "13:30" },
+              asr: { on: false, time: "17:00" },
+              maghrib: { on: false, time: "18:15" },
+              isha: { on: false, time: "19:45" },
+            };
+            updateSettings({ mosquePrayers: { ...base, [k]: { ...mc, ...patch } } });
+          };
+          return (
+            <div key={k} className="flex items-center justify-between gap-3 py-2 border-t border-border first:border-0">
+              <span className="text-sm font-medium">🕌 {t(`prayer_${k}`)}</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="time"
+                  value={mc.time}
+                  onChange={(e) => setMc({ time: e.target.value })}
+                  className="bg-muted rounded-lg px-2 py-1.5 text-sm border border-border outline-none focus:ring-1 focus:ring-ring"
+                />
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={mc.on}
+                  onClick={() => {
+                    confirm.show(!mc.on, t(`prayer_${k}`), mc.time);
+                    setMc({ on: !mc.on });
+                  }}
+                  className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${mc.on ? "bg-primary" : "bg-muted border border-border"}`}
+                >
+                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${mc.on ? "left-[22px]" : "left-0.5"}`} />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+        <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">
+          ⏰ {t("mosqueSub")}
+        </p>
+      </Card>
+
       {/* ---------- v2.4 WATER ALARM (owner round-6 #1: নির্দিষ্ট সময় পরপর
           পানির নোটিফিকেশন — My Habito স্টাইল, ✓ Drink / 💤 Later বাটনসহ) ---------- */}
       <Card className="mb-4 border-sky-500/30 bg-gradient-to-br from-sky-500/5 to-transparent">

@@ -137,4 +137,48 @@
 //           (Bangladesh format) on every time display, and the GitHub Pages
 //           panel + /admin website are GONE — the in-app panel (long-press
 //           3s → PIN) is now the ONLY admin world.
-export const APP_VERSION = "5.3.0";
+// v5.4.0 — owner round-15 (2026-10-31): (1) FRIENDS REMOVE WIPE BUG FIXED —
+//           removing ONE friend erased EVERY friend (the panel passed a stub
+//           profile with an empty friends[] and removeFriend wrote it back);
+//           both sides are now re-read FRESH from Firestore and exactly ONE
+//           uid is removed (addFriendByCode got the same hardening);
+//           (2) ADMIN PANEL: the 📊 স্ট্যাটাস / ⚙️ সেটিংস two-tab layout is
+//           BACK (it was lost in an earlier file paste) — stat tiles (মোট/
+//           গুগল/ইমেইল/ব্যান/আজ সক্রিয়/এখন অনলাইন), the 3 account boxes and
+//           EVERY user's 🔑 INVITE CODE next to their name (tap = copy), plus
+//           per-user আজকের ভিডিও + নামাজ/পানি/যিকির/স্ট্রিক/পয়েন্ট ticks read
+//           from backups in ONE query (fbListUserDays); settings tab keeps
+//           ALL the extra cards (sys diag, ads, firebase, push, update, PIN);
+//           (3) UPDATE PUSH GOES OUT WITH EACH USER'S OWN NAME + VOICE —
+//           "আনোয়ারুল সন সাকিব, অ্যাপসে নতুন আপডেট চলে এসেছে…" per-phone via
+//           a new per-token FCM path (deliverMany), and the receiving phone
+//           SPEAKS it (foreground receipt, notification tap, or first open —
+//           once per version via UpdateBar);
+//           (4) NAMED REMINDERS RESTORED FOR FRESH INSTALLS — alarms now
+//           fall back to the registered ACCOUNT name when settings.name is
+//           empty (a fresh APK used to lose the voice completely);
+//           (5) প্রোফাইলে ছেলে/মেয়ে সিলেক্ট is BACK (Settings → Profile).
+// v5.5.0 — owner round-16 (2026-10-31): (1) THE UPDATE ANNOUNCEMENT NOW
+//           SPEAKS THE MOMENT IT ARRIVES — a new native PushSpeakService
+//           (FirebaseMessagingService) receives the update broadcast as a
+//           DATA message even when the app is CLOSED, posts the notification
+//           AND the phone immediately CALLS the user by name: "নাদিরা মনি,
+//           অ্যাপসে নতুন আপডেট চলে এসেছে। দয়া করে অ্যাপটা আপডেট করে নিন।"
+//           (owner: "নোটিফিকেশন যাবে, সাথে সাথে পড়ে শোনাবে — অ্যাপসের ভিতর
+//           ঢুকে পড়ে শোনাতে হবে না")। The broadcast therefore goes DATA-ONLY
+//           so onMessageReceived fires with the app killed; foreground phones
+//           keep the JS path (no double voice — MainActivity's mute flag is
+//           the source of truth); ts-based dedup kills every double.
+//           (2) NEW FEATURE "মসজিদে যাওয়ার জন্য" — a separate layout in
+//           Alarm & Reminder with FIVE MANUAL prayer times (ফজর/যোহর/আসর/
+//           মাগরিব/ইশা) the owner sets himself; at each set time the alarm
+//           rings and the phone calls by name — boy: "নামাজের সময় হইছে,
+//           মসজিদে যাও" / girl: "নামাজের সময় হইছে, নামাজ পড়ো" (gender from
+//           the restored ছেলে/মেয়ে profile pick; changing gender re-syncs).
+//           (3) NO azan+15-minute namaz reminder exists anywhere (verified
+//           line by line) — the azan alerts stay exact waqt times; the only
+//           15-minute shifts are the MEAL pre-alerts (food, not namaz).
+//           (4) scripts/our-habit-push-relay.gs — the relay reference file
+//           ships in the repo so the deployed Apps Script can be re-pasted
+//           any time without losing the protocol.
+export const APP_VERSION = "5.5.0";

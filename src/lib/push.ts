@@ -48,7 +48,7 @@
  */
 
 import type { ServerCfg } from "./types";
-import { isNative } from "./native";
+import { isNative, nativeSpeakOnce } from "./native";
 import { fbSavePushToken, fbGetPushToken, fbListUsers, fetchRemoteMeta, FbProfile } from "./cloud";
 import { CapacitorHttp } from "@capacitor/core";
 
@@ -142,6 +142,13 @@ interface PushMsg {
   data: AnyRec;
 }
 
+/** v5.4: one (token, message) pair — the update broadcast is PERSONALIZED
+ * (each phone gets its OWN name), so tokens no longer share one shape. */
+interface TokenMsg {
+  token: string;
+  m: PushMsg;
+}
+
 /**
  * 🛡 METHOD 1: send through the owner's Apps Script relay (scripts/
  * our-habit-push-relay.gs). The relay signs with the service account and
@@ -154,7 +161,7 @@ async function sendViaRelay(
   tokens: string[],
   m: PushMsg
 ): Promise<FcmResult> {
-  const messages = tokens.map((t) => ({
+  const fcm = tokens.map((t) => ({
     token: t,
     notification: { title: m.title, body: m.body },
     android: {
@@ -163,10 +170,19 @@ async function sendViaRelay(
     },
     data: m.data, // v1 requires string values — all our data fields are strings
   }));
+  return sendRelayFcm(relay, fcm, tokens.length);
+}
+
+/** v5.4 core: POST pre-built FCM v1 messages to the relay in chunks of 100. */
+async function sendRelayFcm(
+  relay: { url: string; secret: string },
+  fcm: AnyRec[],
+  total: number
+): Promise<FcmResult> {
   let sent = 0;
   let firstError = "";
-  for (let i = 0; i < messages.length; i += 100) {
-    const chunk = messages.slice(i, i + 100);
+  for (let i = 0; i < fcm.length; i += 100) {
+    const chunk = fcm.slice(i, i + 100);
     const bodyStr = JSON.stringify({ secret: relay.secret, messages: chunk });
     try {
       let resp: { status: number; data: AnyRec };
@@ -191,7 +207,7 @@ async function sendViaRelay(
       if (!firstError) firstError = String(e?.message || e || "network");
     }
   }
-  return sent > 0 ? { ok: true, sent, total: tokens.length } : { ok: false, sent: 0, total: tokens.length, error: firstError || "relay_failed" };
+  return sent > 0 ? { ok: true, sent, total } : { ok: false, sent: 0, total, error: firstError || "relay_failed" };
 }
 
 /**
@@ -311,7 +327,66 @@ export async function pushChatToPartner(
   }
 }
 
-/** v5.3.0: broadcast the "new update" notification to EVERY registered phone. */
+/**
+ * v5.5: deliver a DIFFERENT message per token — the update broadcast path.
+ * DATA-ONLY payloads (no `notification` block): data messages wake the app's
+ * PushSpeakService even when the process is KILLED, so the phone posts the
+ * tray notification AND speaks the name-call the moment it lands. The tray
+ * title/body ride inside `data` (PushSpeakService renders them). Chat pushes
+ * keep their notification block — only updates need the voice-on-arrival.
+ */
+async function deliverMany(
+  pairs: TokenMsg[],
+  override?: { serverKey?: string; relayUrl?: string; relaySecret?: string }
+): Promise<FcmResult> {
+  if (!pairs.length) return { ok: false, sent: 0, total: 0, error: "no_devices" };
+  const total = pairs.length;
+  let relay: { url: string; secret: string } | null = null;
+  let key = "";
+  if (override?.relayUrl && override?.relaySecret) {
+    relay = { url: override.relayUrl, secret: override.relaySecret };
+  } else {
+    const c = await getSendCfg(null);
+    if (c.relayUrl && c.relaySecret) relay = { url: c.relayUrl, secret: c.relaySecret };
+    key = override?.serverKey || c.serverKey;
+  }
+  if (relay) {
+    // FCM HTTP v1 DATA message — no notification block on purpose
+    const fcm = pairs.map(({ token, m }) => ({
+      token,
+      android: { priority: "high" },
+      data: m.data,
+    }));
+    return sendRelayFcm(relay, fcm, total);
+  }
+  if (key) {
+    let sent = 0;
+    let err = "";
+    for (const { token, m } of pairs) {
+      // legacy DATA-ONLY too (same PushSpeakService receives it)
+      const payload: AnyRec = {
+        to: token,
+        priority: "high",
+        collapse_key: m.tag || "oh_update",
+        data: m.data,
+      };
+      const r = await sendFcmRaw(key, payload);
+      sent += r.sent;
+      if (!r.ok && !err) err = r.error || "legacy_failed";
+    }
+    return sent > 0 ? { ok: true, sent, total } : { ok: false, sent: 0, total, error: err };
+  }
+  return { ok: false, sent: 0, total, error: "no_server_key" };
+}
+
+/**
+ * v5.4: broadcast the "new update" notification — PERSONALIZED per phone
+ * (owner: "নোটিফিকেশন যাওয়ার সাথে নাম ধরে রাখবে — আলাউদ্দিন সাকিব, অ্যাপসে
+ * নতুন আপডেট চলে এসেছে, দয়া করে অ্যাপসটা আপডেট করে নিন")। Each phone gets
+ * its OWN name in the body AND a `speakText` data field — when the phone
+ * receives it (app open) or the user taps it, the app SPEAKS the name-call
+ * aloud through the TTS engine (the same voice that calls the alarms).
+ */
 export async function broadcastUpdatePush(opts: {
   version: string;
   changelog?: string;
@@ -320,23 +395,39 @@ export async function broadcastUpdatePush(opts: {
   relaySecret?: string;
 }): Promise<{ sent: number; total: number; error?: string; via?: string }> {
   try {
-    const ver = opts.version ? `v${opts.version}` : "নতুন ভার্সন";
-    const extra = opts.changelog ? ` — ${opts.changelog}` : "";
-    const body = `${ver}${extra} — অ্যাপটি আপডেট করে নতুন ফিচারগুলো উপভোগ করুন।`;
+    // v5.5: the tray body is JUST the personalized name-call (the version
+    // itself shows inside the app on the UpdateBar — cleaner notification)
     const users = (await fbListUsers(null)) as (FbProfile & { fcmToken?: string; name?: string })[];
-    const tokens = users.map((u) => String(u.fcmToken || "")).filter(Boolean);
-    if (!tokens.length) return { sent: 0, total: 0, error: "no_devices" };
-    const r = await deliverPush(
-      tokens,
-      {
-        title: "🔄 নতুন আপডেট চলে আসছে!",
-        body,
-        tag: "oh_update", // one update notification at a time in the tray
-        channelId: UPDATE_CHANNEL,
-        data: { ohUpdate: "1", version: opts.version || "", ts: String(Date.now()) },
-      },
-      { serverKey: opts.serverKey, relayUrl: opts.relayUrl, relaySecret: opts.relaySecret }
-    );
+    const pairs: TokenMsg[] = users
+      .filter((u) => String(u.fcmToken || "").trim())
+      .map((u) => {
+        const name = String(u.name || "").trim() || "বন্ধু";
+        const line = `${name}, অ্যাপসে নতুন আপডেট চলে এসেছে। দয়া করে অ্যাপটা আপডেট করে নিন।`;
+        return {
+          token: String(u.fcmToken),
+          m: {
+            title: "🔄 নতুন আপডেট চলে আসছে!",
+            body: line, // v5.5: the tray shows just the name-call (clean)
+            tag: "oh_update", // one update notification at a time in the tray
+            channelId: UPDATE_CHANNEL,
+            data: {
+              ohUpdate: "1",
+              version: opts.version || "",
+              ts: String(Date.now()),
+              speak: "1",
+              speakText: line, // PushSpeakService SPEAKS exactly this sentence
+              title: "🔄 নতুন আপডেট চলে আসছে!",
+              body: line,
+            },
+          } as PushMsg,
+        };
+      });
+    if (!pairs.length) return { sent: 0, total: 0, error: "no_devices" };
+    const r = await deliverMany(pairs, {
+      serverKey: opts.serverKey,
+      relayUrl: opts.relayUrl,
+      relaySecret: opts.relaySecret,
+    });
     const via = opts.relayUrl || (await getSendCfg(null)).relayUrl ? "relay" : "legacy";
     return { sent: r.sent, total: r.total, error: r.ok ? undefined : r.error, via };
   } catch (e: any) {
@@ -374,6 +465,31 @@ async function onToken(token: string): Promise<void> {
   }
   // persist under MY profile so friends/admin can push to this phone
   if (currentUid) void fbSavePushToken(currentUid, token);
+}
+
+/**
+ * v5.4: SPEAK the update announcement aloud — the same AlarmSpeakService
+ * voice that calls the alarms (owner: "ভয়েস ওদেরকে যাবে আরকি")। Throttle
+ * key includes the version so a NEW version always speaks again.
+ */
+async function speakUpdateAloud(text: string, version?: string, ts?: string): Promise<void> {
+  try {
+    if (!isNative() || !text.trim()) return;
+    // v5.5 DEDUP: PushSpeakService already spoke this exact broadcast when it
+    // arrived (app closed). The ts check makes a replayed delivery (or the
+    // notification tap) a silent no-op instead of a second name-call.
+    try {
+      const key = `oh_upd_spoken_${String(ts || "")}`;
+      if (ts && localStorage.getItem(key)) return;
+      if (ts) localStorage.setItem(key, "1");
+    } catch {
+      /* ignore */
+    }
+    const key = `upd_${String(version || "x").replace(/[^a-zA-Z0-9]/g, "")}_${Math.floor(Date.now() / 60000)}`;
+    await nativeSpeakOnce(key, text, "bn", 0);
+  } catch {
+    /* voice is best-effort — the notification itself already shows the name */
+  }
 }
 
 /**
@@ -444,11 +560,15 @@ export function initPush(uid: string, cfg?: Partial<ServerCfg> | null): void {
           });
           // foreground: system does NOT display these — the app decides.
           // chat → the in-app popup (ChatWatchdog) already fired; update →
-          // pull the fresh cfg so the UpdateBar appears immediately.
+          // pull the fresh cfg so the UpdateBar appears immediately AND
+          // v5.4: SPEAK the personalized name-call aloud right away.
           await PushNotifications.addListener("pushNotificationReceived", (n: AnyRec) => {
             try {
               const d = n?.data || {};
-              if (d.ohUpdate) window.dispatchEvent(new Event("oh:refresh-cfg"));
+              if (d.ohUpdate) {
+                window.dispatchEvent(new Event("oh:refresh-cfg"));
+                if (d.speak && d.speakText) void speakUpdateAloud(String(d.speakText), d.version, String(d.ts || ""));
+              }
             } catch {
               /* ignore */
             }
@@ -478,6 +598,10 @@ export function initPush(uid: string, cfg?: Partial<ServerCfg> | null): void {
                   /* ignore */
                 }
                 window.dispatchEvent(new Event("oh:refresh-cfg"));
+                // v5.4: the phone was CALLED by name in the notification —
+                // say it aloud too; v5.5: skipped when PushSpeakService
+                // already spoke on arrival (same ts)
+                if (d.speak && d.speakText) void speakUpdateAloud(String(d.speakText), d.version, String(d.ts || ""));
               }
             } catch {
               /* ignore */

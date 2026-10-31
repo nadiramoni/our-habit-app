@@ -716,6 +716,33 @@ export async function fbListUsers(
 }
 
 /**
+ * v5.4 ADMIN STATUS TAB: today's DaySummary for EVERY user, in ONE query —
+ * getDocs over `backups` (each doc: { days: { 'YYYY-MM-DD': DaySummary } }).
+ * The owner's status tab shows নামাজ/পানি/যিকির/ভিডিও/পয়েন্ট per user exactly
+ * like the old tabbed panel did. Rules allow the backups collection (v3.3+).
+ */
+export async function fbListUserDays(
+  date: string,
+  serverCfg?: Partial<ServerCfg> | null
+): Promise<Record<string, DaySummary>> {
+  const st = await ensureFirebase(serverCfg);
+  if (!st.configured) return {};
+  try {
+    const { collection, getDocs } = await import("firebase/firestore");
+    const snap = await getDocs(collection(fsDb!, "backups"));
+    const out: Record<string, DaySummary> = {};
+    snap.forEach((d) => {
+      const days = (d.data() as { days?: Record<string, DaySummary> }).days || {};
+      const s = days[date];
+      if (s) out[d.id] = s;
+    });
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/**
  * The state the background OhKeepAliveService listener page needs — the MAIN
  * app writes it to localStorage (same https://localhost origin → the headless
  * WebView reads it): firebase config + signed-in uid + every pair to listen
@@ -1094,9 +1121,16 @@ export async function addFriendByCode(me: FbProfile, code: string, serverCfg?: P
     if ((me.friends || []).some((f) => f.uid === other.uid)) return { ok: false, error: "friendExists" };
     const mineRef = doc(fsDb!, "usersIndex", me.uid);
     const theirRef = doc(fsDb!, "usersIndex", other.uid);
-    await setDoc(mineRef, { friends: [...(me.friends || []), { uid: other.uid, name: other.name, email: other.email }] }, { merge: true });
+    // v5.4 FIX (same wipe-bug family as removeFriend): the caller's local
+    // friends copy can be STALE — writing it back erased newer friends.
+    // Read BOTH docs FRESH, then append exactly ONE entry per side.
+    const mineSnap = await getDoc(mineRef);
+    const mineFresh = mineSnap.exists() ? (mineSnap.data() as FbProfile) : me;
+    if ((mineFresh.friends || []).some((f) => f.uid === other.uid)) return { ok: false, error: "friendExists" };
+    await setDoc(mineRef, { friends: [...(mineFresh.friends || []), { uid: other.uid, name: other.name, email: other.email }] }, { merge: true });
     const theirSnap = await getDoc(theirRef);
     const their = theirSnap.exists() ? (theirSnap.data() as FbProfile) : { ...other, friends: [] };
+    if ((their.friends || []).some((f) => f.uid === me.uid)) return { ok: true }; // already paired on their side — done
     await setDoc(theirRef, { friends: [...(their.friends || []), { uid: me.uid, name: me.name, email: me.email }] }, { merge: true });
     return { ok: true };
   } catch {
@@ -1109,13 +1143,21 @@ export async function removeFriend(me: FbProfile, friendUid: string, serverCfg?:
   if (!st.configured) return;
   try {
     const { doc, getDoc, setDoc } = await import("firebase/firestore");
+    // v5.4 ROOT-CAUSE FIX (owner: "MD Yasin বাদ দিলে পুরাই বাদ হয়ে যায়"):
+    // the caller (PartnerCard) passes a STUB profile whose friends[] is EMPTY
+    // — writing that back with merge wiped EVERY friend at once. Now both
+    // sides are re-read FRESH from Firestore and exactly ONE uid is removed.
     const mineRef = doc(fsDb!, "usersIndex", me.uid);
-    await setDoc(mineRef, { friends: (me.friends || []).filter((f) => f.uid !== friendUid) }, { merge: true });
     const theirRef = doc(fsDb!, "usersIndex", friendUid);
+    const mineSnap = await getDoc(mineRef);
+    if (mineSnap.exists()) {
+      const cur = (mineSnap.data() as FbProfile).friends || [];
+      await setDoc(mineRef, { friends: cur.filter((f) => f.uid !== friendUid) }, { merge: true });
+    }
     const theirSnap = await getDoc(theirRef);
     if (theirSnap.exists()) {
-      const their = theirSnap.data() as FbProfile;
-      await setDoc(theirRef, { friends: (their.friends || []).filter((f) => f.uid !== me.uid) }, { merge: true });
+      const their = (theirSnap.data() as FbProfile).friends || [];
+      await setDoc(theirRef, { friends: their.filter((f) => f.uid !== me.uid) }, { merge: true });
     }
   } catch {
     /* ignore */

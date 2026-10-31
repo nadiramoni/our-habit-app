@@ -19,7 +19,7 @@ import { getLog, todayStr } from "@/lib/types";
 import { pushDay, ensureProfile, fbIsBanned, fbSignOut, fbTouchLastAt, DaySummary } from "@/lib/cloud";
 import { APP_VERSION } from "@/lib/version";
 import { warmAudio, playChime } from "@/lib/audio";
-import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm, AlarmSyncResult, nativeScheduleExactAlarms, nativeCancelExactAlarms, nativeExactPending, nativeConsumeAlarmLaunch, ExactAlarmSpec } from "@/lib/native";
+import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm, AlarmSyncResult, nativeScheduleExactAlarms, nativeCancelExactAlarms, nativeExactPending, nativeConsumeAlarmLaunch, nativeSpeakOnce, ExactAlarmSpec } from "@/lib/native";
 import { waterAlarmTimes, shiftTime, randomMealMusic, PRAYER_KEYS, dateAtHM, addDays } from "@/lib/types";
 import { makeT } from "@/lib/i18n";
 
@@ -88,11 +88,28 @@ function versionGt(a: string, b: string): boolean {
 
 function UpdateBar() {
   const { cfg, loaded } = useServerCfg();
-  const { t } = useStore();
+  const { t, state } = useStore();
   const [dismissed, setDismissed] = useState(false);
   const [busy, setBusy] = useState(false);
-  if (!loaded || dismissed) return null;
   const hasUpdate = Boolean(cfg.latestVersion) && versionGt(cfg.latestVersion, APP_VERSION);
+  // v5.4 NAME-CALL ON OPEN (owner: "আপডেটের সাথে সাথে ওইটাও করে দিবা"):
+  // when the update bar first appears (fresh cfg / cold boot), the phone
+  // SPEAKS the user's name + the update line — once per version. Covers the
+  // case where the push arrived while the app was fully closed (no JS ran).
+  useEffect(() => {
+    if (!loaded || !hasUpdate || !isNative()) return;
+    try {
+      const v = cfg.latestVersion;
+      const KEY = `oh_upd_spoken_${String(v).replace(/[^a-zA-Z0-9]/g, "")}`;
+      if (localStorage.getItem(KEY)) return;
+      localStorage.setItem(KEY, "1");
+      const myName = ((state.settings.name || state.account?.name || "") as string).trim() || "বন্ধু";
+      void nativeSpeakOnce(`updbar_${String(v).replace(/[^a-zA-Z0-9]/g, "")}`, `${myName}, অ্যাপসে নতুন আপডেট চলে এসেছে। দয়া করে অ্যাপটা আপডেট করে নিন।`, "bn", 0);
+    } catch {
+      /* ignore */
+    }
+  }, [loaded, hasUpdate, cfg.latestVersion, state.settings.name, state.account?.name]);
+  if (!loaded || dismissed) return null;
   if (!hasUpdate) return null;
   const forced = cfg.forceUpdate;
 
@@ -293,6 +310,8 @@ function Shell() {
     ? JSON.stringify([
         state.settings.fajrAlarm,
         state.settings.adhanAlerts,
+        state.settings.mosquePrayers, // v5.5: মসজিদে যাওয়ার জন্য টাইম বদলালেই রি-শিডিউল
+        state.settings.gender,        // v5.5: ছেলে/মেয়ে বদলালে ডাকার কথাও বদলায়
         state.settings.mealAlarms,
         state.settings.checkinTime,
         state.settings.ayatNotif,
@@ -356,7 +375,11 @@ function Shell() {
     // AlarmSpeakService at ring time — "আনোয়ারুল সন সাকিব, তোমার পানি খাওয়ার
     // সময় হইছে…" (owner's exact request). Adhan alarms NEVER speak —
     // "আজানের ক্ষেত্রে না ভাই, আজানটা আজানি দিবে".
-    const myName = (s.settings.name || "").trim();
+    // v5.4 ROOT-CAUSE FIX (owner: "নাম ধরে ডেকে আমাকে গাইড করতেছে না"): a
+    // fresh APK install starts with an EMPTY settings.name — so every alarm
+    // lost its voice. The registered ACCOUNT name (Google/email profile) is
+    // now the fallback, exactly like the Home greeting already does.
+    const myName = ((s.settings.name || s.account?.name || "") as string).trim();
     // v5.1: স্পোকেন রিমাইন্ডার সবসময় বাংলা (owner: "ডাক বাংলায় থাকবে, নাম
     // আগের মতোই পড়ে দেবে") — the TTS text + voice are locked to Bengali
     // regardless of the UI language; the NAME stays exactly as registered
@@ -399,6 +422,28 @@ function Shell() {
           t("adhanMsg"),
           azanSound
         );
+    });
+    // ---------- v5.5: মসজিদে যাওয়ার জন্য (owner: "আমি নিজে মেনুয়ালে সিলেক্ট করব
+    // ... একটা তিরিশ বাজলে সাথে সাথে আমাকে অ্যালার্ট করবে নাম ধরে ডাকবে") —
+    // the owner's OWN mosque jamat times, no +N offset, fired at the exact
+    // minute. The spoken call follows the profile gender: boy → "মসজিদে যাও",
+    // girl → "নামাজ পড়ো" (owner: "মেয়ে হলে মসজিদে যাও বলা হবে না")।
+    (["fajr", "dhuhr", "asr", "maghrib", "isha"] as const).forEach((pk) => {
+      const mc = s.settings.mosquePrayers?.[pk];
+      if (mc?.on) {
+        const girl = s.settings.gender === "female";
+        const speakLine = myName
+          ? `${myName}, ${tBn("speakMosqueTime")} ${girl ? tBn("speakMosqueGirl") : tBn("speakMosqueBoy")}`
+          : "";
+        pushExact(
+          `mosque_${pk}`,
+          mc.time,
+          `🕌 ${tBn("mosqueFire")} — ${tBn(`prayer_${pk}`)}`,
+          girl ? tBn("mosqueBodyGirl") : tBn("mosqueBodyBoy"),
+          "alarm.wav",
+          speakLine
+        );
+      }
     });
     // meals: the phone CALLS the user by name, then the owner's music rings
     (["breakfast", "lunch", "dinner"] as const).forEach((mk) => {

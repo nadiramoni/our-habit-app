@@ -4,9 +4,9 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useStore } from "@/lib/store";
 import { useServerCfg } from "@/lib/cfg";
 import { Card, SectionTitle, ToggleRow } from "@/components/ui-bits";
-import { AtCfg, AtZone, ServerCfg } from "@/lib/types";
+import { AtCfg, AtZone, ServerCfg, PRAYER_KEYS } from "@/lib/types";
 import { extractScriptUrl } from "@/components/AdsBanner";
-import { mirrorMeta, readRawMeta, writeRawMeta, fbListUsers, FbProfile } from "@/lib/cloud";
+import { mirrorMeta, readRawMeta, writeRawMeta, fbListUsers, fbListUserDays, FbProfile, DaySummary } from "@/lib/cloud";
 import { isNative, nativeChatServiceRunning, nativeNotifPermission, nativeRequestNotifications, nativeRequestBatteryExemption, nativePermissionStatus, nativeRealTestNotification, nativeOpenNotificationSettings } from "@/lib/native";
 import { fmtClock } from "@/lib/i18n";
 import { APP_VERSION } from "@/lib/version";
@@ -345,6 +345,77 @@ function clsOf(u: FbProfile): "google" | "mail" | "unknown" {
   return String(u.provider || "").toLowerCase().includes("google") ? "google" : "mail";
 }
 
+/** v5.4: local midnight — for the "আজ সক্রিয়" stat tile. */
+function startOfToday(): number {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/**
+ * v5.4 STATUS TAB — one user card: online dot, name, 🆕 INVITE CODE chip
+ * (tap = copy — owner: "নামের পরে দিয়ে ওই কোডটা যাতে দেখা যায়"), ban tag,
+ * email, last seen, friends, today's video + today's task ticks.
+ */
+function AdminUserCard({
+  u,
+  day,
+  copied,
+  onCopy,
+}: {
+  u: FbProfile & { lastAt?: number; banned?: boolean };
+  day?: DaySummary;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  const { t } = useStore();
+  const online = Boolean(u.lastAt && Date.now() - u.lastAt < 120_000);
+  const prayers = day?.prayers || {};
+  const done = PRAYER_KEYS.filter((k) => prayers[k]).length;
+  const reels = day?.reelsMin || 0;
+  const friends = (u.friends || []).map((f) => f.name).filter(Boolean);
+  return (
+    <div className="rounded-lg bg-card border border-border px-2.5 py-2 text-[11px]">
+      <div className="flex items-center gap-1.5">
+        <span className={online ? "text-green-600 dark:text-green-400" : "text-red-500"}>●</span>
+        <span className="font-bold truncate">{u.name || "—"}</span>
+        {/* v5.4: the INVITE CODE chip — tap to copy */}
+        {u.inviteCode ? (
+          <button
+            type="button"
+            onClick={onCopy}
+            className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[9px] font-extrabold tracking-[0.15em] transition-colors ${
+              copied ? "border-primary bg-primary/15 text-primary" : "border-border bg-secondary/70 text-muted-foreground"
+            }`}
+            title={t("inviteCopyOk")}
+          >
+            🔑 {copied ? "✓" : u.inviteCode}
+          </button>
+        ) : null}
+        {u.banned ? <span className="ml-auto shrink-0 text-[9px] font-bold text-destructive border border-destructive/40 rounded px-1">{t("bannedTag")}</span> : null}
+      </div>
+      <div className="text-muted-foreground truncate">{u.email || t("acctUnknownSub")}</div>
+      <div className="text-muted-foreground">
+        {t("lastSeen")}: {u.lastAt ? fmtClock(u.lastAt) : "—"}
+        {u.provider ? ` · ${u.provider}` : ""}
+      </div>
+      {friends.length ? <div className="text-muted-foreground truncate">👥 {t("stFriends")}: {friends.join(", ")}</div> : null}
+      {day ? (
+        <div className="mt-1 pt-1 border-t border-border">
+          <div className="text-muted-foreground">
+            🎬 {t("stTodayVideo")}: {reels ? `${reels} ${t("stVideoMin")}` : t("stVideoNone")}
+          </div>
+          <div className="text-muted-foreground">
+            {t("stTodayTasks")}: 🕌 {done}/৫ · 💧 {day.waterMl || 0} মিলি · 📿 {day.dhikrTotal || 0} · 🔥 {day.streak || 0} · ⭐ {day.points || 0}
+          </div>
+        </div>
+      ) : (
+        <div className="text-[10px] text-muted-foreground/70 mt-1">{t("stNoDayData")}</div>
+      )}
+    </div>
+  );
+}
+
 function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
   const { t, state } = useStore();
   const { cfg, loaded, refresh } = useServerCfg();
@@ -366,6 +437,13 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
   // v5.3.0: the update-broadcast box (📢) state
   const [castBusy, setCastBusy] = useState(false);
   const [castMsg, setCastMsg] = useState("");
+  // v5.4: the 📊 স্ট্যাটাস / ⚙️ সেটিংস tabs (restored — owner: "আগে দুইটা ভাগ ছিল")
+  const [tab, setTab] = useState<"stat" | "set">("stat");
+  // v5.4: today's DaySummary per uid (ONE Firestore query) — powers the
+  // per-user নামাজ/পানি/ভিডিও/পয়েন্ট ticks in the status tab
+  const [days, setDays] = useState<Record<string, DaySummary>>({});
+  // v5.4: which user's invite code was just copied
+  const [copiedUid, setCopiedUid] = useState("");
 
   const runDiag = useCallback(async () => {
     setHbAt(Number(localStorage.getItem("oh_listener_hb") || 0));
@@ -385,6 +463,8 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
   const loadAll = useCallback(async () => {
     void refresh();
     void fbListUsers().then(setUsers);
+    // v5.4: today's per-user summaries for the status tab (single query)
+    void fbListUserDays(new Date().toISOString().slice(0, 10)).then(setDays);
     void runDiag();
   }, [refresh, runDiag]);
 
@@ -553,6 +633,111 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
           </button>
         </div>
 
+        {/* v5.4: 📊 স্ট্যাটাস / ⚙️ সেটিংস — the owner's two-tab layout, restored
+            (owner: "আগে কিন্তু তোমার ছিল দুইটা ভাগ — স্ট্যাটাস আর সেটিংস") */}
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          <button
+            type="button"
+            onClick={() => setTab("stat")}
+            className={`rounded-2xl border text-sm font-extrabold py-3 min-h-[48px] transition-colors ${
+              tab === "stat" ? "border-primary bg-primary text-primary-foreground" : "border-border bg-secondary/60"
+            }`}
+          >
+            📊 {t("admTabStat")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("set")}
+            className={`rounded-2xl border text-sm font-extrabold py-3 min-h-[48px] transition-colors ${
+              tab === "set" ? "border-primary bg-primary text-primary-foreground" : "border-border bg-secondary/60"
+            }`}
+          >
+            ⚙️ {t("admTabSet")}
+          </button>
+        </div>
+
+        {tab === "stat" ? (
+          <>
+            {/* ---------- v5.4: 📊 স্ট্যাটাস — সব ব্যবহারকারীর হিসাব + ইনভাইট কোড ---------- */}
+            <Card className="mb-4">
+              <SectionTitle title={`👥 ${t("stAllTitle")}`} sub={t("stAllSub")} />
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                {[
+                  { n: users === null ? undefined : users.length, label: t("stTotalAcct"), cls: "text-green-600 dark:text-green-400" },
+                  { n: users?.filter((u) => clsOf(u) === "google").length, label: t("stGoogleAcct"), cls: "text-blue-600 dark:text-blue-400" },
+                  { n: users?.filter((u) => clsOf(u) === "mail").length, label: t("stMailAcct"), cls: "text-amber-600 dark:text-amber-400" },
+                  { n: users?.filter((u) => u.banned).length, label: t("stBannedAcct"), cls: "text-destructive" },
+                  { n: users?.filter((u) => (u.lastAt || 0) >= startOfToday()).length, label: t("stTodayActive"), cls: "text-primary" },
+                  { n: users?.filter((u) => (u.lastAt || 0) > Date.now() - 120_000).length, label: t("stOnlineNow"), cls: "text-green-600 dark:text-green-400" },
+                ].map((c, i) => (
+                  <div key={i} className="rounded-xl border border-border bg-secondary/60 p-2.5 text-center">
+                    <div className={`text-xl font-extrabold ${c.cls}`}>{c.n === undefined ? "…" : c.n}</div>
+                    <div className="text-[9px] text-muted-foreground leading-tight mt-0.5">{c.label}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="text-[10px] text-muted-foreground leading-relaxed mb-3">{t("stLegend")} · v{APP_VERSION}</div>
+              <button
+                type="button"
+                onClick={() => void loadAll()}
+                className="w-full rounded-xl bg-primary text-primary-foreground text-sm font-bold py-3 min-h-[48px] mb-3"
+              >
+                🔄 {t("stRefresh")}
+              </button>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                {(
+                  [
+                    { id: "google", icon: "🔵", title: t("acctGoogle"), n: users?.filter((u) => clsOf(u) === "google").length },
+                    { id: "mail", icon: "✉️", title: t("acctMail"), n: users?.filter((u) => clsOf(u) === "mail").length },
+                    { id: "unknown", icon: "❓", title: t("acctUnknown"), n: users?.filter((u) => clsOf(u) === "unknown").length },
+                  ] as const
+                ).map((b) => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => setBox(box === b.id ? "" : (b.id as typeof box))}
+                    className={`rounded-xl border p-2.5 text-center transition-colors ${
+                      box === b.id ? "border-primary bg-primary/15" : "border-border bg-secondary/60"
+                    }`}
+                  >
+                    <div className="text-lg leading-none mb-1">{b.icon}</div>
+                    <div className="text-xs font-bold">{b.title}</div>
+                    <div className="text-sm font-extrabold text-primary">{b.n === undefined ? "…" : b.n}</div>
+                  </button>
+                ))}
+              </div>
+              {box ? (
+                <div className="rounded-xl border border-border bg-secondary/40 p-2 flex flex-col gap-1.5">
+                  {(users || [])
+                    .filter((u) => clsOf(u) === box)
+                    .slice(0, 100)
+                    .map((u) => (
+                      <AdminUserCard
+                        key={u.uid}
+                        u={u}
+                        day={days[u.uid]}
+                        copied={copiedUid === u.uid}
+                        onCopy={() => {
+                          try {
+                            void navigator.clipboard.writeText(u.inviteCode || "");
+                            setCopiedUid(u.uid);
+                            setTimeout(() => setCopiedUid(""), 1600);
+                          } catch {
+                            /* clipboard blocked */
+                          }
+                        }}
+                      />
+                    ))}
+                  {users !== null && users.filter((u) => clsOf(u) === box).length === 0 ? (
+                    <div className="text-[11px] text-muted-foreground text-center py-2">{t("acctNoneHere")}</div>
+                  ) : null}
+                </div>
+              ) : null}
+            </Card>
+          </>
+        ) : (
+          <>
+
         {/* ---- v5.1: 🩺 System status — the notification truth ---- */}
         <Card className="mb-4">
           <SectionTitle title={`🩺 ${t("sysTitle")}`} sub={t("sysSub")} />
@@ -615,72 +800,6 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
             {t("testNotif")}
           </button>
           {testMsg ? <div className="text-[10px] text-muted-foreground mt-1.5 text-center leading-relaxed">{testMsg}</div> : null}
-        </Card>
-
-        {/* ---- v5.1: 👥 Refresh Now + the 3 account boxes ---- */}
-        <Card className="mb-4">
-          <SectionTitle title={`👥 ${t("accountsTitle")}`} sub={t("accountsSub")} />
-          <button
-            type="button"
-            onClick={() => void loadAll()}
-            className="w-full rounded-xl bg-primary text-primary-foreground text-sm font-bold py-3 min-h-[48px] mb-1"
-          >
-            🔄 {t("refreshNow")}
-          </button>
-          <div className="text-[10px] text-muted-foreground text-center mb-3">{t("refreshNowSub")}</div>
-          <div className="grid grid-cols-3 gap-2 mb-3">
-            {(
-              [
-                { id: "google", icon: "📧", title: t("acctGoogle"), sub: t("acctGoogleSub"), n: users?.filter((u) => clsOf(u) === "google").length },
-                { id: "mail", icon: "✉️", title: t("acctMail"), sub: t("acctMailSub"), n: users?.filter((u) => clsOf(u) === "mail").length },
-                { id: "unknown", icon: "👤", title: t("acctUnknown"), sub: t("acctUnknownSub"), n: users?.filter((u) => clsOf(u) === "unknown").length },
-              ] as const
-            ).map((b) => (
-              <button
-                key={b.id}
-                type="button"
-                onClick={() => setBox(box === b.id ? "" : (b.id as typeof box))}
-                className={`rounded-xl border p-2.5 text-center transition-colors ${
-                  box === b.id ? "border-primary bg-primary/15" : "border-border bg-secondary/60"
-                }`}
-              >
-                <div className="text-lg leading-none mb-1">{b.icon}</div>
-                <div className="text-xs font-bold">{b.title}</div>
-                <div className="text-[9px] text-muted-foreground leading-tight mb-1">{b.sub}</div>
-                <div className="text-sm font-extrabold text-primary">{b.n === undefined ? "…" : b.n}</div>
-              </button>
-            ))}
-          </div>
-          <div className="text-[10px] text-muted-foreground mb-2">
-            {t("acctTotal")}: {users === null ? "…" : users.length}
-          </div>
-          {box ? (
-            <div className="rounded-xl border border-border bg-secondary/40 p-2 flex flex-col gap-1.5">
-              {(users || [])
-                .filter((u) => clsOf(u) === box)
-                .slice(0, 100)
-                .map((u) => {
-                  const online = Boolean(u.lastAt && Date.now() - u.lastAt < 120_000);
-                  return (
-                    <div key={u.uid} className="rounded-lg bg-card border border-border px-2.5 py-2 text-[11px]">
-                      <div className="flex items-center gap-1.5">
-                        <span className={online ? "text-green-600 dark:text-green-400" : "text-red-500"}>●</span>
-                        <span className="font-bold truncate">{u.name || "—"}</span>
-                        {u.banned ? <span className="ml-auto shrink-0 text-[9px] font-bold text-destructive border border-destructive/40 rounded px-1">{t("bannedTag")}</span> : null}
-                      </div>
-                      <div className="text-muted-foreground truncate">{u.email || t("acctUnknownSub")}</div>
-                      <div className="text-muted-foreground">
-                        {t("lastSeen")}: {u.lastAt ? fmtClock(u.lastAt) : "—"}
-                        {u.provider ? ` · ${u.provider}` : ""}
-                      </div>
-                    </div>
-                  );
-                })}
-              {users !== null && users.filter((u) => clsOf(u) === box).length === 0 ? (
-                <div className="text-[11px] text-muted-foreground text-center py-2">{t("acctNoneHere")}</div>
-              ) : null}
-            </div>
-          ) : null}
         </Card>
 
         {/* ---- Ads ---- */}
@@ -819,6 +938,8 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
           <div className="rounded-xl border border-primary/40 bg-primary/10 p-3">
             <div className="text-sm font-bold text-primary mb-1">📢 {t("admPushCastTitle")}</div>
             <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">{t("admPushCastSub")}</p>
+            {/* v5.4: প্রত্যেক ফোনে ওই ইউজারের নাম + ভয়েসে ডাকা */}
+            <p className="text-[10px] text-primary font-semibold leading-relaxed mb-2">🔊 {t("admPushVoiceNote")}</p>
             <div className="text-[11px] font-semibold mb-2">
               {t("admPushDevices")}: {users === null ? "…" : users.filter((u) => (u as { fcmToken?: string }).fcmToken).length}
             </div>
@@ -908,6 +1029,8 @@ function Panel({ onClose, pin }: { onClose: () => void; pin: string }) {
             </button>
           </div>
         </div>
+          </>
+        )}
       </div>
     </div>
   );

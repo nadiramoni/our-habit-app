@@ -68,6 +68,11 @@ export interface AppSettings {
   sleepAlarm?: AlarmCfg; // optional daily bedtime reminder (round-5)
   fajrAlarm: AlarmCfg;
   adhanAlerts: Record<PrayerKey, AlarmCfg>;
+  // v5.5: "মসজিদে যাওয়ার জন্য" — the owner sets each prayer's jamat time
+  // MANUALLY (his own mosque's schedule, not the waqt); at each set time the
+  // alarm rings and the phone calls by name (boy → মসজিদে যাও, girl → নামাজ
+  // পড়ো). Optional so old installs load as-is.
+  mosquePrayers?: Record<PrayerKey, AlarmCfg>;
   mealAlarms: Record<MealKey, AlarmCfg>;
   hourlyWater: boolean; // legacy v2.x toggle (kept for migration)
   waterAlarm?: WaterAlarmCfg; // v2.4 interval-based water alarm
@@ -90,6 +95,9 @@ export interface AppSettings {
   // v2.9: messenger-like chat notifications — the background service keeps
   // listening even when the app is closed (Settings toggle)
   chatNotif?: boolean;
+  // v5.4: ছেলে/মেয়ে সিলেক্ট (owner: "প্রোফাইলে ছেলে সিলেক্ট করা যেত") —
+  // the profile gender pick. Optional so every old install loads as-is.
+  gender?: "male" | "female" | "";
 }
 
 // ---------- Server config (secret admin panel) ----------
@@ -340,6 +348,7 @@ export function emptyLog(): DayLog {
 export function defaultSettings(): AppSettings {
   return {
     name: "",
+    gender: "", // v5.4: ছেলে/মেয়ে সিলেক্ট — খালি = এখনো বাছেনি
     language: "bn",
     theme: "dark",
     waterGoalMl: 3000,
@@ -355,6 +364,13 @@ export function defaultSettings(): AppSettings {
       asr: { on: false, time: "16:15" },
       maghrib: { on: false, time: "17:45" },
       isha: { on: false, time: "19:00" },
+    },
+    mosquePrayers: {
+      fajr: { on: false, time: "05:30" },
+      dhuhr: { on: false, time: "13:30" },
+      asr: { on: false, time: "17:00" },
+      maghrib: { on: false, time: "18:15" },
+      isha: { on: false, time: "19:45" },
     },
     hourlyWater: false,
     ayatNotif: { on: true, time: "07:00" },
