@@ -10,14 +10,13 @@ import {
   PersonalNote,
   defaultState,
   emptyLog,
-  randomMealMusic,
   todayStr,
   uid,
 } from "./types";
 import { makeT, T } from "./i18n";
 import { reminderOfTheDay } from "./logic";
 import { isNative } from "./native";
-import { waterAlarmTimes, WaterAlarmCfg, shiftTime } from "./types";
+import { waterAlarmTimes, WaterAlarmCfg } from "./types";
 
 const KEY = "ourhabit_v1";
 
@@ -373,12 +372,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   // v2.8: fired-flag store moved to module scope (see top) — the reminder
   // engine reads/writes it directly, no provider-local copy needed
 
-  const fireNotif = useCallback((title: string, body: string, sound?: string) => {
+  const fireNotif = useCallback((title: string, body: string, _sound?: string) => {
     // APK: the web Notification API is dead inside a WebView — route through
-    // the native LocalNotifications plugin so EVERY reminder (adhan, water,
-    // meals, Reels limit) really appears in the Android notification shade.
-    // sound = raw resource name; the plugin auto-creates a vibrating channel
-    // per sound (round-5: water reminder got its own music loop).
+    // the native LocalNotifications plugin so EVERY reminder really appears
+    // in the Android notification shade. v5.7: the notification goes to the
+    // QUIET channel (oh_quiet — no sound, no vibration) — the ONLY loud thing
+    // left is the azan (owner: "শুধুমাত্র আজানটাই অ্যালার্মে আসবে")। The
+    // legacy `_sound` argument is intentionally ignored.
     try {
       if (isNative()) {
         void (async () => {
@@ -386,8 +386,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             const { LocalNotifications } = await import("@capacitor/local-notifications");
             const perm = await LocalNotifications.checkPermissions();
             if (perm.display !== "granted") return;
+            const { ensureQuietLocalChannel } = await import("./native");
+            await ensureQuietLocalChannel();
             await LocalNotifications.schedule({
-              notifications: [{ id: Math.floor(Math.random() * 2000000000), title, body, sound: sound || "alarm.wav" }],
+              notifications: [{ id: Math.floor(Math.random() * 2000000000), title, body, channelId: "oh_quiet" }],
             });
           } catch {
             /* ignore */
@@ -473,10 +475,26 @@ export function checkReminders(
   };
   const already = (k: string) => firedRef.current[key(k)];
   const s = state.settings;
+  // v5.7: APK-তে নন-আজান রিমাইন্ডারের ডেলিভারি native exact ইঞ্জিনই করে
+  // (সাইলেন্ট নোটিফিকেশন + নাম ধরে ডাক, ঠিক সময়ে) — এই ২০-সেকেন্ড ইঞ্জিন
+  // নন-আজান রিমাইন্ডারের জন্য শুধু ওয়েবে চলবে, নাহলে ডাবল নোটিফিকেশন আসত।
+  const native = isNative();
 
+  // v5.7: ফুল-স্ক্রিন অ্যালার্ম-ওভারলে ("অ্যানিমেশন") এখন শুধুই আজানের —
+  // owner: "ওই যে আজানের যে পপ আপ ওইটা একদম ঠিক থাকবে… এরপরেও যে অ্যাপের
+  // একটা অ্যানিমেশন আসে… এগুলো কিছু যাতে না আসে"
   const alarm = (k: string, title: string, body: string, sound = true) => {
     fire(title, body);
     onAlarm({ key: k, title, body, sound });
+    mark(k);
+  };
+  // v5.7: সাধারণ রিমাইন্ডার — শুধু নোটিফিকেশন, কোনো পপআপ/বাজনা নয়
+  const remind = (k: string, title: string, body: string) => {
+    if (native) {
+      mark(k); // native exact ইঞ্জিন নিজেই ডেলিভার করছে (নাম ধরে ডাকসহ)
+      return;
+    }
+    fire(title, body);
     mark(k);
   };
 
@@ -487,94 +505,69 @@ export function checkReminders(
   for (const pk of prayerKeys) {
     const cfg = s.adhanAlerts[pk];
     if (!cfg?.on) continue;
-    // v5.1 মাগরিব +৩ মিনিট (owner's 2-3-minute special case): the Maghrib
-    // reminder fires 3 minutes AFTER the azan time — everywhere (in-app engine
-    // here AND the native exact-alarm sync in page.tsx, so both worlds agree).
-    const fireAt = pk === "maghrib" ? shiftTime(cfg.time, 3) : cfg.time;
-    if (hm === fireAt && !already(`adhan_${pk}`)) {
+    // v5.7: মাগরিবের +৩ মিনিট বাদ — আজান ওয়াক্তের ঠিক সময়েই বাজে (native
+    // ইঞ্জিনের সাথে হুবহু এক)
+    if (hm === cfg.time && !already(`adhan_${pk}`)) {
       alarm(`adhan_${pk}`, t("appName"), t("adhanMsg"));
     }
   }
-  // v5.6 নামাজের রিমাইন্ডার — the owner's MANUAL jamat times fire exactly at
-  // the chosen minute (no +N offsets). The APK schedules the same alarms in
-  // the exact engine (page.tsx) with the name-call, so they ring + SPEAK even
-  // with the app closed. SAME message for everyone (owner: "মসজিদে যাওয়ার
-  // দরকার নাই — নামাজের সময় হইছে নামাজ পড়ো, ছেলে-মেয়ে সবার জন্য সেম").
+  // ---------- v5.7: নামাজের রিমাইন্ডার — সাইলেন্ট নোটিফিকেশন + নাম ধরে ডাক,
+  // পপআপ নয়। সবার জন্য একই কথা (owner: "ইয়াসিন, নামাজ পড়ার সময় হইছে নামাজ
+  // পড়ো")। APK-তে native exact ইঞ্জিনই দেয়। ----------
   for (const pk of prayerKeys) {
     const mc = s.mosquePrayers?.[pk];
     if (mc?.on && hm === mc.time && !already(`mosque_${pk}`)) {
-      alarm(
-        `mosque_${pk}`,
-        `🕌 ${t("mosqueFire")} — ${t(`prayer_${pk}`)}`,
-        t("mosqueBodyAll")
-      );
+      remind(`mosque_${pk}`, `🕌 ${t("mosqueFire")} — ${t(`prayer_${pk}`)}`, t("mosqueBodyAll"));
     }
   }
-  // meal alarms — direct music alarm (breakfast / lunch / dinner)
-  // v2.5: RANDOM music — the owner's two tracks alternate (একটার পর একটা)
+  // ---------- খাবার — v5.7: "দুপুরের খাবারের সময় হইছে খাবার খাও। জাস্ট
+  // এটুকুই" — ১৫ মিনিট আগের প্রি-অ্যালার্ট সম্পূর্ণ বাদ, মিউজিক-অ্যালার্ম বাদ ----------
+  const mealBody = {
+    breakfast: "mealRemindBreakfast",
+    lunch: "mealRemindLunch",
+    dinner: "mealRemindDinner",
+  } as const;
   for (const mk of ["breakfast", "lunch", "dinner"] as const) {
     const cfg = s.mealAlarms?.[mk];
     if (cfg?.on && hm === cfg.time && !already(`meal_${mk}`)) {
-      fire(t(`meal_${mk}`), t("mealAlarmMsg"), randomMealMusic());
-      onAlarm({ key: `meal_${mk}`, title: t(`meal_${mk}`), body: t("mealAlarmMsg"), sound: true });
-      mark(`meal_${mk}`);
-    }
-    // v2.4: a 15-minute EARLY heads-up (owner: নির্ধারিত সময়ের আগেই জানাবে).
-    // The APK schedules this natively too — the engine only covers web/app-open.
-    if (cfg?.on && s.mealPreAlert !== false) {
-      const [h, m] = cfg.time.split(":").map(Number);
-      const pre = ((h * 60 + m - 15) % 1440 + 1440) % 1440;
-      const preHM = `${String(Math.floor(pre / 60)).padStart(2, "0")}:${String(pre % 60).padStart(2, "0")}`;
-      if (hm === preHM && !already(`mealpre_${mk}`)) {
-        fire(t(`meal_${mk}`), t("mealPreMsg"));
-        mark(`mealpre_${mk}`);
-      }
+      remind(`meal_${mk}`, t(`meal_${mk}`), t(mealBody[mk]));
     }
   }
-  // v2.4: daily "Our Habit Reminder" — one nudge a day (owner: প্রতিদিন একটা
-  // করে অ্যালার্ট দিও)
+  // daily "Our Habit Reminder" — v5.7: সাইলেন্ট নোটিফিকেশন + ডাক
   if (s.habitsAlarm?.on && hm === s.habitsAlarm.time && !already("habits")) {
-    alarm("habits", t("appName"), t("habitsAlarmMsg"), false);
+    remind("habits", t("appName"), t("habitRemindBody"));
   }
-  // v2.5 APP-OPEN NUDGES (owner round-7: "বাজার আগে মাঝে মাঝে অ্যাপে ঢুকার
-  // রিমাইন্ডার দিতে হবে — কমপ্লিট করেছেন কিনা") — two gentle check-in nudges
-  // a day while the Our Habit Reminder is ON. The APK schedules them natively
-  // too (page.tsx), so they arrive even when the app is closed.
-  if (s.habitsAlarm?.on && (hm === "10:00" || hm === "16:00") && !already(`nudge_${hm}`)) {
+  // v2.5 APP-OPEN NUDGES — ওয়েবে জেন্টল নাজ; APK-তে exact ইঞ্জিন নিজেই দেয়
+  if (!native && s.habitsAlarm?.on && (hm === "10:00" || hm === "16:00") && !already(`nudge_${hm}`)) {
     fire(`👋 ${t("appName")}`, t("nudgeBody"));
     mark(`nudge_${hm}`);
   }
   if (hm === s.checkinTime && !already("checkin")) {
-    alarm("checkin", t("appName"), t("checkinMsg"), false);
+    remind("checkin", t("appName"), t("checkinRemindBody"));
   }
   if (s.ayatNotif.on && hm === s.ayatNotif.time && !already("ayat")) {
-    fire(t("ayatNotifTitle"), reminderText(state, t));
-    mark("ayat");
+    remind("ayat", t("ayatNotifTitle"), reminderText(state, t));
   }
-  // v2.4 WATER ALARM — interval-based (owner round-6: নির্দিষ্ট সময় পরপর
-  // পানির নোটিফিকেশন, My Habito-স্টাইল). In the APK the OS delivers these
-  // even when the app is closed (recurring exact alarms with Done/Snooze
-  // buttons), so the engine fires only on the WEB to avoid doubles.
+  // v2.4 WATER ALARM — interval-based। APK-তে exact ইঞ্জিন দেয় (v5.7:
+  // সাইলেন্ট নোটিফিকেশন + নাম ধরে ডাক); ইঞ্জিন শুধু ওয়েবে, ডাবল এড়াতে।
   const wa: WaterAlarmCfg | null = s.waterAlarm?.on
     ? s.waterAlarm
     : s.hourlyWater
       ? { on: true, intervalMin: 60, from: "09:00", to: "22:00" }
       : null;
-  if (wa?.on && !isNative()) {
+  if (wa?.on && !native) {
     if (waterAlarmTimes(wa).includes(hm) && !already(`water_${hm}`)) {
       const l = state.logs[today];
       if (!l || l.waterMl < s.waterGoalMl) {
-        fire(t("appName"), t("waterAlarmBody"), "wateralarm.mp3"); // owner's music loop
+        fire(t("appName"), t("waterAlarmBody"));
       }
       mark(`water_${hm}`);
     }
   }
-  // Reels tracking notification (owner point 5) — independent of every other
-  // toggle: when today's tracked/watched Reels minutes cross the daily limit,
-  // a real notification warns ONCE (tracking itself never needs notification
-  // permission — Usage Access is a separate, independent permission).
+  // Reels tracking warning (owner point 5) — ওয়েবে নোটিফিকেশন; APK-তে
+  // ChatWatchdog + ব্যাকগ্রাউন্ড গার্ড নাম ধরে ডেকে জানায় (v5.7)।
   const rl = Number(s.reelsLimitMin ?? 0);
-  if (rl > 0) {
+  if (rl > 0 && !native) {
     const l = state.logs[today];
     const mins = l?.reelsMin ?? 0;
     if (mins >= rl && !already("reelsLimit")) {

@@ -1902,24 +1902,10 @@ function AlarmsCard() {
             </div>
           </div>
         ))}
-        {/* v2.4: 15-min early heads-up toggle (owner: নির্ধারিত সময়ের আগেই জানাবে) */}
-        <div className="flex items-center justify-between gap-3 py-2 border-t border-border mt-1">
-          <div className="min-w-0">
-            <div className="text-sm font-medium">⏮ {t("mealPreAlert")}</div>
-            <div className="text-xs text-muted-foreground">{t("mealPreAlertSub")}</div>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={s.mealPreAlert !== false}
-            onClick={() => updateSettings({ mealPreAlert: s.mealPreAlert === false })}
-            className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${s.mealPreAlert !== false ? "bg-primary" : "bg-muted border border-border"}`}
-          >
-            <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${s.mealPreAlert !== false ? "left-[22px]" : "left-0.5"}`} />
-          </button>
-        </div>
-        {/* v2.5: random meal music note (owner: একটার পর একটা মিউজিক বাজবে) */}
-        <p className="text-[10px] text-muted-foreground mt-2">🎵 {t("mealAlarmsCfgSub")} · 🎲 {t("mealMusicNote")}</p>
+        {/* v5.7: ১৫-মিনিট আগের প্রি-অ্যালার্ট পুরো বাদ (owner: "দুপুরের খাবারের
+            সময় হইছে খাবার খাও — জাস্ট এটুকুই") — খাবারের সময়ে এখন শুধু নাম
+            ধরে ডাক + সাইলেন্ট নোটিফিকেশন, বাজনা শুধুই আজানে */}
+        <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">🔕 {t("quietRule")}</p>
       </Card>
 
       <Card className="mb-4">
@@ -2302,6 +2288,8 @@ function AlarmsLayer({ onOpen }: { onOpen: (k: DetailKey) => void }) {
           <div className="text-[10px] text-muted-foreground">{t("alarmsOnHome")}</div>
         </button>
       </div>
+      {/* v5.7: নতুন সাউন্ড-নীতির নোটিশ — বাজনা শুধুই আজানে */}
+      <p className="text-[10px] text-muted-foreground mt-2.5 leading-relaxed">🔕 {t("quietRule")}</p>
     </Card>
   );
 }

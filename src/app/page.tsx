@@ -19,9 +19,9 @@ import { getLog, todayStr } from "@/lib/types";
 import { pushDay, ensureProfile, fbIsBanned, fbSignOut, fbTouchLastAt, DaySummary } from "@/lib/cloud";
 import { APP_VERSION } from "@/lib/version";
 import { warmAudio, playChime } from "@/lib/audio";
-import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm, AlarmSyncResult, nativeScheduleExactAlarms, nativeCancelExactAlarms, nativeExactPending, nativeConsumeAlarmLaunch, nativeSpeakOnce, ExactAlarmSpec } from "@/lib/native";
+import { isNative, nativeOpenUrl, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, AlarmSyncResult, nativeScheduleExactAlarms, nativeCancelExactAlarms, nativeExactPending, nativeConsumeAlarmLaunch, nativeSpeakOnce, pruneLegacyLoudChannels, ExactAlarmSpec } from "@/lib/native";
 import { banglaNameFromEnglish } from "@/lib/translit";
-import { waterAlarmTimes, shiftTime, randomMealMusic, PRAYER_KEYS, dateAtHM, addDays } from "@/lib/types";
+import { waterAlarmTimes, PRAYER_KEYS, dateAtHM, addDays } from "@/lib/types";
 import { makeT } from "@/lib/i18n";
 
 type Tab = "home" | "notes" | "stats" | "friends" | "settings";
@@ -398,11 +398,12 @@ function Shell() {
     // title/body follow the chosen UI language.
     const tBn = makeT("bn");
     const lang = "bn"; // TTS voice — always Bengali for every spoken reminder
-    const named = (suffix: string) => (spokenName ? `${spokenName}${suffix}` : "");
 
-    // ---------- v2.8/v2.9 EXACT ALARMS (azan / Fajr / meals / water / sleep) ----------
-    // v5.6: আজ+আগামীকাল (২ দিন) → এখন ৪ দিন — কয়েকদিন অ্যাপ না খুললেও
-    // অ্যালার্ম বেঁচে থাকে (আগে ২ দিন পর মৃত শিডিউল → "সঠিক সময়ে বাজে না")
+    // ---------- v2.8/v2.9 EXACT ALARMS — v5.7: সব রিমাইন্ডার এখন এই এক ইঞ্জিনে ----------
+    // v5.7 ডেইলি-ফরএভার: জানালা আজ+আগামী ৩ দিনের, আর প্রতিটা অ্যালার্ম বাজার
+    // সাথে সাথেই নিজেই পরের দিনে রি-আর্ম হয়ে যায় (Java rollForward) — অ্যাপ
+    // আর কখনো না খুললেও প্রতিদিন বলবে (owner: "আজ ৩০ তারিখ বলবে, কাল ১
+    // তারিখ বলবে, নভেম্বরের ১ তারিখেও বলবে — ডেইলি টু ডেইলি")।
     const exact: ExactAlarmSpec[] = [];
     const days = [0, 1, 2, 3].map((n) => addDays(todayStr(), n));
     const pushExact = (
@@ -411,79 +412,78 @@ function Shell() {
       title: string,
       body: string,
       sound: string,
-      speak = ""
+      speak = "",
+      mode: "azan" | "remind" = "remind"
     ) => {
       if (!/^\d{1,2}:\d{2}$/.test(time)) return;
       for (const d of days) {
         const at = dateAtHM(d, time);
-        if (at > now + 30000) exact.push({ id: `${key}@${d}`, at, key, time, title, body, sound, speak, lang });
+        if (at > now + 30000) exact.push({ id: `${key}@${d}`, at, key, time, title, body, sound, speak, lang, mode });
       }
     };
-    // azan + Fajr: the adhan itself, never a voice call (owner's rule)
+    // v5.7 নাম-লাইন: নোটিফিকেশনের লেখাতেও, ডাকতেও — দুটোতেই আগে নাম
+    // (owner: "নোটিফিকেশন এসে বলবে… নাম ধরে রাখবে")
+    const namedLine = (text: string) => (spokenName ? `${spokenName}, ${text}` : text);
+
+    // AZAN + FAJR — শুধু এগুলোতেই অ্যালার্মের বাজনা + ফুল-স্ক্রিন আজানের
+    // পপআপ (owner: "আজানের ক্ষেত্রে শুধু আজান দিবে… পপ আপটা একদম ঠিক
+    // থাকবে")। আজান কখনো কথা বলে না, কখনো নাম ধরে ডাকে না। v5.7: মাগরিবের
+    // +৩ মিনিট বাদ — ওয়াক্তের ঠিক সময়েই বাজে।
     if (s.settings.fajrAlarm?.on)
-      pushExact("fajr", s.settings.fajrAlarm.time, `🕌 ${t("fajrAlarm")}`, t("fajrAlarmMsg"), azanSound);
+      pushExact("fajr", s.settings.fajrAlarm.time, `🕌 ${t("fajrAlarm")}`, t("fajrAlarmMsg"), azanSound, "", "azan");
     (["fajr", "dhuhr", "asr", "maghrib", "isha"] as const).forEach((pk) => {
       const c = s.settings.adhanAlerts?.[pk];
       if (c?.on)
         pushExact(
           `adhan_${pk}`,
-          // v5.1: মাগরিব +৩ মিনিট (owner's 2-3-minute special case) — the
-          // Maghrib ring comes 3 minutes AFTER the azan time, in the native
-          // engine AND the in-app engine (store.tsx) so both always agree.
-          pk === "maghrib" ? shiftTime(c.time, 3) : c.time,
+          c.time,
           `🕌 ${t("adhanAlerts")} — ${t(`prayer_${pk}`)}`,
           t("adhanMsg"),
-          azanSound
+          azanSound,
+          "",
+          "azan"
         );
     });
-    // ---------- v5.6: নামাজের সময় হইছে, নামাজ পড়ো (owner: "মসজিদে যাওয়ার
-    // দরকার নাই — নামাজের সময় হইছে নামাজ পড়ো। এটাই দেও। সবার জন্যের ক্ষেত্রে
-    // মেয়ে ছেলে সবার ক্ষেত্রে সেম") — মালিকের নিজের জামাতের সময়, কোনো +N অফসেট
-    // নেই, ঠিক ওই মিনিটে বাজে + নাম ধরে ডাকে। ছেলে-মেয়ে সবাই একই কথা শোনে।
+    // ---------- v5.6/v5.7: নামাজের রিমাইন্ডার (ম্যানুয়াল ওয়াক্তের সময়) —
+    // সবার জন্য একই কথা, নাম ধরে: "ইয়াসিন, নামাজ পড়ার সময় হইছে, নামাজ পড়ো"
+    // (owner: "নাম ধরে রাখবে… এরকম বলবে")। কোনো অ্যালার্ম বাজনা নয়, কোনো
+    // পপআপ নয় — সাইলেন্ট নোটিফিকেশন + ডাক।
     (["fajr", "dhuhr", "asr", "maghrib", "isha"] as const).forEach((pk) => {
       const mc = s.settings.mosquePrayers?.[pk];
       if (mc?.on) {
+        const line = namedLine(tBn("mosqueBodyAll"));
         pushExact(
           `mosque_${pk}`,
           mc.time,
           `🕌 ${tBn("mosqueFire")} — ${tBn(`prayer_${pk}`)}`,
-          tBn("mosqueBodyAll"),
+          line,
           "alarm.wav",
-          spokenName ? `${spokenName}, ${tBn("speakMosqueAll")}` : ""
+          line,
+          "remind"
         );
       }
     });
-    // meals: the phone CALLS the user by name, then the owner's music rings
+    // খাবার (v5.7: "দুপুরের খাবারের সময় হইছে খাবার খাও — জাস্ট এটুকুই":
+    // ১৫ মিনিট আগের প্রি-অ্যালার্ট পুরো বাদ, মিউজিক-অ্যালার্ম বাদ)
+    const mealRemindKey = {
+      breakfast: "mealRemindBreakfast",
+      lunch: "mealRemindLunch",
+      dinner: "mealRemindDinner",
+    } as const;
     (["breakfast", "lunch", "dinner"] as const).forEach((mk) => {
       const c = s.settings.mealAlarms?.[mk];
       if (c?.on) {
-        // v2.5: RANDOM music — the owner's two tracks alternate. Re-synced on
-        // every app open / settings change → real variety daily.
-        pushExact(
-          `meal_${mk}`,
-          c.time,
-          `🍽 ${t(`meal_${mk}`)}`,
-          t("mealAlarmMsg"),
-          randomMealMusic(),
-          myName ? `${spokenName}, ${tBn(`meal_${mk}`)} ${tBn("speakMeal")}` : ""
-        );
-        // v2.4: 15-min EARLY heads-up — spoken with the name
-        if (s.settings.mealPreAlert !== false)
-          pushExact(
-            `mealpre_${mk}`,
-            shiftTime(c.time, -15),
-            `🍽 ${t(`meal_${mk}`)}`,
-            t("mealPreMsg"),
-            "alarm.wav",
-            myName ? `${spokenName}, ${tBn(`meal_${mk}`)} ${tBn("speakMealPre15")}` : ""
-          );
+        const line = namedLine(tBn(mealRemindKey[mk]));
+        pushExact(`meal_${mk}`, c.time, `🍽 ${t(`meal_${mk}`)}`, line, "alarm.wav", line, "remind");
       }
     });
-    // sleep: spoken name-call + soft chime
-    if (s.settings.sleepAlarm?.on)
-      pushExact("sleep", s.settings.sleepAlarm.time, `😴 ${t("sleep")}`, t("sleepAlarmMsg"), "alarm.wav", named(tBn("speakSleep")));
-    // v2.9 WATER — moved to the exact engine so it rings ON TIME and SPEAKS
-    // the user's name first (owner: "পানি খাওয়ার রিমাইন্ডার হলে আমাকে ডাকবে")
+    // ঘুম — নাম ধরে ডাক + সাইলেন্ট নোটিফিকেশন
+    if (s.settings.sleepAlarm?.on) {
+      const line = namedLine(tBn("sleepRemindBody"));
+      pushExact("sleep", s.settings.sleepAlarm.time, `😴 ${t("sleep")}`, line, "alarm.wav", line, "remind");
+    }
+    // পানি (v2.9 থেকেই exact ইঞ্জিনে — এখন "ইয়াসিন, পানি খাওয়ার সময় হইছে,
+    // পানি খাও, স্বাস্থ্য থাকবে" + সাইলেন্ট নোটিফিকেশন, বাজনা নয়)
     const wa = s.settings.waterAlarm?.on
       ? s.settings.waterAlarm
       : s.settings.hourlyWater
@@ -491,72 +491,56 @@ function Shell() {
         : null;
     if (wa?.on) {
       for (const wt of waterAlarmTimes(wa)) {
-        pushExact(
-          `water_${wt}`,
-          wt,
-          `💧 ${t("appName")}`,
-          t("waterAlarmBody"),
-          "wateralarm.mp3",
-          named(tBn("speakWater"))
-        );
+        const line = namedLine(tBn("waterAlarmBody"));
+        pushExact(`water_${wt}`, wt, `💧 ${t("appName")}`, line, "alarm.wav", line, "remind");
       }
     }
 
-    // ---------- REGULAR alarms (nudges / ayat / checkin) stay on
-    // LocalNotifications — recurring with action buttons ----------
-    const list: NativeAlarm[] = [];
-    if (s.settings.ayatNotif?.on)
-      list.push({ id: "ayat", time: s.settings.ayatNotif.time, title: t("ayatNotifTitle"), body: t("dailyReminder") });
-    if (s.settings.checkinTime) list.push({ id: "checkin", time: s.settings.checkinTime, title: `🌙 ${t("appName")}`, body: t("checkinMsg") });
-    // v2.4: daily Our Habit Reminder — now also SPEAKS the name (v2.9)
+    // ---------- v5.7: বাকি সব রিমাইন্ডারও একই নিয়মে — নাম ধরে ডাক + সাইলেন্ট
+    // নোটিফিকেশন (owner: "বাকি যেগুলো আছে এগুলো জাস্ট নোটিফিকেশন… বলবে")।
+    // আগে এগুলো LocalNotifications-এর সাউন্ড-সহ চ্যানেলে যেত — এখন সব
+    // exact ইঞ্জিনে, রোলিং ডেইলি + ঠিক সময়ে। ----------
     if (s.settings.habitsAlarm?.on) {
-      pushExact(
-        "habits",
-        s.settings.habitsAlarm.time,
-        `🕌 ${t("appName")}`,
-        t("habitsAlarmMsg"),
-        "alarm.wav",
-        named(tBn("speakHabits"))
-      );
-      // v2.5 APP-OPEN NUDGES — real notifications even when the app is closed.
-      list.push({ id: "nudge_morning", time: "10:00", title: `👋 ${t("appName")}`, body: t("nudgeBody") });
-      list.push({ id: "nudge_afternoon", time: "16:00", title: `👋 ${t("appName")}`, body: t("nudgeBody") });
+      const line = namedLine(tBn("habitRemindBody"));
+      pushExact("habits", s.settings.habitsAlarm.time, `🕌 ${t("appName")}`, line, "alarm.wav", line, "remind");
+      // দিনের দুইটা জেন্টল নাজ — আগের মতোই Our Habit Reminder চালু থাকলে
+      pushExact("nudge_morning", "10:00", `👋 ${t("appName")}`, line, "alarm.wav", line, "remind");
+      pushExact("nudge_afternoon", "16:00", `👋 ${t("appName")}`, line, "alarm.wav", line, "remind");
+    }
+    if (s.settings.ayatNotif?.on) {
+      const line = namedLine(tBn("ayatRemindBody"));
+      pushExact("ayat", s.settings.ayatNotif.time, `📖 ${t("ayatNotifTitle")}`, line, "alarm.wav", line, "remind");
+    }
+    if (s.settings.checkinTime) {
+      const line = namedLine(tBn("checkinRemindBody"));
+      pushExact("checkin", s.settings.checkinTime, `🌙 ${t("appName")}`, line, "alarm.wav", line, "remind");
     }
 
-    const anyOn = exact.length > 0 || list.length > 0;
+    const anyOn = exact.length > 0;
     void (async () => {
-      // the exact engine FIRST — it is the one that MUST ring on time
+      // the exact engine FIRST — it is the one that MUST fire on time
       if (exact.length) await nativeScheduleExactAlarms(exact);
       else await nativeCancelExactAlarms();
-      // then the regular recurring ones (keep their Done/Snooze buttons)
-      let localResult: AlarmSyncResult | null = null;
-      if (list.length) {
-        localResult = await nativeScheduleAlarms(list);
-      } else {
-        try {
-          const { LocalNotifications } = await import("@capacitor/local-notifications");
-          await LocalNotifications.cancelAll();
-        } catch {
-          /* ignore */
-        }
-      }
-      // publish the COMBINED OS-verified truth for the UI chips
-      const ex = await nativeExactPending();
-      let pend = 0;
+      // v5.7: LocalNotifications-এর পুরনো সাউন্ড-সহ রিকারিং অ্যালার্মগুলো
+      // (ayat/checkin/nudge — আগের ভার্সনের ফোনে এখনো জীবিত) এখানেই মুছে
+      // যায় + পুরনো লাউড মিউজিক-চ্যানেলগুলোও বাদ — আর কোনোদিন রিমাইন্ডারে
+      // বাজনা আসবে না, শুধু আজানে আসবে।
       try {
         const { LocalNotifications } = await import("@capacitor/local-notifications");
-        const res = await LocalNotifications.getPending();
-        pend = (res?.notifications || []).length;
+        await LocalNotifications.cancelAll();
       } catch {
         /* ignore */
       }
+      await pruneLegacyLoudChannels();
+      // publish the OS-verified truth for the UI chips
+      const ex = await nativeExactPending();
       publishAlarmStatus(
         {
           ok: true,
-          expected: exact.length + list.length,
-          pending: ex.count + pend,
-          permDenied: Boolean(localResult?.permDenied),
-          nextAt: ex.nextAt ? new Date(ex.nextAt).toISOString() : localResult?.nextAt || "",
+          expected: exact.length,
+          pending: ex.count,
+          permDenied: false,
+          nextAt: ex.nextAt ? new Date(ex.nextAt).toISOString() : "",
         },
         anyOn
       );

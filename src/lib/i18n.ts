@@ -277,7 +277,7 @@ const bn: Dict = {
   waterAlarmSub: "নির্দিষ্ট সময় পরপর পানি খেতে নোটিফিকেশন আসবে",
   waterEvery: "প্রতি",
   waterWindow: "সক্রিয় সময়",
-  waterAlarmBody: "পানি পান করার সময় হয়েছে! 💧 এক গ্লাস পানি খেয়ে নাও",
+  waterAlarmBody: "পানি খাওয়ার সময় হইছে। পানি খাও, স্বাস্থ্য থাকবে।",
   waterDone: "পান করেছি ✓",
   waterSnooze: "পরে মনে করাও 💤",
   waterSnoozed: "ঠিক আছে — ১৫ মিনিট পরে আবার মনে করাবো 💧",
@@ -295,6 +295,11 @@ const bn: Dict = {
   mealPreAlert: "খাবারের ১৫ মিনিট আগে জানাবে",
   mealPreAlertSub: "নির্ধারিত সময়ের আগেই নোটিফিকেশন — প্রস্তুতি নেওয়ার জন্য",
   mealPreMsg: "শীঘ্রই খাবারের সময় — প্রস্তুতি নাও 🍽",
+  // ---------- v5.7: খাবার-রিমাইন্ডারের নতুন কথা (owner: "দুপুরের খাবারের
+  // সময় হইছে খাবার খাও — জাস্ট এটুকুই"; নাম আগে যোগ হয়, ১৫-মিনিট প্রি-অ্যালার্ট বাদ) ----------
+  mealRemindBreakfast: "সকালের নাস্তার সময় হইছে। নাস্তা খাও।",
+  mealRemindLunch: "দুপুরের খাবারের সময় হইছে। খাবার খাও।",
+  mealRemindDinner: "রাতের খাবারের সময় হইছে। খাবার খাও।",
   azanOverlayTitle: "আজানের সময় হয়েছে",
   azanOverlaySub: "আল্লাহু আকবার — নামাজের জন্য প্রস্তুত হও",
   azanOverlayFajr: "ফজরের ওয়াক্ত শুরু — সেহরি ও নামাজের জন্য উঠো",
@@ -613,32 +618,40 @@ const bn: Dict = {
   chatRecordHold: "ধরে রেখে বলো",
   chatRecording: "🔴 রেকর্ড হচ্ছে…",
 
-  // ---------- v2.9: নাম ধরে ডাকা অ্যালার্ট (TTS) ----------
-  speakWater: ", তোমার পানি খাওয়ার সময় হয়েছে। পানি খাও, স্বাস্থ্য ঠিক থাকবে।",
-  speakSleep: ", ঘুমানোর সময় হয়েছে। ঘুমিয়ে পড়ো, সকালে ভালো লাগবে।",
+  // ---------- v2.9: নাম ধরে ডাকা অ্যালার্ট (TTS) — v5.7-এ সব রিমাইন্ডারের
+  // কথা হালনাগাদ: মালিকের নতুন বানানে, নাম আগে ----------
+  speakWater: ", পানি খাওয়ার সময় হইছে। পানি খাও, স্বাস্থ্য থাকবে।",
+  speakSleep: ", ঘুমানোর সময় হইছে। ঘুমিয়ে পড়ো, সকালে ভালো লাগবে।",
   speakHabits: ", আজকের অভ্যাসগুলো একবার চেক করে নাও।",
   speakMealPre15: "খাওয়ার সময় হতে আর মাত্র ১৫ মিনিট বাকি।",
-  speakMeal: "খাওয়ার সময় হয়েছে। হাত ধুয়ে খেয়ে নাও।",
+  speakMeal: "খাওয়ার সময় হইছে। খাবার খাও।",
   speakCheckin: ", আজকের দিনটা কেমন গেল একবার দেখে নাও।",
   speakAyat: ", আজকের আয়াতটা একবার পড়ে নাও।",
-  speakReelsWarn: ", রিলস দেখা এখনই বন্ধ করো! আজ অনেক বেশি রিলস দেখেছো — চোখের বড় ক্ষতি হচ্ছে।",
+  speakReelsWarn: ", তুমি বেশি সময় ধরে রিলস দেখতেছ। চোখের ক্ষতি হবে। রিলস দেখা বন্ধ করো, শরীরের যত্ন নাও।",
+  // ---------- v5.7: রিমাইন্ডার-বডির নতুন ফুল-সেন্টেন্স কী (নাম পেজ থেকে আগে বসে) ----------
+  sleepRemindBody: "ঘুমানোর সময় হইছে। ঘুমিয়ে পড়ো, সকালে ভালো লাগবে।",
+  habitRemindBody: "আজকের অভ্যাসগুলো একবার চেক করে নাও।",
+  ayatRemindBody: "আজকের আয়াতটা একবার পড়ে নাও।",
+  checkinRemindBody: "আজকের দিনটা কেমন গেল একবার দেখে নাও।",
   // ---------- v5.6: নামাজের রিমাইন্ডার (ম্যানুয়াল নামাজের সময়) ----------
   // owner round: "মসজিদে যাওয়ার দরকার নাই — নামাজের সময় হইছে নামাজ পড়ো।
   // এটাই দেও। সবার জন্যের ক্ষেত্রে মেয়ে ছেলে সবার ক্ষেত্রে সেম"
   mosqueTitle: "নামাজের রিমাইন্ডার",
-  mosqueSub: "নিজের জামাতের সময় ম্যানুয়ালে বসাও — ওই সময়েই অ্যালার্ম বাজবে আর নাম ধরে ডেকে বলবে",
-  mosqueNote: "সবার জন্য একই ডাক: “নামাজের সময় হইছে, নামাজ পড়ো” — আগে তোমার নাম ধরে ডাকবে",
+  mosqueSub: "নিজের নামাজের সময় বসাও — ওই সময়েই নাম ধরে ডাকবে আর নোটিফিকেশন দেখাবে",
+  mosqueNote: "সবার জন্য একই ডাক: “নামাজ পড়ার সময় হইছে, নামাজ পড়ো” — আগে তোমার নাম ধরে ডাকবে; বাজনা শুধুই আজানে",
   mosqueNeedGender: "প্রোফাইলে ছেলে/মেয়ে বাছাই করা নেই — সেটিংস → প্রোফাইল থেকে ছেলে বা মেয়ে বাছলে ঠিক ওভাবেই ডাকবে",
   mosqueFire: "নামাজের সময় হইছে",
-  mosqueBodyBoy: "নামাজের সময় হইছে — নামাজ পড়ো",
-  mosqueBodyGirl: "নামাজের সময় হইছে — নামাজ পড়ো",
-  mosqueBodyAll: "নামাজের সময় হইছে — নামাজ পড়ো",
-  speakMosqueTime: "নামাজের সময় হইছে।",
+  mosqueBodyBoy: "নামাজ পড়ার সময় হইছে। নামাজ পড়ো।",
+  mosqueBodyGirl: "নামাজ পড়ার সময় হইছে। নামাজ পড়ো।",
+  mosqueBodyAll: "নামাজ পড়ার সময় হইছে। নামাজ পড়ো।",
+  speakMosqueTime: "নামাজ পড়ার সময় হইছে।",
   speakMosqueBoy: "নামাজ পড়ো।",
   speakMosqueGirl: "নামাজ পড়ো।",
-  speakMosqueAll: "নামাজের সময় হইছে। নামাজ পড়ো।",
+  speakMosqueAll: "নামাজ পড়ার সময় হইছে। নামাজ পড়ো।",
   voiceAlertsOn: "নাম ধরে ডাক",
-  voiceAlertsSub: "অ্যালার্মে তোমার নাম ধরে ডেকে মনে করাবে (আজান অপরিবর্তিত)",
+  voiceAlertsSub: "রিমাইন্ডারে তোমার নাম ধরে ডাকবে; অ্যালার্মের বাজনা শুধুই আজানে আসবে",
+  // v5.7: সাউন্ড-নীতির নোটিশ (owner: "শুধুমাত্র আজানটাই অ্যালার্মে আসবে")
+  quietRule: "শুধু আজানে অ্যালার্মের বাজনা আসে — বাকি সব রিমাইন্ডারে নাম ধরে ডাক + নোটিফিকেশন (কোনো বাজনা বা পপআপ নয়)",
 
   // ---------- Home redesign ----------
   todayCard: "আজকের অভ্যাস",
@@ -693,7 +706,7 @@ const bn: Dict = {
   testAlarmBtn: "⏰ ১ মিনিট পর টেস্ট",
   testVoiceOk: "🔊 ডাকলাম! শুনতে পাচ্ছো? অ্যালার্মেও ঠিক এই ভয়েসেই নাম ধরে ডাকবে।",
   testVoiceNoName: "⚠️ আগে প্রোফাইলে তোমার নাম লিখো — তাহলে নাম ধরে ডাকবে।",
-  testAlarmOk: "✓ টেস্ট অ্যালার্ম সেট হইল — ১ মিনিট পর ঠিক সময়ে বাজবে আর নাম ধরে ডাকবে (অ্যাপ বন্ধ থাকলেও)।",
+  testAlarmOk: "✓ টেস্ট রিমাইন্ডার সেট হইল — ১ মিনিট পর ঠিক সময়ে নাম ধরে ডাকবে ও নোটিফিকেশন দেখাবে (বাজনা এখন শুধুই আজানে, অ্যাপ বন্ধ থাকলেও ডাকবে)।",
   testAlarmFail: "⚠️ টেস্ট অ্যালার্ম সেট করা যায়নি — অ্যালার্ম পারমিশন দেও।",
   permBattery: "ব্যাটারি আনরেস্ট্রিক্টেড",
   permBatterySub: "ব্যাকগ্রাউন্ডে রিমাইন্ডার ঠিক সময়ে আসার জন্য",
@@ -778,7 +791,7 @@ const bn: Dict = {
   reelsLimitSub: "লিমিট ছুঁলে নোটিফিকেশনে সতর্ক করবে",
   reelsLimitOff: "বন্ধ",
   reelsLimitNotifTitle: "🎬 Reels লিমিট পার হয়েছে",
-  reelsLimitNotifBody: "আজকের লিমিট শেষ — এবার হ্যাবিটে ফেরার সময়!",
+  reelsLimitNotifBody: "বেশি সময় ধরে রিলস দেখতেছ — চোখের ক্ষতি হবে। রিলস দেখা বন্ধ করো, শরীরের যত্ন নাও",
 
   // ---------- Misc ----------
   aboutTitle: "About",
@@ -1121,7 +1134,7 @@ const en: Dict = {
   waterAlarmSub: "Reminds you to drink water at a fixed interval",
   waterEvery: "Every",
   waterWindow: "Active window",
-  waterAlarmBody: "Time to drink water! 💧 Have a glass now",
+  waterAlarmBody: "Time to drink water. Drink up, stay healthy.",
   waterDone: "I drank it ✓",
   waterSnooze: "Remind me later 💤",
   waterSnoozed: "Okay — I'll remind you again in 15 minutes 💧",
@@ -1129,6 +1142,14 @@ const en: Dict = {
   habitsReminder: "Our Habit Reminder 🕌",
   habitsReminderSub: "Once a day — nudges you to track today's habits",
   habitsAlarmMsg: "Tracked today's habits yet? Prayers, water, dhikr — all in one place 🕌",
+  // v5.7: per-meal reminder lines (name is prefixed by the scheduler)
+  mealRemindBreakfast: "It's breakfast time. Have your breakfast.",
+  mealRemindLunch: "It's lunch time. Have your meal.",
+  mealRemindDinner: "It's dinner time. Have your meal.",
+  sleepRemindBody: "It's bedtime. Go to sleep, you'll feel great in the morning.",
+  habitRemindBody: "Take a moment to check today's habits.",
+  ayatRemindBody: "Read today's verse.",
+  checkinRemindBody: "Take a moment to review how today went.",
   alarmOnToast: "Your alarm has been successfully turned on",
   alarmOffToast: "Alarm turned off",
   alarmPermWarn: "⚠️ Notification permission missing — alarms cannot ring! Opening settings…",
@@ -1461,7 +1482,7 @@ const en: Dict = {
   speakMeal: " time — wash your hands and eat.",
   speakCheckin: ", take a moment to review how today went.",
   speakAyat: ", read today's verse.",
-  speakReelsWarn: ", stop watching reels right now! You've watched way too many today — it's hurting your eyes.",
+  speakReelsWarn: ", you've been watching reels for too long. It will hurt your eyes. Stop watching reels and take care of your health.",
   // ---------- v5.6: prayer reminder (manual times, same message for all) ----------
   mosqueTitle: "Prayer reminder",
   mosqueSub: "Set your jamat times manually — the alarm rings exactly then and calls you by name",
@@ -1476,7 +1497,8 @@ const en: Dict = {
   speakMosqueGirl: "Read your prayer.",
   speakMosqueAll: "Prayer time has come. Read your prayer.",
   voiceAlertsOn: "Call me by name",
-  voiceAlertsSub: "Alarms call your name out loud (adhan stays unchanged)",
+  voiceAlertsSub: "Reminders call your name out loud; only the azan rings an alarm sound",
+  quietRule: "Only the azan rings an alarm — every other reminder is a name-call + silent notification (no ring, no popup)",
 
   // ---------- Home redesign ----------
   todayCard: "Today's habits",
@@ -1531,7 +1553,7 @@ const en: Dict = {
   testAlarmBtn: "⏰ Test in 1 min",
   testVoiceOk: "🔊 Called you! Alarms will call your name with this exact voice.",
   testVoiceNoName: "⚠️ Set your name in the profile first.",
-  testAlarmOk: "✓ Test alarm set — rings in exactly 1 minute and calls your name (even with the app closed).",
+  testAlarmOk: "✓ Test reminder set — in exactly 1 minute it calls your name and shows a notification (ringing is azan-only now; works with the app closed too).",
   testAlarmFail: "⚠️ Could not set the test alarm — grant the alarm permission.",
   permBattery: "Battery unrestricted",
   permBatterySub: "So reminders arrive on time from the background",
@@ -1614,7 +1636,7 @@ const en: Dict = {
   reelsLimitSub: "Get a notification when today's limit is crossed",
   reelsLimitOff: "Off",
   reelsLimitNotifTitle: "🎬 Reels limit reached",
-  reelsLimitNotifBody: "Today's limit is done — time to get back to your habits!",
+  reelsLimitNotifBody: "You've been watching reels for too long — it will hurt your eyes. Stop now and take care of your health",
 
   // ---------- Misc ----------
   aboutTitle: "About",

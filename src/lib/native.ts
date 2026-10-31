@@ -527,12 +527,15 @@ export async function listenWaterActions(handler: (ev: WaterActionEvent) => void
   }
 }
 
-/** Schedule ONE extra water notification N minutes from now (snooze). */
+/** Schedule ONE extra water notification N minutes from now (snooze).
+ *  v5.7: QUIET — the snooze is a reminder too, so no sound, just the
+ *  notification (owner: "কোনো অ্যালার্ম আসবে না")। */
 export async function nativeSnoozeWater(minutes: number, title: string, body: string): Promise<void> {
   if (!isNative()) return;
   try {
     const { LocalNotifications } = await import("@capacitor/local-notifications");
     await registerWaterActions();
+    await ensureQuietLocalChannel();
     await LocalNotifications.schedule({
       notifications: [
         {
@@ -540,11 +543,58 @@ export async function nativeSnoozeWater(minutes: number, title: string, body: st
           title,
           body,
           schedule: { at: new Date(Date.now() + minutes * 60000), allowWhileIdle: true },
-          sound: "wateralarm.mp3",
+          channelId: QUIET_LOCAL_CHANNEL,
           actionTypeId: "water",
         },
       ],
     });
+  } catch {
+    /* ignore */
+  }
+}
+
+// ---------------- v5.7: QUIET notification channel (APK) ----------------
+// Owner: "বাকি যেগুলো আছে এগুলো জাস্ট নোটিফিকেশন… কোন মানে ইয়া দিবে না। মানে
+// আছে না কোন অ্যালার্ম আসবে না।" Every notification the JS side fires on
+// the APK (in-app reminders, snoozes, confirmations) goes through THIS silent
+// channel — no sound, no vibration. The ONLY loud thing left is the azan
+// (ExactAlarmPlugin's azan channels + full-screen popup).
+
+const QUIET_LOCAL_CHANNEL = "oh_quiet";
+let quietLocalChannelReady = false;
+
+/** Create (once) the silent LocalNotifications channel. Safe to call often. */
+export async function ensureQuietLocalChannel(): Promise<void> {
+  if (quietLocalChannelReady) return;
+  try {
+    const { LocalNotifications } = await import("@capacitor/local-notifications");
+    await LocalNotifications.createChannel({
+      id: QUIET_LOCAL_CHANNEL,
+      name: "রিমাইন্ডার (নোটিফিকেশন)",
+      importance: 3, // DEFAULT — visible in the shade, NO sound, NO heads-up
+      vibration: false,
+      visibility: 1, // PUBLIC
+    });
+    quietLocalChannelReady = true;
+  } catch {
+    /* plugin missing — non-fatal */
+  }
+}
+
+/** v5.7: phones upgraded from v5.6- still carry the LOUD meal/water MUSIC
+ *  channels from the old plugin schedules. Reminders never ring now — delete
+ *  those channels once so nothing can ever ring for a reminder again. */
+export async function pruneLegacyLoudChannels(): Promise<void> {
+  if (!isNative()) return;
+  try {
+    const { LocalNotifications } = await import("@capacitor/local-notifications");
+    for (const id of ["sound_mealalarm", "sound_mealmusic1", "sound_wateralarm"]) {
+      try {
+        await LocalNotifications.deleteChannel({ id });
+      } catch {
+        /* channel may not exist — fine */
+      }
+    }
   } catch {
     /* ignore */
   }
@@ -577,11 +627,16 @@ export interface ExactAlarmSpec {
   body: string;
   sound: string; // res/raw file, e.g. "adhan.mp3"
   /** v2.9: the sentence SPOKEN at ring time with the user's registered name
-   * ("আনোয়ারুল সন সাকিব, তোমার পানি খাওয়ার সময় হইছে…") — empty for adhan
+   * ("ইয়াসিন, পানি খাওয়ার সময় হইছে…") — empty for adhan
    * (owner: "আজানের ক্ষেত্রে না ভাই"). */
   speak?: string;
   /** TTS language for the spoken sentence ("bn" | "en"). */
   lang?: string;
+  /** v5.7 SOUND POLICY (owner: "শুধু আজানের ক্ষেত্রে শুধু আজান দিবে… বাকি
+   * সবগুলো জাস্ট নোটিফিকেশন — কোনো অ্যালার্ম আসবে না"):
+   * "azan" → loud azan sound + full-screen popup (UNCHANGED);
+   * "remind" → silent notification + the name-call voice, nothing else. */
+  mode?: "azan" | "remind";
 }
 
 function exactPlugin(): AnyRec | null {
@@ -610,6 +665,7 @@ export async function nativeScheduleExactAlarms(alarms: ExactAlarmSpec[]): Promi
         sound: a.sound,
         speak: a.speak || "",
         lang: a.lang || "bn",
+        mode: a.mode || "",
       })),
     });
     return { scheduled: Number(res?.scheduled) || 0 };
@@ -646,6 +702,7 @@ export async function nativeScheduleOneAlarm(a: ExactAlarmSpec): Promise<boolean
       sound: a.sound,
       speak: a.speak || "",
       lang: a.lang || "bn",
+      mode: a.mode || "remind",
     });
     return true;
   } catch {
