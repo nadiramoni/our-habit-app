@@ -31,9 +31,14 @@ import java.util.Map;
  * A foreground service (mediaPlayback) that SPEAKS the alert with the user's
  * REGISTERED FULL NAME through the Android TextToSpeech engine on the ALARM
  * audio stream — so the phone literally calls the user by name, exactly like
- * a person would. Right after the voice finishes, the real alarm notification
- * fires with its own channel sound (water music / meal music / chime) →
- * the experience is: the app CALLS you, THEN the alarm rings.
+ * a person would (owner: "ইয়াসিন, পানি খাওয়ার সময় হইছে, পানি খাও, স্বাস্থ্য
+ * থাকবে")।
+ *
+ * v5.7 SOUND POLICY (owner: "বাকি যেগুলো আছে এগুলো জাস্ট নোটিফিকেশন… কোনো
+ * অ্যালার্ম আসবে না"): the voice IS the reminder — after the sentence
+ * finishes, the notification lands on the QUIET channel (oh_reminder — no
+ * sound, no vibration, no full-screen popup). No alarm ring ever plays for
+ * a reminder; only azan alarms ring (owner: "শুধু আজানটাই অ্যালার্মে আসবে").
  *
  * Adhan alarms NEVER use this (owner: "আজানের ক্ষেত্রে না ভাই — আজানটা আজানি
  * দিবে") — they go straight to the full-screen azan + adhan audio.
@@ -84,7 +89,7 @@ public class AlarmSpeakService extends Service {
       startForegroundSafely(title == null ? "Our Habit" : title);
 
       if (speak == null || speak.trim().isEmpty()) {
-        if (notify) postAlarmNotification(title, body, sound, key, time, firedAt);
+        if (notify) postQuietNotification(title == null ? "Our Habit" : title, body == null ? "" : body);
         stopSelfSafely();
         return START_NOT_STICKY;
       }
@@ -95,10 +100,6 @@ public class AlarmSpeakService extends Service {
           org.json.JSONObject o = new org.json.JSONObject();
           o.put("title", title);
           o.put("body", body);
-          o.put("sound", sound);
-          o.put("key", key);
-          o.put("time", time);
-          o.put("firedAt", firedAt);
           pendingPayload = o.toString();
         } catch (Exception ignored) {
           pendingPayload = null;
@@ -200,60 +201,42 @@ public class AlarmSpeakService extends Service {
     }
   }
 
-  /** Voice finished (or failed) → post the real alarm notification, then die. */
+  /** Voice finished (or failed) → post the QUIET reminder notification, then die. */
   private synchronized void onSpeakDone() {
     if (finished) return;
     finished = true;
     try {
       if (pendingPayload != null) {
         org.json.JSONObject o = new org.json.JSONObject(pendingPayload);
-        postAlarmNotification(
+        postQuietNotification(
             o.optString("title", "Our Habit"),
-            o.optString("body", ""),
-            o.optString("sound", "alarm.wav"),
-            o.optString("key", ""),
-            o.optString("time", ""),
-            o.optLong("firedAt", 0L));
+            o.optString("body", ""));
       }
     } catch (Exception ignored) {
     }
     stopSelfSafely();
   }
 
-  private void postAlarmNotification(String title, String body, String sound, String key, String time, long firedAt) {
+  /** v5.7: the reminder notification — QUIET channel, no sound, no vibration,
+   *  no full-screen popup, and NO launch payload (tapping just opens the app;
+   * the old launch payload made the in-app alarm-overlay "animation" pop up
+   * for every water/meal reminder — owner: "এগুলো কিছু যাতে না আসে"). */
+  private void postQuietNotification(String title, String body) {
     try {
       Context ctx = getApplicationContext();
-      // remember the launch payload → the WebView opens the right overlay
-      if (key != null && !key.isEmpty()) {
-        try {
-          org.json.JSONObject launch = new org.json.JSONObject();
-          launch.put("key", key);
-          launch.put("title", title);
-          launch.put("body", body);
-          launch.put("sound", sound);
-          launch.put("time", time);
-          launch.put("firedAt", firedAt > 0 ? firedAt : System.currentTimeMillis());
-          SharedPreferences sp = ExactAlarmPlugin.prefs(ctx);
-          sp.edit().putString("launch_payload", launch.toString()).apply();
-        } catch (Exception ignored) {
-        }
-      }
-      ExactAlarmPlugin.ensureChannel(ctx, sound == null || sound.isEmpty() ? "alarm.wav" : sound);
-      String channelId = ExactAlarmPlugin.channelIdFor(sound == null || sound.isEmpty() ? "alarm.wav" : sound);
-
+      ExactAlarmPlugin.ensureQuietChannel(ctx);
       PendingIntent content = ExactAlarmPlugin.launchPendingIntent(ctx, 3);
       int notifId = (int) (System.currentTimeMillis() % 2100000000);
 
-      NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, channelId)
-          .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+      NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, ExactAlarmPlugin.QUIET_CHANNEL)
+          .setSmallIcon(android.R.drawable.ic_dialog_info)
           .setContentTitle(title == null || title.isEmpty() ? "Our Habit" : title)
           .setContentText(body == null ? "" : body)
           .setStyle(new NotificationCompat.BigTextStyle().bigText(body == null ? "" : body))
-          .setPriority(NotificationCompat.PRIORITY_MAX)
-          .setCategory(NotificationCompat.CATEGORY_ALARM)
+          .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+          .setCategory(NotificationCompat.CATEGORY_REMINDER)
           .setAutoCancel(true)
-          .setContentIntent(content)
-          .setVibrate(new long[]{0, 400, 250, 400, 250, 600});
+          .setContentIntent(content);
 
       NotificationManagerCompat nm = NotificationManagerCompat.from(ctx);
       boolean allowed = true;
@@ -327,7 +310,7 @@ public class AlarmSpeakService extends Service {
 
   // ---------------- entry points ----------------
 
-  /** Speak + then post the alarm notification (used by AlarmFireReceiver). */
+  /** Speak + then post the QUIET reminder notification (used by AlarmFireReceiver). */
   static void startForAlarm(Context ctx, String speak, String lang, String title, String body,
                             String sound, String key, String time) {
     try {
@@ -347,16 +330,16 @@ public class AlarmSpeakService extends Service {
         ctx.startService(i);
       }
     } catch (Exception ignored) {
-      // fall back to a plain notification so the alarm is never lost
+      // fall back to a plain QUIET notification so the reminder is never lost
       try {
-        ExactAlarmPlugin.ensureChannel(ctx, sound);
+        ExactAlarmPlugin.ensureQuietChannel(ctx);
         android.app.PendingIntent pi = ExactAlarmPlugin.launchPendingIntent(ctx, 3);
-        NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, ExactAlarmPlugin.channelIdFor(sound))
-            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+        NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, ExactAlarmPlugin.QUIET_CHANNEL)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(title)
             .setContentText(body)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setAutoCancel(true)
             .setContentIntent(pi);
         NotificationManagerCompat.from(ctx).notify((int) (System.currentTimeMillis() % 2100000000), b.build());

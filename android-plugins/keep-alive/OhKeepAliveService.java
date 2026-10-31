@@ -300,7 +300,9 @@ public class OhKeepAliveService extends Service {
       NotificationCompat.Builder b = new NotificationCompat.Builder(getApplicationContext(), CHANNEL_CHAT)
           .setSmallIcon(android.R.drawable.ic_dialog_alert)
           .setContentTitle("📱 রিলস লিমিট পার হয়ে গেছে")
-          .setContentText("আজ " + mins + " মিনিট রিলস দেখেছেন (লিমিট " + limit + ") — চোখের যত্ন নিন")
+          // v5.7: মালিকের নতুন কথায় — "তুমি বেশি সময় ধরে রিলস দেখতেছ, চোখের
+          // ক্ষতি হবে। রিলস দেখা বন্ধ করো, শরীরের যত্ন নাও"
+          .setContentText("বেশি সময় ধরে রিলস দেখতেছ (" + mins + "/" + limit + " মিনিট) — চোখের ক্ষতি হবে। রিলস দেখা বন্ধ করো, শরীরের যত্ন নাও")
           .setPriority(NotificationCompat.PRIORITY_HIGH)
           .setAutoCancel(true)
           .setContentIntent(pi);

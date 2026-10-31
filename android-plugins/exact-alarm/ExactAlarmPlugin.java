@@ -39,7 +39,7 @@ import org.json.JSONObject;
  *    sound plays instead. Tapping it opens the same full-screen azan.
  *
  * JS bridge (window.Capacitor.Plugins.ExactAlarm):
- *   schedule({alarms:[{id, at, title, body, sound, key, time, speak, lang}]})
+ *   schedule({alarms:[{id, at, title, body, sound, key, time, speak, lang, mode}]})
  *   cancelAll()
  *   pending() → {count, nextAt, nextTitle}
  *   consumeLaunch() → {has,key,title,body,sound,time}
@@ -48,6 +48,20 @@ import org.json.JSONObject;
  *   rearm() → {armed}
  *   speakOnce({key, text, lang, throttleMin}) → v2.9: speak NOW with the
  *       user's registered name (Reels-limit warning etc.), throttled per key
+ *
+ * v5.7 SOUND POLICY (owner: "শুধু আজানের ক্ষেত্রে শুধু আজান দিবে… বাকি যেগুলো
+ * আছে এগুলো জাস্ট নোটিফিকেশন… কোনো অ্যালার্ম আসবে না"):
+ *   • mode="azan"   → LOUD alarm channel (azan sound) + full-screen intent —
+ *                     the WeMuslim-style azan experience, UNCHANGED.
+ *   • mode="remind" → the QUIET channel (oh_reminder — NO sound, NO
+ *                     vibration) + the TTS name-call. No alarm, no popup.
+ *   Legacy payloads (no mode) are classified by sound/key (see isAzanAlarm).
+ *
+ * v5.7 DAILY-FOREVER (owner: "ডেইলি টু ডেইলি বলতে হবে — আজ বলবে, কাল বলবে,
+ * পরের মাসেও বলবে"): rollForward() — every alarm that FIRES re-arms itself
+ * to the day after the last scheduled day of its key, so the 4-day rolling
+ * window keeps advancing one day at a time EVEN IF THE APP IS NEVER OPENED
+ * again. Boot restore + app-open re-sync still refresh the whole window.
  */
 @CapacitorPlugin(name = "ExactAlarm")
 public class ExactAlarmPlugin extends Plugin {
@@ -85,11 +99,13 @@ public class ExactAlarmPlugin extends Plugin {
         String time = o.optString("time", "");
         String speak = o.optString("speak", ""); // v2.9: named-alert voice
         String lang = o.optString("lang", "bn");
+        String mode = o.optString("mode", ""); // v5.7: "azan" | "remind"
 
         int reqCode = reqCode(id, i);
         Intent intent = new Intent(ctx, AlarmFireReceiver.class);
         intent.setAction("oh.exact." + reqCode);
         JSONObject payload = new JSONObject();
+        payload.put("id", id);
         payload.put("key", key);
         payload.put("title", title);
         payload.put("body", body);
@@ -97,6 +113,7 @@ public class ExactAlarmPlugin extends Plugin {
         payload.put("time", time);
         payload.put("speak", speak);
         payload.put("lang", lang);
+        payload.put("mode", mode);
         intent.putExtra("payload", payload.toString());
 
         int flags = PendingIntent.FLAG_CANCEL_CURRENT;
@@ -143,6 +160,24 @@ public class ExactAlarmPlugin extends Plugin {
 
       // persist for boot-restore + pending()
       prefs(ctx).edit().putString(KEY_SCHEDULE, keep.toString()).apply();
+
+      // v5.7: phones upgraded from v5.6- still carry the old LOUD per-sound
+      // channels (water music / meal music / chime). Reminders are silent
+      // now — delete every oh_x_* channel that is not the current azan one,
+      // so nothing can ever ring for a reminder again.
+      try {
+        java.util.Set<String> keepSounds = new java.util.HashSet<>();
+        for (int i = 0; i < keep.length(); i++) {
+          JSONObject o = keep.optJSONObject(i);
+          if (o == null) continue;
+          if (isAzanAlarm(o.optString("key", ""), o.optString("sound", ""),
+              o.optString("mode", ""), o.optString("speak", ""))) {
+            keepSounds.add(channelIdFor(o.optString("sound", "adhan.mp3")));
+          }
+        }
+        pruneLoudChannels(ctx, keepSounds);
+      } catch (Exception ignored) {
+      }
 
       JSObject ret = new JSObject();
       ret.put("scheduled", keep.length());
@@ -198,6 +233,7 @@ public class ExactAlarmPlugin extends Plugin {
       o.put("sound", call.getString("sound", "alarm.wav"));
       o.put("speak", call.getString("speak", ""));
       o.put("lang", call.getString("lang", "bn"));
+      o.put("mode", call.getString("mode", "remind")); // v5.7: tests are quiet
       armOne(ctx, am, o);
       // persist into the schedule so a later cancelAll()/rearm() cleans it up
       JSONArray keep = readSchedule(ctx);
@@ -220,6 +256,7 @@ public class ExactAlarmPlugin extends Plugin {
     intent.setAction("oh.exact." + reqCode);
     intent.putExtra("payload",
         new JSONObject()
+            .put("id", o.optString("id", "test"))
             .put("key", o.optString("key", ""))
             .put("title", o.optString("title", ""))
             .put("body", o.optString("body", ""))
@@ -227,6 +264,7 @@ public class ExactAlarmPlugin extends Plugin {
             .put("time", o.optString("time", ""))
             .put("speak", o.optString("speak", ""))
             .put("lang", o.optString("lang", "bn"))
+            .put("mode", o.optString("mode", ""))
             .toString());
     int flags = PendingIntent.FLAG_CANCEL_CURRENT;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -241,6 +279,58 @@ public class ExactAlarmPlugin extends Plugin {
       } catch (Exception e2) {
         am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, op);
       }
+    }
+  }
+
+  /** v5.7 DAILY-FOREVER: called by AlarmFireReceiver right after an alarm
+   *  fires. The fired entry (same id) is moved to ONE DAY AFTER the latest
+   *  scheduled day of the SAME key and re-armed with its own request code —
+   *  so the rolling window advances by one day every single day, forever,
+   *  even if the user never opens the app again (owner: "আজ ৩০ তারিখ বলবে,
+   *  কাল ১ তারিখ বলবে, নভেম্বরের ১ তারিখেও বলবে")। One-shot alarms (the
+   *  ⏰ test) never roll. */
+  static void rollForward(Context ctx, String id) {
+    try {
+      if (id == null || id.isEmpty() || "test_alarm".equals(id) || "test".equals(id)) return;
+      AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
+      JSONArray sched = readSchedule(ctx);
+      long now = System.currentTimeMillis();
+      // 1) find this entry + the latest future `at` of the same key
+      JSONObject mine = null;
+      String key = "";
+      long maxAt = 0;
+      for (int i = 0; i < sched.length(); i++) {
+        JSONObject o = sched.optJSONObject(i);
+        if (o == null) continue;
+        if (id.equals(o.optString("id", ""))) {
+          if (mine == null) {
+            mine = o;
+            key = o.optString("key", "");
+          }
+        }
+      }
+      if (mine == null) return; // not in the persisted schedule (one-off)
+      for (int i = 0; i < sched.length(); i++) {
+        JSONObject o = sched.optJSONObject(i);
+        if (o == null) continue;
+        if (key.equals(o.optString("key", "")) && !id.equals(o.optString("id", ""))) {
+          long at = o.optLong("at", 0L);
+          if (at > maxAt) maxAt = at;
+        }
+      }
+      long myAt = mine.optLong("at", 0L);
+      long next = (maxAt > 0 ? maxAt : (myAt > 0 ? myAt : now));
+      // roll to one day after the last covered day (skip anything already past)
+      do {
+        next += 24L * 3600_000L;
+      } while (next <= now + 2000L);
+      mine.put("at", next);
+      // re-arm FIRST (armOne stamps the fresh _req into `mine`), THEN persist —
+      // cancelAllInternal() rebuilds PendingIntents from the stored _req, so
+      // the persisted copy MUST carry the same code the alarm was armed with.
+      armOne(ctx, am, mine);
+      prefs(ctx).edit().putString(KEY_SCHEDULE, sched.toString()).apply();
+    } catch (Exception ignored) {
     }
   }
 
@@ -462,13 +552,51 @@ public class ExactAlarmPlugin extends Plugin {
     }
   }
 
-  /** Re-arm everything in the future from the persisted schedule. Returns armed count. */
+  /** Re-arm everything in the future from the persisted schedule. Returns armed count.
+   *  v5.7 DAILY-FOREVER: entries that went STALE while the phone was off (or
+   *  after a reboot — their time simply passed) are REVIVED, not dropped —
+   *  each stale entry of a key is re-dated ONE DAY PAST the last live day of
+   *  that key, so the rolling window is whole again the moment the phone
+   *  wakes (owner: "ডেইলি টু ডেইলি — একদিনও বাদ যাবে না")। */
   static int rearmInternal(Context ctx) {
     try {
       AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
       cancelAllInternal(ctx, am);
       JSONArray keep = readSchedule(ctx);
       long now = System.currentTimeMillis();
+      // 1) revive stale entries (their time passed while the phone was off):
+      //    each one rolls FORWARD from its OWN time-of-day to the first FREE
+      //    future day of its key (a day no live entry of that key holds) —
+      //    the HH:MM never changes, no two entries ever share a day, and the
+      //    rolling window is whole again the moment the phone wakes.
+      try {
+        java.util.Set<Long> taken = new java.util.HashSet<>();
+        for (int i = 0; i < keep.length(); i++) {
+          JSONObject o = keep.optJSONObject(i);
+          if (o == null) continue;
+          long at = o.optLong("at", 0L);
+          if (at > now + 2000L) taken.add(at);
+        }
+        for (int i = 0; i < keep.length(); i++) {
+          JSONObject o = keep.optJSONObject(i);
+          if (o == null) continue;
+          long at = o.optLong("at", 0L);
+          String k = o.optString("key", "");
+          if (at > now + 2000L || k.isEmpty() || "test".equals(k)
+              || "test_alarm".equals(o.optString("id", ""))) {
+            continue;
+          }
+          long cand = at > 0 ? at : now;
+          while (cand <= now + 2000L || taken.contains(cand)) {
+            cand += 24L * 3600_000L;
+          }
+          o.put("at", cand);
+          taken.add(cand);
+        }
+        prefs(ctx).edit().putString(KEY_SCHEDULE, keep.toString()).apply();
+      } catch (Exception ignored) {
+      }
+      // 2) arm every future entry (stale ones now carry revived dates)
       int armed = 0;
       for (int i = 0; i < keep.length(); i++) {
         JSONObject o = keep.optJSONObject(i);
@@ -480,6 +608,7 @@ public class ExactAlarmPlugin extends Plugin {
         intent.setAction("oh.exact." + reqCode);
         intent.putExtra("payload",
             new JSONObject()
+                .put("id", o.optString("id", ""))
                 .put("key", o.optString("key", ""))
                 .put("title", o.optString("title", ""))
                 .put("body", o.optString("body", ""))
@@ -487,6 +616,7 @@ public class ExactAlarmPlugin extends Plugin {
                 .put("time", o.optString("time", ""))
                 .put("speak", o.optString("speak", ""))
                 .put("lang", o.optString("lang", "bn"))
+                .put("mode", o.optString("mode", ""))
                 .toString());
         int flags = PendingIntent.FLAG_CANCEL_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -507,6 +637,60 @@ public class ExactAlarmPlugin extends Plugin {
       return armed;
     } catch (Exception e) {
       return 0;
+    }
+  }
+
+  // ---------------- v5.7: sound policy helpers ----------------
+
+  /** The QUIET channel every non-azan reminder is posted on — NO sound, NO
+   *  vibration (owner: "বাকি যেগুলো আছে এগুলো জাস্ট নোটিফিকেশন… কোনো অ্যালার্ম
+   *  আসবে না"). The TTS name-call is the only sound a reminder makes. */
+  static final String QUIET_CHANNEL = "oh_reminder";
+
+  static void ensureQuietChannel(Context ctx) {
+    try {
+      NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+      if (nm == null) return;
+      if (nm.getNotificationChannel(QUIET_CHANNEL) != null) return;
+      NotificationChannel ch = new NotificationChannel(QUIET_CHANNEL,
+          "রিমাইন্ডার (নোটিফিকেশন)", NotificationManager.IMPORTANCE_DEFAULT);
+      ch.setSound(null, null); // silent — no alarm ring, ever
+      ch.enableVibration(false);
+      ch.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
+      nm.createNotificationChannel(ch);
+    } catch (Exception ignored) {
+    }
+  }
+
+  /** True when this alarm must ring as an AZAN (loud sound + full-screen).
+   *  v5.7: explicit mode wins; legacy payloads (no mode) fall back to the
+   *  v5.6 shape — speak-less alarms with an azan sound / fajr-adhan key. */
+  static boolean isAzanAlarm(String key, String sound, String mode, String speak) {
+    if ("azan".equals(mode)) return true;
+    if ("remind".equals(mode)) return false;
+    // legacy (v5.6- schedule persisted before an OTA-less reboot restore):
+    if (speak != null && !speak.trim().isEmpty()) return false;
+    String k = key == null ? "" : key;
+    if (k.equals("fajr") || k.startsWith("adhan_")) return true;
+    String s = sound == null ? "" : sound.toLowerCase();
+    return s.contains("azan") || s.contains("adhan");
+  }
+
+  /** v5.7: delete stale LOUD oh_x_* channels (water/meal music etc.) so an
+   *  upgraded phone can never ring them again. Channels for the azan sounds
+   *  that are still scheduled are kept. */
+  static void pruneLoudChannels(Context ctx, java.util.Set<String> keepChannelIds) {
+    try {
+      NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+      if (nm == null) return;
+      for (NotificationChannel ch : nm.getNotificationChannels()) {
+        String cid = ch.getId();
+        if (cid != null && cid.startsWith("oh_x_")
+            && (keepChannelIds == null || !keepChannelIds.contains(cid))) {
+          nm.deleteNotificationChannel(cid);
+        }
+      }
+    } catch (Exception ignored) {
     }
   }
 
