@@ -1,11 +1,13 @@
 // Builds the GitHub-upload ZIP: exactly the files CI needs, nothing else.
-// Output: /home/z/my-project/download/our-habit-github-upload.zip
+// Output: /home/z/my-project/download/our-habit-v5.7.0-github-upload.zip
+// v5.7: ROOT now points at the real working tree (work/our-habit-fixed) —
+// /home/z/my-project itself is only the Next.js scaffold template.
 const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
 
-const ROOT = "/home/z/my-project";
-const OUT = path.join(ROOT, "download", "our-habit-github-upload.zip");
+const ROOT = "/home/z/my-project/work/our-habit-fixed";
+const OUT = "/home/z/my-project/download/our-habit-v5.7.0-github-upload.zip";
 const STAGE = "/tmp/our-habit-repo";
 
 // 1. clean stage
@@ -24,6 +26,7 @@ const FILES = [
   "components.json",
   "capacitor.config.ts",
   "google-services.json",
+  "next-env.d.ts",
   ".gitignore",
 ];
 for (const f of FILES) {
@@ -45,10 +48,14 @@ for (const d of DIRS) {
   fs.cpSync(src, path.join(STAGE, d), { recursive: true });
 }
 
-// 4. only the script CI actually runs
+// 4. the whole scripts/ tree EXCEPT the heavy local-only video frames (the
+//    owner's repo keeps every smoke/probe tool exactly like the v5.6 upload;
+//    CI itself only needs prepare-apk.mjs + bake-cfg.mjs)
 fs.mkdirSync(path.join(STAGE, "scripts"), { recursive: true });
-fs.copyFileSync(path.join(ROOT, "scripts", "prepare-apk.mjs"), path.join(STAGE, "scripts", "prepare-apk.mjs"));
-fs.copyFileSync(path.join(ROOT, "scripts", "bake-cfg.mjs"), path.join(STAGE, "scripts", "bake-cfg.mjs"));
+fs.cpSync(path.join(ROOT, "scripts"), path.join(STAGE, "scripts"), {
+  recursive: true,
+  filter: (src) => !src.includes("video-frames"),
+});
 
 // 5. sanity — the workflow requires these to exist
 const must = [
