@@ -560,14 +560,16 @@ export function initPush(uid: string, cfg?: Partial<ServerCfg> | null): void {
           });
           // foreground: system does NOT display these — the app decides.
           // chat → the in-app popup (ChatWatchdog) already fired; update →
-          // pull the fresh cfg so the UpdateBar appears immediately AND
-          // v5.4: SPEAK the personalized name-call aloud right away.
+          // pull the fresh cfg so the UpdateBar appears immediately.
+          // v5.5.1: the VOICE on arrival now belongs to PushSpeakService
+          // (native) in EVERY app state — speaking here too would call the
+          // name TWICE (native + JS). The tap-path below still speaks on
+          // purpose (tapping an old entry hours later re-announces it).
           await PushNotifications.addListener("pushNotificationReceived", (n: AnyRec) => {
             try {
               const d = n?.data || {};
               if (d.ohUpdate) {
                 window.dispatchEvent(new Event("oh:refresh-cfg"));
-                if (d.speak && d.speakText) void speakUpdateAloud(String(d.speakText), d.version, String(d.ts || ""));
               }
             } catch {
               /* ignore */
