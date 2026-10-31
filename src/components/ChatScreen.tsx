@@ -27,8 +27,19 @@ import { ChatMsg, FbProfile, chatQueueSize, fbSendChat, listenNotes, listenProfi
 import { uid as newId } from "@/lib/types";
 import { nativeVibrate } from "@/lib/native";
 import { makeT, fmtClock } from "@/lib/i18n";
+import { banglaNameFromEnglish } from "@/lib/translit";
 import { APP_VERSION } from "@/lib/version";
 import { initPush, hasPushToken } from "@/lib/push";
+
+/** v5.6: রিলস-ওয়ার্নিংয়ের ডাক — রেজিস্টার্ড নাম (settings.name → account.name
+ *  fallback) + বাংলা উচ্চারণ (Yasin→ইয়াসিন), তারপর বাংলা সতর্কবার্তা। */
+function reelsWarnLine(
+  state: { settings: { name?: string }; account?: { name?: string } | null },
+  tBn: (k: string) => string
+): string {
+  const raw = String(state.settings.name || state.account?.name || "").trim();
+  return `${banglaNameFromEnglish(raw)}${tBn("speakReelsWarn")}`;
+}
 
 export interface ChatTarget {
   uid: string;
@@ -490,7 +501,7 @@ export function ChatWatchdog() {
           pairs: pairs.map((p) => ({ key: p.key, name: p.name })),
           lang: state.settings.language || "bn",
           reelsLimitMin: state.settings.reelsLimitMin || 0,
-          reelsWarn: `${state.settings.name || ""}${tBn("speakReelsWarn")}`,
+          reelsWarn: reelsWarnLine(state, tBn),
           buildVersion: APP_VERSION, // v3.3: background listener fires update notifs against this
           // v5.3.0: when real FCM push is live on this device (token saved AND
           // the owner set a send path — relay or legacy key) the background
@@ -615,12 +626,12 @@ export function ChatWatchdog() {
     void import("@/lib/native").then(({ nativeSetReelsLimit }) =>
       nativeSetReelsLimit(
         state.settings.reelsLimitMin || 0,
-        `${state.settings.name || ""}${tBn("speakReelsWarn")}`,
+        reelsWarnLine(state, tBn),
         "bn" // v5.1: the spoken warning is always Bengali
       )
     );
 
-  }, [state.settings.reelsLimitMin, state.settings.name, tBn]);
+  }, [state.settings.reelsLimitMin, state.settings.name, state.account?.name, tBn]);
 
   // SPEAK the reels warning when the app itself sees the limit crossed
   useEffect(() => {
@@ -630,7 +641,7 @@ export function ChatWatchdog() {
     const mins = log?.reelsMin ?? 0;
     if (limit > 0 && mins >= limit && acc?.uid) {
       void import("@/lib/native").then(({ nativeSpeakOnce }) =>
-        nativeSpeakOnce("reelsWarn", `${state.settings.name || ""}${tBn("speakReelsWarn")}`, "bn", 30)
+        nativeSpeakOnce("reelsWarn", reelsWarnLine(state, tBn), "bn", 30)
       );
     }
      

@@ -50,6 +50,7 @@
 import type { ServerCfg } from "./types";
 import { isNative, nativeSpeakOnce } from "./native";
 import { fbSavePushToken, fbGetPushToken, fbListUsers, fetchRemoteMeta, FbProfile } from "./cloud";
+import { banglaNameFromEnglish } from "./translit";
 import { CapacitorHttp } from "@capacitor/core";
 
 type AnyRec = Record<string, any>;
@@ -328,12 +329,24 @@ export async function pushChatToPartner(
 }
 
 /**
- * v5.5: deliver a DIFFERENT message per token — the update broadcast path.
- * DATA-ONLY payloads (no `notification` block): data messages wake the app's
- * PushSpeakService even when the process is KILLED, so the phone posts the
- * tray notification AND speaks the name-call the moment it lands. The tray
- * title/body ride inside `data` (PushSpeakService renders them). Chat pushes
- * keep their notification block — only updates need the voice-on-arrival.
+ * v5.6: deliver the update with TWO messages per phone — THE OLD-VERSION FIX
+ * (owner: "আগের যারা 5.30 অথবা 5.20 অথবা 5.40 ওদের ঐখানে ওই সাউন্ডটা আসতেছে না")।
+ *
+ *  📢 MESSAGE A — notification + data: the SYSTEM tray displays it on EVERY
+ *     app version (5.2 / 5.3 / 5.4 / 5.5 / 5.6) when the app is closed or
+ *     backgrounded. This is the exact same shape chat pushes use — the one
+ *     format that has ALWAYS been visible. Old apps (v5.4+) even speak the
+ *     name on tap (their tap handler reads d.speak + d.speakText).
+ *
+ *  🗣 MESSAGE B — DATA-ONLY (no notification block): data messages wake the
+ *     app's PushSpeakService even when the process is KILLED, so v5.6+ phones
+ *     SPEAK the personalized name-call the moment it lands. On old versions
+ *     this message is a harmless no-op (their plugin service has no bridge).
+ *
+ *  v5.6 PushSpeakService dedupes by `ts` (both messages share it), speaks
+ *  once, and posts its own tray entry ONLY while the app is in the FOREGROUND
+ *  (where the system does NOT display message A) — so there is never a
+ *  double notification or a double name-call.
  */
 async function deliverMany(
   pairs: TokenMsg[],
@@ -351,28 +364,52 @@ async function deliverMany(
     key = override?.serverKey || c.serverKey;
   }
   if (relay) {
-    // FCM HTTP v1 DATA message — no notification block on purpose
-    const fcm = pairs.map(({ token, m }) => ({
-      token,
-      android: { priority: "high" },
-      data: m.data,
-    }));
-    return sendRelayFcm(relay, fcm, total);
+    // two FCM HTTP v1 messages per phone (A = notification+data, B = data-only)
+    const fcm: AnyRec[] = [];
+    for (const { token, m } of pairs) {
+      fcm.push({
+        token,
+        notification: { title: m.title, body: m.body },
+        android: {
+          priority: "high",
+          notification: { channel_id: m.channelId, tag: m.tag, sound: "default", priority: "high" },
+        },
+        data: { ohUpdate: "1", version: String(m.data.version || ""), ts: String(m.data.ts || ""), speak: "1", speakText: String(m.data.speakText || ""), sysTray: "1" },
+      });
+      fcm.push({
+        token,
+        android: { priority: "high" },
+        data: { ...m.data, sysTray: "0" },
+      });
+    }
+    const r = await sendRelayFcm(relay, fcm, fcm.length);
+    // report in PHONES (2 messages per phone), not raw message count
+    const phones = Math.min(total, Math.round(r.sent / 2));
+    return { ok: r.ok, sent: phones, total, error: r.ok ? undefined : r.error };
   }
   if (key) {
     let sent = 0;
     let err = "";
     for (const { token, m } of pairs) {
-      // legacy DATA-ONLY too (same PushSpeakService receives it)
-      const payload: AnyRec = {
+      // A) notification+data — the tray entry every version shows
+      const payloadA: AnyRec = {
         to: token,
         priority: "high",
         collapse_key: m.tag || "oh_update",
-        data: m.data,
+        notification: { title: m.title, body: m.body, channel_id: m.channelId, tag: m.tag, sound: "default" },
+        data: { ohUpdate: "1", version: String(m.data.version || ""), ts: String(m.data.ts || ""), speak: "1", speakText: String(m.data.speakText || ""), sysTray: "1" },
       };
-      const r = await sendFcmRaw(key, payload);
-      sent += r.sent;
-      if (!r.ok && !err) err = r.error || "legacy_failed";
+      // B) data-only — the v5.6+ arrival voice
+      const payloadB: AnyRec = {
+        to: token,
+        priority: "high",
+        collapse_key: m.tag || "oh_update",
+        data: { ...m.data, sysTray: "0" },
+      };
+      const ra = await sendFcmRaw(key, payloadA);
+      const rb = await sendFcmRaw(key, payloadB);
+      if (ra.ok || rb.ok) sent++;
+      if (!ra.ok && !rb.ok && !err) err = ra.error || rb.error || "legacy_failed";
     }
     return sent > 0 ? { ok: true, sent, total } : { ok: false, sent: 0, total, error: err };
   }
@@ -402,12 +439,16 @@ export async function broadcastUpdatePush(opts: {
       .filter((u) => String(u.fcmToken || "").trim())
       .map((u) => {
         const name = String(u.name || "").trim() || "বন্ধু";
+        // v5.6: নোটিফিকেশনের লেখায় রেজিস্টার্ড নাম, আর TTS ভয়েসে বাংলা
+        // উচ্চারণ (Yasin→ইয়াসিন) — bn ভয়েস ল্যাটিন অক্ষর সুন্দর পড়ে না
+        const spoken = banglaNameFromEnglish(name);
         const line = `${name}, অ্যাপসে নতুন আপডেট চলে এসেছে। দয়া করে অ্যাপটা আপডেট করে নিন।`;
+        const speakLine = `${spoken}, অ্যাপসে নতুন আপডেট চলে এসেছে। দয়া করে অ্যাপটা আপডেট করে নিন।`;
         return {
           token: String(u.fcmToken),
           m: {
             title: "🔄 নতুন আপডেট চলে আসছে!",
-            body: line, // v5.5: the tray shows just the name-call (clean)
+            body: line, // the tray shows the personalized name-call
             tag: "oh_update", // one update notification at a time in the tray
             channelId: UPDATE_CHANNEL,
             data: {
@@ -415,7 +456,7 @@ export async function broadcastUpdatePush(opts: {
               version: opts.version || "",
               ts: String(Date.now()),
               speak: "1",
-              speakText: line, // PushSpeakService SPEAKS exactly this sentence
+              speakText: speakLine, // PushSpeakService SPEAKS exactly this sentence
               title: "🔄 নতুন আপডেট চলে আসছে!",
               body: line,
             },

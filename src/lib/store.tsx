@@ -495,18 +495,18 @@ export function checkReminders(
       alarm(`adhan_${pk}`, t("appName"), t("adhanMsg"));
     }
   }
-  // v5.5 মসজিদে যাওয়ার জন্য — the owner's MANUAL jamat times fire exactly at
+  // v5.6 নামাজের রিমাইন্ডার — the owner's MANUAL jamat times fire exactly at
   // the chosen minute (no +N offsets). The APK schedules the same alarms in
   // the exact engine (page.tsx) with the name-call, so they ring + SPEAK even
-  // with the app closed. Boy → "মসজিদে যাও" · girl → "নামাজ পড়ো".
+  // with the app closed. SAME message for everyone (owner: "মসজিদে যাওয়ার
+  // দরকার নাই — নামাজের সময় হইছে নামাজ পড়ো, ছেলে-মেয়ে সবার জন্য সেম").
   for (const pk of prayerKeys) {
     const mc = s.mosquePrayers?.[pk];
     if (mc?.on && hm === mc.time && !already(`mosque_${pk}`)) {
-      const girl = s.gender === "female";
       alarm(
         `mosque_${pk}`,
         `🕌 ${t("mosqueFire")} — ${t(`prayer_${pk}`)}`,
-        girl ? t("mosqueBodyGirl") : t("mosqueBodyBoy")
+        t("mosqueBodyAll")
       );
     }
   }

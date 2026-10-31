@@ -1733,22 +1733,16 @@ function AlarmsCard() {
         ))}
       </Card>
 
-      {/* ---------- v5.5: মসজিদে যাওয়ার জন্য (owner: "এটা আলাদা একটা লেআউটে
-          রাখবা... ফজরেরটা, জোহরের, আসরের, মাগরিব, ইশা — আমি নিজে মেনুয়ালে
-          সিলেক্ট করব") — FIVE manual jamat times; at the set minute the exact
-          alarm rings and the phone CALLS by name (boy → মসজিদে যাও · girl →
-          নামাজ পড়ো, from the profile's ছেলে/মেয়ে pick) ---------- */}
+      {/* ---------- v5.6: নামাজের রিমাইন্ডার (owner: "মসজিদে যাওয়ার দরকার নাই —
+          নামাজের সময় হইছে নামাজ পড়ো। এটাই দেও। সবার জন্যের ক্ষেত্রে মেয়ে ছেলে
+          সবার ক্ষেত্রে সেম") — FIVE manual jamat times; at the set minute the
+          exact alarm rings and the phone CALLS by name with the SAME line for
+          everyone: "নামাজের সময় হইছে, নামাজ পড়ো" ---------- */}
       <Card className="mb-4 border-emerald-600/30 bg-gradient-to-br from-emerald-600/5 to-transparent">
         <SectionTitle title={`🕌 ${t("mosqueTitle")}`} sub={t("mosqueSub")} />
-        {s.gender === "male" || s.gender === "female" ? (
-          <div className="rounded-xl bg-emerald-600/10 border border-emerald-600/25 px-3 py-2 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 mb-2">
-            {t("mosqueNote")}
-          </div>
-        ) : (
-          <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-[11px] font-semibold text-amber-700 dark:text-amber-300 mb-2">
-            ⚠️ {t("mosqueNeedGender")}
-          </div>
-        )}
+        <div className="rounded-xl bg-emerald-600/10 border border-emerald-600/25 px-3 py-2 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 mb-2">
+          {t("mosqueNote")}
+        </div>
         {PRAYER_KEYS.map((k) => {
           const mc = s.mosquePrayers?.[k] || { on: false, time: "05:30" };
           const setMc = (patch: Partial<{ on: boolean; time: string }>) => {

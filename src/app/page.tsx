@@ -20,6 +20,7 @@ import { pushDay, ensureProfile, fbIsBanned, fbSignOut, fbTouchLastAt, DaySummar
 import { APP_VERSION } from "@/lib/version";
 import { warmAudio, playChime } from "@/lib/audio";
 import { isNative, nativeOpenUrl, nativeScheduleAlarms, nativeHandleBackButton, listenWaterActions, nativeSnoozeWater, nativeVibrate, getCurrentLocation, NativeAlarm, AlarmSyncResult, nativeScheduleExactAlarms, nativeCancelExactAlarms, nativeExactPending, nativeConsumeAlarmLaunch, nativeSpeakOnce, ExactAlarmSpec } from "@/lib/native";
+import { banglaNameFromEnglish } from "@/lib/translit";
 import { waterAlarmTimes, shiftTime, randomMealMusic, PRAYER_KEYS, dateAtHM, addDays } from "@/lib/types";
 import { makeT } from "@/lib/i18n";
 
@@ -104,7 +105,10 @@ function UpdateBar() {
       if (localStorage.getItem(KEY)) return;
       localStorage.setItem(KEY, "1");
       const myName = ((state.settings.name || state.account?.name || "") as string).trim() || "বন্ধু";
-      void nativeSpeakOnce(`updbar_${String(v).replace(/[^a-zA-Z0-9]/g, "")}`, `${myName}, অ্যাপসে নতুন আপডেট চলে এসেছে। দয়া করে অ্যাপটা আপডেট করে নিন।`, "bn", 0);
+      // v5.6: ইংরেজি বানানের নাম বাংলা উচ্চারণে পড়ে দিতে (Sakib→সাকিব) —
+      // bn TTS ভয়েস ল্যাটিন অক্ষর সুন্দর করে পড়তে পারে না
+      const spokenName = banglaNameFromEnglish(myName);
+      void nativeSpeakOnce(`updbar_${String(v).replace(/[^a-zA-Z0-9]/g, "")}`, `${spokenName}, অ্যাপসে নতুন আপডেট চলে এসেছে। দয়া করে অ্যাপটা আপডেট করে নিন।`, "bn", 0);
     } catch {
       /* ignore */
     }
@@ -322,6 +326,9 @@ function Shell() {
         state.settings.mealPreAlert,
         state.settings.azanSound, // v2.8: azan recitation changes the alarm sound
         state.settings.name,     // v2.9: the name-call text follows the name
+        state.account?.name,     // v5.6 ROOT-CAUSE FIX: Google-লগইনে settings.name খালি থাকে —
+                                  // account.name লোড হওয়ার পরও alarmSig না বদলালে নামহীন
+                                  // শিডিউল আটকে থাকত (নাম ধরে ডাকা কাজ করত না)
         state.settings.language, // v2.9: TTS language follows the app language
       ])
     : "";
@@ -380,6 +387,10 @@ function Shell() {
     // lost its voice. The registered ACCOUNT name (Google/email profile) is
     // now the fallback, exactly like the Home greeting already does.
     const myName = ((s.settings.name || s.account?.name || "") as string).trim();
+    // v5.6: নাম ধরে ডাকার শব্দগুলোতে বাংলা উচ্চারণ (owner round-15: "নামটা
+    // ইংলিশেই থাকবে, কিন্তু বলবে বাংলাদেশি উচ্চারণে") — banglaNameFromEnglish
+    // ইংরেজি-বানান নামকে বাংলা করে (Yasin→ইয়াসিন), বাংলা নাম অপরিবর্তিত থাকে।
+    const spokenName = banglaNameFromEnglish(myName);
     // v5.1: স্পোকেন রিমাইন্ডার সবসময় বাংলা (owner: "ডাক বাংলায় থাকবে, নাম
     // আগের মতোই পড়ে দেবে") — the TTS text + voice are locked to Bengali
     // regardless of the UI language; the NAME stays exactly as registered
@@ -387,11 +398,13 @@ function Shell() {
     // title/body follow the chosen UI language.
     const tBn = makeT("bn");
     const lang = "bn"; // TTS voice — always Bengali for every spoken reminder
-    const named = (suffix: string) => (myName ? `${myName}${suffix}` : "");
+    const named = (suffix: string) => (spokenName ? `${spokenName}${suffix}` : "");
 
     // ---------- v2.8/v2.9 EXACT ALARMS (azan / Fajr / meals / water / sleep) ----------
+    // v5.6: আজ+আগামীকাল (২ দিন) → এখন ৪ দিন — কয়েকদিন অ্যাপ না খুললেও
+    // অ্যালার্ম বেঁচে থাকে (আগে ২ দিন পর মৃত শিডিউল → "সঠিক সময়ে বাজে না")
     const exact: ExactAlarmSpec[] = [];
-    const days = [todayStr(), addDays(todayStr(), 1)];
+    const days = [0, 1, 2, 3].map((n) => addDays(todayStr(), n));
     const pushExact = (
       key: string,
       time: string,
@@ -423,25 +436,20 @@ function Shell() {
           azanSound
         );
     });
-    // ---------- v5.5: মসজিদে যাওয়ার জন্য (owner: "আমি নিজে মেনুয়ালে সিলেক্ট করব
-    // ... একটা তিরিশ বাজলে সাথে সাথে আমাকে অ্যালার্ট করবে নাম ধরে ডাকবে") —
-    // the owner's OWN mosque jamat times, no +N offset, fired at the exact
-    // minute. The spoken call follows the profile gender: boy → "মসজিদে যাও",
-    // girl → "নামাজ পড়ো" (owner: "মেয়ে হলে মসজিদে যাও বলা হবে না")।
+    // ---------- v5.6: নামাজের সময় হইছে, নামাজ পড়ো (owner: "মসজিদে যাওয়ার
+    // দরকার নাই — নামাজের সময় হইছে নামাজ পড়ো। এটাই দেও। সবার জন্যের ক্ষেত্রে
+    // মেয়ে ছেলে সবার ক্ষেত্রে সেম") — মালিকের নিজের জামাতের সময়, কোনো +N অফসেট
+    // নেই, ঠিক ওই মিনিটে বাজে + নাম ধরে ডাকে। ছেলে-মেয়ে সবাই একই কথা শোনে।
     (["fajr", "dhuhr", "asr", "maghrib", "isha"] as const).forEach((pk) => {
       const mc = s.settings.mosquePrayers?.[pk];
       if (mc?.on) {
-        const girl = s.settings.gender === "female";
-        const speakLine = myName
-          ? `${myName}, ${tBn("speakMosqueTime")} ${girl ? tBn("speakMosqueGirl") : tBn("speakMosqueBoy")}`
-          : "";
         pushExact(
           `mosque_${pk}`,
           mc.time,
           `🕌 ${tBn("mosqueFire")} — ${tBn(`prayer_${pk}`)}`,
-          girl ? tBn("mosqueBodyGirl") : tBn("mosqueBodyBoy"),
+          tBn("mosqueBodyAll"),
           "alarm.wav",
-          speakLine
+          spokenName ? `${spokenName}, ${tBn("speakMosqueAll")}` : ""
         );
       }
     });
@@ -457,7 +465,7 @@ function Shell() {
           `🍽 ${t(`meal_${mk}`)}`,
           t("mealAlarmMsg"),
           randomMealMusic(),
-          myName ? `${myName}, ${tBn(`meal_${mk}`)} ${tBn("speakMeal")}` : ""
+          myName ? `${spokenName}, ${tBn(`meal_${mk}`)} ${tBn("speakMeal")}` : ""
         );
         // v2.4: 15-min EARLY heads-up — spoken with the name
         if (s.settings.mealPreAlert !== false)
@@ -467,7 +475,7 @@ function Shell() {
             `🍽 ${t(`meal_${mk}`)}`,
             t("mealPreMsg"),
             "alarm.wav",
-            myName ? `${myName}, ${tBn(`meal_${mk}`)} ${tBn("speakMealPre15")}` : ""
+            myName ? `${spokenName}, ${tBn(`meal_${mk}`)} ${tBn("speakMealPre15")}` : ""
           );
       }
     });

@@ -628,6 +628,31 @@ export async function nativeCancelExactAlarms(): Promise<void> {
   }
 }
 
+/** v5.6: schedule ONE extra alarm WITHOUT touching the existing schedule —
+ *  the "⏰ টেস্ট অ্যালার্ম" button uses it to verify the exact-time ring +
+ *  the name-call in about a minute. APK only. */
+export async function nativeScheduleOneAlarm(a: ExactAlarmSpec): Promise<boolean> {
+  if (!isNative()) return false;
+  const p = exactPlugin();
+  if (!p) return false;
+  try {
+    await p.scheduleOne({
+      id: a.id,
+      at: a.at,
+      key: a.key,
+      time: a.time,
+      title: a.title,
+      body: a.body,
+      sound: a.sound,
+      speak: a.speak || "",
+      lang: a.lang || "bn",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function nativeExactPending(): Promise<{ count: number; nextAt: number; nextTitle: string }> {
   const p = exactPlugin();
   if (!p) return { count: 0, nextAt: 0, nextTitle: "" };

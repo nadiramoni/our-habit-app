@@ -1,5 +1,23 @@
 // App version — bump this when you ship an update.
 // The admin panel's "latest version" is compared against this to trigger auto-update.
+// v5.6.0 — owner round ("অ্যালার্ম সঠিক টাইমে বাজতেছে না + নাম ধরে ডাকতেছে না +
+//           পুরনো ভার্সনের ফোনে আপডেট নোটিফিকেশন যায় না + নামাজের কথা সেম"):
+//           (1) NAME-CALL ROOT-CAUSE FIX — alarmSig now includes
+//           account.name too (Google-লগইনে settings.name খালি থাকে, আর
+//           account.name লোড হওয়ার পর শিডিউল আর রি-সিঙ্ক হত না → সব অ্যালার্ম
+//           চিরকাল নামহীন) + banglaNameFromEnglish ট্রান্সলিট ফিরিয়ে আনা
+//           (v4.0-এর অকর্মা module ছিল — ইংরেজি-বানান নাম bn ভয়েসে ঠিক পড়াই
+//           যেত না: Yasin→ইয়াসিন) — এখন পানি/খাবার/নামাজ/ঘুম/রিলস সব ডাকে।
+//           (2) EXACT-TIME HARDENING — অ্যালার্ম শিডিউল এখন আজ+৩ দিন (আগে ২
+//           দিন পরে মৃত) + Settings-এ "🔊 ডাক টেস্ট" ও "⏰ ১ মিনিট পর টেস্ট"
+//           বাটন — মালিক ১ মিনিটেই নিজের ফোনে রিং+ডাক যাচাই করতে পারবে।
+//           (3) UPDATE PUSH — প্রতি ফোনে এখন দুইটা মেসেজ যায়: নোটিফিকেশন+
+//           data (পুরনো 5.2/5.3/5.4 ফোনে সিস্টেম নিজেই দেখায় — আগে data-only
+//           ছিল বলে পুরনো ভার্সনে কিছুই আসত না) + data-only (নতুন ভার্সন নাম
+//           ধরে পড়ে শোনায়)। ডাবল নোটিফিকেশন/ডাবল ডাক হবে না (ts-dedupe)।
+//           (4) নামাজের রিমাইন্ডার — সবার জন্য একই কথা: "নামাজের সময় হইছে,
+//           নামাজ পড়ো" (মসজিদে-যাও বাদ; ছেলে-মেয়ে ভেদ বাদ; আজান রিমাইন্ডার
+//           আগের মতোই আজান বাজায়)।
 // v5.3.0 — owner round ("এই দুইটা ফিক্স করে দাও, বাকি সব ঠিক আছে"):
 //           (1) REAL MESSAGE PUSH NOTIFICATIONS — when I message a friend,
 //           THEIR phone now gets a true FCM push notification with my name
@@ -181,4 +199,4 @@
 //           (4) scripts/our-habit-push-relay.gs — the relay reference file
 //           ships in the repo so the deployed Apps Script can be re-pasted
 //           any time without losing the protocol.
-export const APP_VERSION = "5.5.0";
+export const APP_VERSION = "5.6.0";

@@ -29,8 +29,11 @@ import {
   nativeOpenExactAlarmSettings,
   nativeAlarmEngineStatus,
   nativeOpenFullScreenSettings,
+  nativeScheduleOneAlarm,
+  nativeSpeakOnce,
   PermStatus,
 } from "@/lib/native";
+import { banglaNameFromEnglish } from "@/lib/translit";
 import { PERM_FLOW_KEY } from "@/components/PermissionSetupFlow";
 
 export default function SettingsTab() {
@@ -49,6 +52,8 @@ export default function SettingsTab() {
   const [genderSaved, setGenderSaved] = useState(false);
   const [locBusy, setLocBusy] = useState(false);
   const [fullScreenPerm, setFullScreenPerm] = useState<boolean | null>(null);
+  // v5.6: 🔊 ডাক টেস্ট + ⏰ টেস্ট অ্যালার্ম feedback
+  const [testMsg, setTestMsg] = useState("");
 
   useEffect(() => {
     const id = setTimeout(() => setNativeOn(isNative()), 0);
@@ -563,6 +568,66 @@ export default function SettingsTab() {
             </button>
           ) : null}
         </div>
+
+        {/* ---------- v5.6: 🔊 ডাক টেস্ট + ⏰ টেস্ট অ্যালার্ম (owner: "নাম ধরে ডাকা
+            টোটালি কাজ করতেছে না" — এখন মালিক ১ মিনিটেই নিজের ফোনে যাচাই করতে
+            পারবে: ভয়েস এখনি শুনবে, আর টেস্ট অ্যালার্ম ১ মিনিট পর ঠিক সময়ে
+            বাজবে + নাম ধরে ডাকবে) ---------- */}
+        {nativeOn ? (
+          <div className="flex gap-2 mt-2">
+            <button
+              type="button"
+              onClick={async () => {
+                const raw = ((s.name || state.account?.name || "") as string).trim();
+                if (!raw) {
+                  setTestMsg(t("testVoiceNoName"));
+                  return;
+                }
+                const spoken = banglaNameFromEnglish(raw);
+                const ok = await nativeSpeakOnce(
+                  "settings_voice_test",
+                  `${spoken}, এই যে! আমি তোমাকে ডাকতে পারছি। অ্যালার্মেও ঠিক এভাবেই নাম ধরে ডাকব।`,
+                  "bn",
+                  0
+                );
+                setTestMsg(ok ? t("testVoiceOk") : t("testVoiceNoName"));
+              }}
+              className="flex-1 rounded-xl bg-emerald-600/15 border border-emerald-600/30 text-emerald-700 dark:text-emerald-300 text-sm font-semibold py-2.5 min-h-[44px] active:scale-[0.98] transition-transform"
+            >
+              {t("testVoiceBtn")}
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                const raw = ((s.name || state.account?.name || "") as string).trim();
+                const spoken = banglaNameFromEnglish(raw);
+                const at = Date.now() + 60_000;
+                const d = new Date(at);
+                const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+                const ok = await nativeScheduleOneAlarm({
+                  id: "test_alarm",
+                  at,
+                  key: "test",
+                  time: hm,
+                  title: "⏰ টেস্ট অ্যালার্ম",
+                  body: "অ্যালার্ম ইঞ্জিন ঠিক আছে ✓",
+                  sound: "alarm.wav",
+                  speak: spoken
+                    ? `${spoken}, এই হইল টেস্ট অ্যালার্ম। আমি ঠিক সময়ে ডাকতে পারছি।`
+                    : "এই হইল টেস্ট অ্যালার্ম। আমি ঠিক সময়ে ডাকতে পারছি।",
+                  lang: "bn",
+                });
+                setTestMsg(ok ? t("testAlarmOk") : t("testAlarmFail"));
+              }}
+              className="flex-1 rounded-xl bg-emerald-600/15 border border-emerald-600/30 text-emerald-700 dark:text-emerald-300 text-sm font-semibold py-2.5 min-h-[44px] active:scale-[0.98] transition-transform"
+            >
+              {t("testAlarmBtn")}
+            </button>
+          </div>
+        ) : null}
+        {testMsg ? (
+          <p className="text-[11px] font-semibold text-primary mt-2 leading-relaxed">{testMsg}</p>
+        ) : null}
         <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">{t("batteryNote")}</p>
       </Card>
 
