@@ -69,6 +69,10 @@ const PLUGINS = [
   // background Reels-limit guard
   "keep-alive/OhKeepAliveService.java",
   "keep-alive/ChatServicePlugin.java",
+  // v5.5: the update announcement that SPEAKS THE MOMENT IT LANDS — FCM data
+  // messages reach this service even when the app is closed → notification +
+  // the phone calls the user by name (TTS) without opening the app
+  "push-speak/PushSpeakService.java",
 ];
 for (const rel of PLUGINS) {
   fs.copyFileSync(path.join(ROOT, "android-plugins", rel), path.join(appPkgDir, path.basename(rel)));
@@ -252,6 +256,22 @@ const SVC_KEEP = [
 ].join("\n    ");
 if (!mf.includes("AlarmSpeakService")) {
   mf = mf.replace(/<\/application>/, `    ${SVC_SPEAK}\n    ${SVC_KEEP}\n  </application>`);
+  changed = true;
+}
+// v5.5: PushSpeakService — a SECOND FirebaseMessagingService listening for
+// the same MESSAGING_EVENT action (Firebase delivers every message to ALL
+// registered services). It receives the DATA-ONLY update broadcast while the
+// app is closed, posts the notification and SPEAKS the name-call. Multiple
+// MESSAGING_EVENT services coexist fine with @capacitor/push-notifications.
+const SVC_PUSH = [
+  '<service android:name="com.ourhabit.app.PushSpeakService" android:exported="false">',
+  '  <intent-filter>',
+  '    <action android:name="com.google.firebase.MESSAGING_EVENT" />',
+  '  </intent-filter>',
+  '</service>',
+].join("\n    ");
+if (!mf.includes("PushSpeakService")) {
+  mf = mf.replace(/<\/application>/, `    ${SVC_PUSH}\n  </application>`);
   changed = true;
 }
 if (changed) {
