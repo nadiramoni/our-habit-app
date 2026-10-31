@@ -124,6 +124,23 @@ public class ExactAlarmPlugin extends Plugin {
         keep.put(o);
       }
 
+      // v5.6: a still-pending TEST alarm survives the full re-sync — the
+      // owner taps "⏰ টেস্ট" and may background/re-open the app inside its
+      // 1-minute window; wiping it there would make the test look broken.
+      try {
+        JSONArray oldSched = readSchedule(ctx);
+        for (int i = 0; i < oldSched.length(); i++) {
+          JSONObject o = oldSched.optJSONObject(i);
+          if (o == null) continue;
+          if (!"test_alarm".equals(o.optString("id", ""))) continue;
+          if (o.optLong("at", 0L) > now + 2000L) {
+            armOne(ctx, am, o);
+            keep.put(o);
+          }
+        }
+      } catch (Exception ignored) {
+      }
+
       // persist for boot-restore + pending()
       prefs(ctx).edit().putString(KEY_SCHEDULE, keep.toString()).apply();
 
@@ -145,6 +162,85 @@ public class ExactAlarmPlugin extends Plugin {
       call.resolve();
     } catch (Exception e) {
       call.reject(e.getMessage());
+    }
+  }
+
+  /**
+   * v5.6: schedule ONE extra alarm WITHOUT touching the existing schedule —
+   * the "⏰ টেস্ট অ্যালার্ম" button in Settings uses it so the owner can
+   * verify the exact-time ring + the name-call in about a minute. The test
+   * entry joins the persisted schedule (so boot-restore/cancelAll/cancelAllInternal
+   * keep working and it never duplicates on repeat taps — FLAG_CANCEL_CURRENT
+   * re-arms the same id).
+   */
+  @PluginMethod
+  public void scheduleOne(PluginCall call) {
+    try {
+      long at = 0L;
+      try {
+        Object raw = call.getData().opt("at"); // JS numbers arrive as Double
+        if (raw instanceof Number) at = ((Number) raw).longValue();
+      } catch (Exception ignored) {
+      }
+      Context ctx = getContext();
+      if (ctx == null || at <= System.currentTimeMillis() + 1000L) {
+        call.reject("at must be in the future");
+        return;
+      }
+      AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
+      JSONObject o = new JSONObject();
+      o.put("id", call.getString("id", "test"));
+      o.put("at", at);
+      o.put("key", call.getString("key", "test"));
+      o.put("time", call.getString("time", ""));
+      o.put("title", call.getString("title", "Our Habit"));
+      o.put("body", call.getString("body", ""));
+      o.put("sound", call.getString("sound", "alarm.wav"));
+      o.put("speak", call.getString("speak", ""));
+      o.put("lang", call.getString("lang", "bn"));
+      armOne(ctx, am, o);
+      // persist into the schedule so a later cancelAll()/rearm() cleans it up
+      JSONArray keep = readSchedule(ctx);
+      keep.put(o);
+      prefs(ctx).edit().putString(KEY_SCHEDULE, keep.toString()).apply();
+      JSObject ret = new JSObject();
+      ret.put("scheduled", 1);
+      call.resolve(ret);
+    } catch (Exception e) {
+      call.reject("scheduleOne failed: " + e.getMessage());
+    }
+  }
+
+  /** Arm a single alarm entry (v5.6 — shared by scheduleOne). */
+  private static void armOne(Context ctx, AlarmManager am, JSONObject o) throws Exception {
+    long at = o.optLong("at", 0L);
+    int reqCode = reqCode(o.optString("id", "test"), 7);
+    o.put("_req", reqCode);
+    Intent intent = new Intent(ctx, AlarmFireReceiver.class);
+    intent.setAction("oh.exact." + reqCode);
+    intent.putExtra("payload",
+        new JSONObject()
+            .put("key", o.optString("key", ""))
+            .put("title", o.optString("title", ""))
+            .put("body", o.optString("body", ""))
+            .put("sound", o.optString("sound", "alarm.wav"))
+            .put("time", o.optString("time", ""))
+            .put("speak", o.optString("speak", ""))
+            .put("lang", o.optString("lang", "bn"))
+            .toString());
+    int flags = PendingIntent.FLAG_CANCEL_CURRENT;
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      flags |= PendingIntent.FLAG_IMMUTABLE;
+    }
+    PendingIntent op = PendingIntent.getBroadcast(ctx, reqCode, intent, flags);
+    try {
+      am.setAlarmClock(new AlarmManager.AlarmClockInfo(at, launchPendingIntent(ctx, 1)), op);
+    } catch (Exception e) {
+      try {
+        am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, op);
+      } catch (Exception e2) {
+        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, op);
+      }
     }
   }
 

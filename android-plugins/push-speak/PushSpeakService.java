@@ -16,46 +16,48 @@ import com.google.firebase.messaging.RemoteMessage;
 import java.util.Map;
 
 /**
- * PushSpeakService — v5.5.1 (BUILD-FIXED): THE UPDATE ANNOUNCEMENT THAT SPEAKS
- * THE MOMENT IT LANDS (owner: "নোটিফিকেশন যাবে, সাথে সাথে পড়ে শোনাবে — নাদিরা
- * মনি। অ্যাপসে নতুন আপডেট এসেছে, অ্যাপসটা আপনি ইনস্টল করুন... অ্যাপসের ভিতর
- * ঢুকে পড়ে শোনাতে হবে না")।
+ * PushSpeakService — v5.6 (ALL-VERSION UPDATE DELIVERY): THE UPDATE
+ * ANNOUNCEMENT THAT REACHES EVERY PHONE (owner: "আগের যারা 5.30 অথবা 5.20
+ * অথবা 5.40 ওদের ঐখানে ওই সাউন্ডটা আসতেছে না — ওদের ঐখানে যাতে যায়")।
  *
- * ⚠️ v5.5.1 FIX 1 — WHY THE APK BUILD FAILED (12 javac errors): this class
- * used to extend com.google.firebase.messaging.FirebaseMessagingService, but
- * the firebase-messaging library is only an `implementation` dependency of
- * the @capacitor/push-notifications MODULE — never exposed to the app module's
- * compile classpath. prepare-apk.mjs now declares
- * com.google.firebase:firebase-messaging:25.0.1 in app/build.gradle itself.
+ * v5.6 ROOT CAUSE: v5.5 sent the update as a DATA-ONLY message. Old app
+ * versions (5.2–5.5.0) have NO PushSpeakService — with the app closed their
+ * Capacitor MessagingService had no bridge → the message was received by
+ * NOBODY → the phone showed nothing. Only the newest version spoke.
  *
- * ⚠️ v5.5.1 FIX 2 — WHY THIS SERVICE NOW EXTENDS THE PLUGIN'S ONE: Firebase's
- * ServiceStarter picks EXACTLY ONE service for the MESSAGING_EVENT intent
- * (PackageManager.resolveService — singular — and it CACHES the choice). With
- * two candidate services (the plugin's MessagingService + this one) delivery
- * was a silent coin flip. So this class extends
- * com.capacitorjs.plugins.pushnotifications.MessagingService and
- * prepare-apk.mjs removes the plugin's own service from the merged manifest
+ * THE FIX (src/lib/push.ts sends TWO messages per phone):
+ *   📢 MESSAGE A (notification+data, sysTray=1) — the SYSTEM tray displays
+ *      it on EVERY version when the app is closed/backgrounded (the same
+ *      shape chat pushes use — always visible). Old phones get banner+sound.
+ *   🗣 MESSAGE B (data-only, sysTray=0) — wakes this service so v5.6+ phones
+ *      SPEAK the user's name the moment it lands.
+ * Both carry the same `ts` → the DOUBLE-FREE GUARD below collapses them
+ * into ONE announcement.
+ *
+ * TRAY RULE (never a double notification): message A is shown by the SYSTEM
+ * whenever the app is closed or backgrounded — so this service posts its own
+ * tray entry ONLY while the app is in the FOREGROUND (the system does NOT
+ * display notification messages for foreground apps). Foreground state comes
+ * from the v5.1 lifecycle truth in SharedPreferences ("oh_keepalive"/muted,
+ * written by MainActivity.onResume/onPause — reliable even if the WebView
+ * died). While the app is open the in-app UpdateBar shows too, so the user
+ * sees the update in every state.
+ *
+ * ⚠️ WHY THIS SERVICE EXTENDS THE PLUGIN'S ONE (v5.5.1): Firebase's
+ * ServiceStarter resolves the MESSAGING_EVENT intent to EXACTLY ONE service
+ * (PackageManager.resolveService — singular — and it CACHES the choice).
+ * So this class extends com.capacitorjs.plugins.pushnotifications.
+ * MessagingService and prepare-apk.mjs removes the plugin's own service
  * (tools:node="remove") → ONE deterministic handler that keeps EVERYTHING:
  *   • super.onMessageReceived() → the JS pushNotificationReceived event
  *     (the in-app UpdateBar refresh still fires while the app is open),
  *   • inherited onNewToken() → the JS registration event (token rotation).
  *
- * WHAT THIS SERVICE DOES with the DATA-ONLY update broadcast (data messages
- * wake a KILLED process; the payload carries NO notification block —
- * deliverMany() in src/lib/push.ts sends it data-only on purpose):
- *   1. posts the update notification itself (data messages are NOT shown by
- *      the system — the tray entry would otherwise never appear),
- *   2. starts AlarmSpeakService so the phone immediately CALLS the user by
- *      their registered name through the TTS engine (the same voice that
- *      calls the alarms) — no app open required.
- * v5.5.1: NATIVE owns the arrival voice in EVERY state (app open, background
- * or killed). The JS layer no longer speaks on receive — exactly ONE
- * announcement per broadcast, no doubled name-calls.
- *
  * DOUBLE-FREE GUARD: every broadcast carries a ts (epoch ms). The last
  * announced ts is persisted; a repeated delivery of the same ts is dropped
- * (covers FCM retries). The tap-on-notification path in push.ts still speaks
- * on PURPOSE (the owner may tap an old entry hours later to hear it again).
+ * (covers FCM retries + the A/B pair sharing one ts). The tap-on-notification
+ * path in push.ts still speaks on PURPOSE (the owner may tap an old entry
+ * hours later to hear it again).
  *
  * Chat messages (ohChat) keep their notification payload — the system shows
  * them exactly as before; this service forwards them via super() unchanged.
@@ -101,7 +103,19 @@ public class PushSpeakService extends MessagingService {
       if (title == null || title.trim().isEmpty()) title = "🔄 নতুন আপডেট চলে আসছে!";
       if (body == null || body.trim().isEmpty()) body = title;
 
-      postUpdateNotification(title, body);
+      // v5.6 TRAY RULE: the companion notification message (sysTray=1) is
+      // displayed by the SYSTEM on every phone while the app is closed or
+      // backgrounded — posting our own entry too would DOUBLE it. Our own
+      // entry is needed ONLY in the FOREGROUND, where the system does not
+      // display notification messages ("oh_keepalive"/muted is written by
+      // MainActivity.onResume=true / onPause=false — the v5.1 lifecycle truth).
+      boolean foreground = false;
+      try {
+        foreground = getSharedPreferences("oh_keepalive", Context.MODE_PRIVATE)
+            .getBoolean("muted", false);
+      } catch (Exception ignored) {
+      }
+      if (foreground) postUpdateNotification(title, body);
       if (speak != null && !speak.trim().isEmpty()) {
         AlarmSpeakService.startSpeakOnly(getApplicationContext(), speak, "bn");
       }
