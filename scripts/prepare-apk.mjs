@@ -258,12 +258,19 @@ if (!mf.includes("AlarmSpeakService")) {
   mf = mf.replace(/<\/application>/, `    ${SVC_SPEAK}\n    ${SVC_KEEP}\n  </application>`);
   changed = true;
 }
-// v5.5: PushSpeakService — a SECOND FirebaseMessagingService listening for
-// the same MESSAGING_EVENT action (Firebase delivers every message to ALL
-// registered services). It receives the DATA-ONLY update broadcast while the
-// app is closed, posts the notification and SPEAKS the name-call. Multiple
-// MESSAGING_EVENT services coexist fine with @capacitor/push-notifications.
+// v5.5.1: PushSpeakService — ⚠️ RUNTIME-DELIVERY FIX: Firebase's ServiceStarter
+// resolves the MESSAGING_EVENT intent to EXACTLY ONE service
+// (PackageManager.resolveService — singular — and the resolved class name is
+// then CACHED). The comment below claimed "Firebase delivers every message to
+// ALL registered services" — that is WRONG: with BOTH the Capacitor plugin's
+// com.capacitorjs.plugins.pushnotifications.MessagingService AND our
+// PushSpeakService declared, only ONE of them would ever receive a message
+// (a silent coin flip — updates might never arrive, or chat events might
+// die). FIX: PushSpeakService now EXTENDS the plugin's MessagingService (its
+// JS events + onNewToken still work) and we REMOVE the plugin's own service
+// from the merged manifest → exactly ONE deterministic MESSAGING_EVENT handler.
 const SVC_PUSH = [
+  '<service android:name="com.capacitorjs.plugins.pushnotifications.MessagingService" tools:node="remove" />',
   '<service android:name="com.ourhabit.app.PushSpeakService" android:exported="false">',
   '  <intent-filter>',
   '    <action android:name="com.google.firebase.MESSAGING_EVENT" />',
@@ -308,6 +315,30 @@ if (!gradle0.includes("play-services-auth")) {
   );
   fs.writeFileSync(gradlePath0, gradle0);
   log("play-services-auth:21.1.1 + androidx.activity:1.9.3 added to app/build.gradle (native Google login)");
+}
+
+// 4.5c. 🔧 v5.5 BUILD FIX — THE 12-ERROR "cannot find symbol" BUILD FAILURE.
+// PushSpeakService.java lives in the APP module and extends
+// com.google.firebase.messaging.FirebaseMessagingService. The
+// @capacitor/push-notifications plugin declares firebase-messaging as an
+// `implementation` dependency INSIDE ITS OWN module — Gradle `implementation`
+// deps are NOT exposed to the app module's compile classpath → javac failed:
+//   PushSpeakService.java:13: error: cannot find symbol FirebaseMessagingService
+//   PushSpeakService.java:14: error: cannot find symbol RemoteMessage
+//   ... and every inherited Service/Context method (getSharedPreferences,
+//   getApplicationContext, getSystemService) + the @Override → 12 errors →
+//   ":app:compileDebugJavaWithJavac" → BUILD FAILED.
+// FIX: declare the SAME version the Capacitor plugin itself uses
+// (firebaseMessagingVersion 25.0.1) in app/build.gradle. No version skew —
+// Gradle dedupes to one copy.
+if (!gradle0.includes("com.google.firebase:firebase-messaging")) {
+  gradle0 = fs.readFileSync(gradlePath0, "utf8");
+  gradle0 = gradle0.replace(
+    /dependencies\s*\{/,
+    "dependencies {\n    implementation 'com.google.firebase:firebase-messaging:25.0.1'\n    // v5.5 BUILD FIX: PushSpeakService extends FirebaseMessagingService in the APP\n    // module — the Capacitor push plugin keeps firebase-messaging as an\n    // implementation dep of its OWN module (not exposed) → declare it here too"
+  );
+  fs.writeFileSync(gradlePath0, gradle0);
+  log("firebase-messaging:25.0.1 added to app/build.gradle (PushSpeakService 12-error compile fix)");
 }
 
 // 4.5b. v2.9 FIXED DEBUG KEYSTORE (Google Sign-In REQUIRES a stable SHA-1).
