@@ -53,7 +53,7 @@ export async function POST(req: Request) {
       const friendNames = [...new Set(rels.map((r) => (r.fromUser === me ? r.toUser : r.fromUser)))].filter(
         (f) => f !== me
       );
-      const friends = [];
+      const friends: Array<Record<string, unknown>> = [];
       for (const f of friendNames) {
         const u = await db.user.findUnique({ where: { username: f } });
         if (!u) continue;
@@ -89,7 +89,7 @@ export async function POST(req: Request) {
         });
       }
       const reqs = await db.friendship.findMany({ where: { toUser: me, status: "pending" } });
-      const requests = [];
+      const requests: Array<Record<string, unknown>> = [];
       for (const r of reqs) {
         const u = await db.user.findUnique({ where: { username: r.fromUser } });
         if (u) requests.push({ username: u.username, name: u.name });

@@ -2,14 +2,19 @@ export type PrayerKey = "fajr" | "dhuhr" | "asr" | "maghrib" | "isha";
 
 export const PRAYER_KEYS: PrayerKey[] = ["fajr", "dhuhr", "asr", "maghrib", "isha"];
 
-export type ReelApp = "facebook" | "ytshorts" | "ytlong" | "tiktok" | "instagram" | "other";
+// v5.8: মোবাইল টিভি/সিনেমা অ্যাপও আলাদা বাকেট (লং ভিডিও) — Netflix, Prime
+// Video, Hotstar, Hoichoi, Toffee, Bioscope, MX Player, Viu সহ যত প্রকার
+// TV/মুভি অ্যাপ — লং ভিডিও হলে লং ভিডিও কাউন্ট, শর্ট ভিডিও হলে শর্ট ভিডিও
+// কাউন্ট (owner: রিলস ট্র্যাকার আবার ফিরিয়ে আনা)
+export type ReelApp = "facebook" | "ytshorts" | "ytlong" | "tiktok" | "instagram" | "mobiletv" | "other";
 
 export const REEL_APPS: { id: ReelApp; icon: string; short: boolean }[] = [
   { id: "facebook", icon: "📘", short: true },
   { id: "ytshorts", icon: "▶️", short: true },
-  { id: "ytlong", icon: "📺", short: false },
+  { id: "ytlong", icon: "🎦", short: false },
   { id: "tiktok", icon: "🎵", short: true },
   { id: "instagram", icon: "📸", short: true },
+  { id: "mobiletv", icon: "📺", short: false },
   { id: "other", icon: "📱", short: true },
 ];
 
@@ -216,7 +221,7 @@ export function mergeServerCfg(saved: Partial<ServerCfg> | null | undefined): Se
       popunder: { ...at.popunder, ...(saved.at?.popunder || {}) },
       smartlink: { ...at.smartlink, ...(saved.at?.smartlink || {}) },
       ...(saved.at?.bannerUpgrade
-        ? { bannerUpgrade: { on: true, code: "", ...(saved.at.bannerUpgrade || {}) } }
+        ? { bannerUpgrade: { ...(saved.at.bannerUpgrade || {}), on: saved.at.bannerUpgrade.on ?? true, code: saved.at.bannerUpgrade.code ?? "" } }
         : {}),
     },
     firebase: { ...base.firebase, ...(saved.firebase || {}) },
@@ -323,7 +328,7 @@ export const DHIKRS: { id: string; ar: string; bn: string; en: string }[] = [
 ];
 
 export function emptyReels(): Record<ReelApp, number> {
-  return { facebook: 0, ytshorts: 0, ytlong: 0, tiktok: 0, instagram: 0, other: 0 };
+  return { facebook: 0, ytshorts: 0, ytlong: 0, tiktok: 0, instagram: 0, mobiletv: 0, other: 0 };
 }
 
 export function emptyLog(): DayLog {

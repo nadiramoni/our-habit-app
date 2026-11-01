@@ -16,6 +16,9 @@ export interface UsageResult {
   ytlong: number;
   tiktok: number;
   instagram: number;
+  /** v5.8: মোবাইল টিভি/সিনেমা (লং ভিডিও) — Netflix, Prime Video, Hotstar,
+   *  Hoichoi, Toffee, Bioscope, MX Player, Viu + keyword fallback। */
+  mobiletv: number;
   other: number;
   granted: boolean;
   /** v2.4 REAL shorts/reels count — every ACTIVITY_RESUMED of a shorts-style
@@ -24,6 +27,11 @@ export interface UsageResult {
   shortsYt: number;
   shortsFb: number;
   shortsIg: number;
+  /** v5.8: TikTok + অন্যান্য শর্ট অ্যাপের ভিডিও কাউন্ট — টিকটকের activity
+   *  class name-এ "tiktok" নেই (com.ss.android.ugc.aweme…), তাই আগে কাউন্ট
+   *  হত না; এখন pure-shorts অ্যাপে প্রতিটা খোলা = ১টা শর্ট ভিডিও। */
+  shortsTt: number;
+  shortsOther: number;
 }
 
 export function isNative(): boolean {
@@ -56,12 +64,15 @@ export async function nativeGetVideoUsage(): Promise<UsageResult | null> {
       ytlong: Number(res?.ytlong) || 0,
       tiktok: Number(res?.tiktok) || 0,
       instagram: Number(res?.instagram) || 0,
+      mobiletv: Number(res?.mobiletv) || 0,
       other: Number(res?.other) || 0,
       granted: Boolean(res?.granted),
       shortsCount: Number(res?.shortsCount) || 0,
       shortsYt: Number(res?.shortsYt) || 0,
       shortsFb: Number(res?.shortsFb) || 0,
       shortsIg: Number(res?.shortsIg) || 0,
+      shortsTt: Number(res?.shortsTt) || 0,
+      shortsOther: Number(res?.shortsOther) || 0,
     };
   } catch {
     return null;

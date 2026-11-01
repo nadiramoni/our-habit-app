@@ -1,5 +1,27 @@
 // App version — bump this when you ship an update.
 // The admin panel's "latest version" is compared against this to trigger auto-update.
+// v5.8.0 — owner round ("রিলস ট্র্যাকার শো করতেছে না — আগে Mobile TV, YouTube,
+//           TikTok, Instagram যত প্রকার রিলস/ভিডিও সেকশন আছে সব কাউন্ট হত;
+//           লং ভিডিও হলে লং ভিডিও কাউন্ট, শর্ট ভিডিও হলে শর্ট ভিডিও কাউন্ট;
+//           শর্ট ভিডিও কয়টা দেখছে ওইটা দেখা যায়"):
+//           ROOT CAUSE — v4.0 রিফ্যাক্টরে v3.3-এর রিলস ফিক্স ভুলে বাদ পড়ে
+//           গিয়েছিল, তাই 5.x-এ ট্র্যাকার আবার পুরনো অবস্থায় ফিরে গিয়েছিল
+//           (০ মিনিট হলে পুরো পার-অ্যাপ লিস্ট লুকিয়ে যেত → মনে হত "ট্র্যাকার
+//           নেই")। এখন পুরো ফিক্স ফিরিয়ে আনা হলো:
+//           (1) পার-অ্যাপ লিস্ট + ৩টা হেডলাইন সংখ্যা (শর্টস কাউন্ট / শর্টস মিনিট /
+//           লং মিনিট) এখন সবসময় দেখা যায় — ০ মিনিট হলেও;
+//           (2) মোবাইল টিভি/সিনেমা বাকেট (লং ভিডিও): Netflix, Prime Video,
+//           Hotstar, Disney+, Hoichoi, Viki, MX Player, Viu, YouTube Kids +
+//           keyword fallback (toffee/bioscope/chorki/bongo/"flix"/"cinema"/
+//           "movie"/".tv"…) — যত প্রকার TV/মুভি অ্যাপ সব লং ভিডিওতে গোনা হয়;
+//           (3) TikTok শর্টস-কাউন্ট ফিক্স — টিকটকের activity class-এ "tiktok"
+//           শব্দ নেই (com.ss.android.ugc.aweme…), তাই আগে কখনো গোনা হত না;
+//           এখন pure-shorts অ্যাপে (TikTok/Likee/SnackVideo) প্রতিটা খোলা =
+//           ১টা শর্ট ভিডিও + ব্যাকগ্রাউন্ড রিলস-লিমিট ওয়ার্নিংও কাজ করে;
+//           (4) প্রতিটা অ্যাপ রো-তে সে কয়টা শর্ট দেখেছে (ইউটিউব শর্টস N টা ·
+//           ফেসবুক রিলস N টা · টিকটক N টা…) লেখা থাকে;
+//           (5) "other" এখন সৎভাবে লেবেল করা — অন্যান্য শর্ট ভিডিও বনাম
+//           মোবাইল টিভি আলাদা।
 // v5.7.0 — owner round ("শুধু আজানের ক্ষেত্রে শুধু আজান দিবে… বাকি সব জাস্ট
 //           নোটিফিকেশন — কোনো অ্যালার্ম আসবে না, অ্যানিমেশনও আসবে না" +
 //           "ডেইলি টু ডেইলি বলতে হবে"):
@@ -223,4 +245,4 @@
 //           (4) scripts/our-habit-push-relay.gs — the relay reference file
 //           ships in the repo so the deployed Apps Script can be re-pasted
 //           any time without losing the protocol.
-export const APP_VERSION = "5.7.0";
+export const APP_VERSION = "5.8.0";

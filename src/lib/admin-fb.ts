@@ -195,8 +195,8 @@ export function preflight(): Response {
  * to every response (errors included) and converts thrown errors into 500s.
  */
 export function adminHandler(
-  fn: (req: Request, ctx?: unknown) => Promise<Response>,
-): (req: Request, ctx?: unknown) => Promise<Response> {
+  fn: (req: Request, ctx?: any) => Promise<Response>,
+): (req: Request, ctx?: any) => Promise<Response> {
   return async (req: Request, ctx?: unknown): Promise<Response> => {
     if (req.method === "OPTIONS") return preflight();
     try {

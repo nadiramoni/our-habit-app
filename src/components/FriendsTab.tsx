@@ -161,7 +161,7 @@ function PartnerCard({ p, meUid, onRemoved }: { p: FbProfile; meUid: string; onR
                   {REEL_APPS.map((a) =>
                     reels[a.id] ? (
                       <span key={a.id} className="text-[9px] rounded-full bg-destructive/10 text-destructive px-2 py-0.5 font-medium">
-                        {a.icon} {a.id === "ytlong" ? "YT" : a.id.slice(0, 2).toUpperCase()}: {reels[a.id]}{t("min")}
+                        {a.icon} {a.id === "ytlong" ? "YT" : a.id === "mobiletv" ? "TV" : a.id.slice(0, 2).toUpperCase()}: {reels[a.id]}{t("min")}
                       </span>
                     ) : null
                   )}

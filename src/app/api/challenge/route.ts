@@ -68,7 +68,7 @@ export async function POST(req: Request) {
         orderBy: { createdAt: "desc" },
         take: 20,
       });
-      const out = [];
+      const out: Array<Record<string, unknown>> = [];
       for (const c of rows) {
         const friendName = c.fromUser === me ? c.toUser : c.fromUser;
         const u = await db.user.findUnique({ where: { username: friendName } });

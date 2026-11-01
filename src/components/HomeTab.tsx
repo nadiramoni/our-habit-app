@@ -947,10 +947,10 @@ function ReelsCard() {
   const reels = { ...emptyReels(), ...(log.reels || {}) };
   const total = Object.values(reels).reduce((a, b) => a + b, 0);
   const shorts = REEL_APPS.filter((a) => a.short).reduce((a, x) => a + reels[x.id], 0);
-  const long = reels.ytlong;
+  const long = reels.ytlong + reels.mobiletv; // v5.8: মোবাইল টিভি/সিনেমাও লং ভিডিও
   const [nativeOn, setNativeOn] = useState(false);
   const [granted, setGranted] = useState<boolean | null>(null);
-  const [counts, setCounts] = useState({ total: 0, yt: 0, fb: 0, ig: 0 });
+  const [counts, setCounts] = useState({ total: 0, yt: 0, fb: 0, ig: 0, tt: 0, other: 0 });
   const [autoBusy, setAutoBusy] = useState(false);
 
   useEffect(() => {
@@ -969,7 +969,14 @@ function ReelsCard() {
     }
     setGranted(res.granted);
     if (res.granted) {
-      setCounts({ total: res.shortsCount || 0, yt: res.shortsYt || 0, fb: res.shortsFb || 0, ig: res.shortsIg || 0 });
+      setCounts({
+        total: res.shortsCount || 0,
+        yt: res.shortsYt || 0,
+        fb: res.shortsFb || 0,
+        ig: res.shortsIg || 0,
+        tt: res.shortsTt || 0,
+        other: res.shortsOther || 0,
+      });
       updateLog(today, (l) => {
         const next = {
           ...emptyReels(),
@@ -979,6 +986,7 @@ function ReelsCard() {
           tiktok: res.tiktok,
           instagram: res.instagram,
           ytlong: res.ytlong,
+          mobiletv: res.mobiletv,
           other: res.other,
         };
         const sum = Object.values(next).reduce((a, b) => a + b, 0);
@@ -1016,8 +1024,10 @@ function ReelsCard() {
   // 2h 05min style display (owner: মিনিট ও ঘণ্টা হিসেবে)
   const hm = (mins: number) => (mins >= 60 ? `${Math.floor(mins / 60)} ${t("hour")} ${mins % 60} ${t("min")}` : `${mins} ${t("min")}`);
 
-  const appRows = REEL_APPS.map((a) => ({ ...a, min: reels[a.id] })).filter((r) => r.min > 0).sort((a, b) => b.min - a.min);
+  const appRows = REEL_APPS.map((a) => ({ ...a, min: reels[a.id] })).sort((a, b) => b.min - a.min);
   const maxRow = Math.max(1, ...appRows.map((r) => r.min));
+  // v5.8: per-app shorts count (owner: "শর্ট ভিডিও সে কয়টা দেখছে ওইটা দেখা যায়")
+  const shortOf = { facebook: counts.fb, ytshorts: counts.yt, ytlong: 0, tiktok: counts.tt, instagram: counts.ig, mobiletv: 0, other: counts.other };
 
   return (
     <Card className="mb-4">
@@ -1054,47 +1064,47 @@ function ReelsCard() {
         </div>
       ) : null}
 
-      {/* headline stats: shorts count + total time + shorts/long split */}
-      {total > 0 || counts.total > 0 ? (
-        <>
-          <div className="grid grid-cols-3 gap-2 mb-3">
-            <div className="rounded-xl bg-destructive/10 border border-destructive/25 px-2 py-2.5 text-center">
-              <div className="text-lg font-extrabold text-destructive leading-none">{counts.total}</div>
-              <div className="text-[9px] text-muted-foreground mt-1 leading-tight">{t("shortsWatched")}</div>
-            </div>
-            <div className="rounded-xl bg-amber-500/10 border border-amber-500/25 px-2 py-2.5 text-center">
-              <div className="text-lg font-extrabold text-amber-600 dark:text-amber-400 leading-none">{shorts}</div>
-              <div className="text-[9px] text-muted-foreground mt-1 leading-tight">{t("shortsVsLong")} ⚡ {t("min")}</div>
-            </div>
-            <div className="rounded-xl bg-sky-500/10 border border-sky-500/25 px-2 py-2.5 text-center">
-              <div className="text-lg font-extrabold text-sky-600 dark:text-sky-400 leading-none">{long}</div>
-              <div className="text-[9px] text-muted-foreground mt-1 leading-tight">{t("longWatched")} 📺 {t("min")}</div>
-            </div>
-          </div>
-          <div className="h-3 rounded-full overflow-hidden flex bg-muted mb-1.5">
-            <div className="h-full bg-destructive/80" style={{ width: `${total ? (shorts / total) * 100 : 0}%` }} />
-            <div className="h-full bg-amber-500/70" style={{ width: `${total ? (long / total) * 100 : 0}%` }} />
-          </div>
-          {counts.yt > 0 ? (
-            <p className="text-[10px] text-muted-foreground mb-2">▶️ YouTube Shorts: <b className="text-foreground">{counts.yt}</b>{counts.fb ? ` · 📘 Facebook Reels: ${counts.fb}` : ""}{counts.ig ? ` · 📸 Instagram: ${counts.ig}` : ""}</p>
-          ) : null}
-        </>
-      ) : (
-        <div className="rounded-xl bg-primary/10 text-primary text-sm font-medium px-3 py-2 mb-3">{t("reelsFreeToday")}</div>
-      )}
-
-      {/* per-app live minutes — READ-ONLY bars (manual entry removed) */}
-      {appRows.length ? (
-        <div className="text-xs font-semibold mb-1.5">{t("reelsPerApp")}</div>
+      {/* headline stats: shorts count + shorts minutes + long minutes — ALWAYS
+          visible, even at 0 (owner: ০ দেখালেই মনে হচ্ছিল "ট্র্যাকারটা এখানে
+          শো করতেছে না" — এখন সব সময় সব সংখ্যা দেখা যাবে) */}
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        <div className="rounded-xl bg-destructive/10 border border-destructive/25 px-2 py-2.5 text-center">
+          <div className="text-lg font-extrabold text-destructive leading-none">{counts.total}</div>
+          <div className="text-[9px] text-muted-foreground mt-1 leading-tight">{t("shortsWatched")}</div>
+        </div>
+        <div className="rounded-xl bg-amber-500/10 border border-amber-500/25 px-2 py-2.5 text-center">
+          <div className="text-lg font-extrabold text-amber-600 dark:text-amber-400 leading-none">{shorts}</div>
+          <div className="text-[9px] text-muted-foreground mt-1 leading-tight">{t("shortsVsLong")} ⚡ {t("min")}</div>
+        </div>
+        <div className="rounded-xl bg-sky-500/10 border border-sky-500/25 px-2 py-2.5 text-center">
+          <div className="text-lg font-extrabold text-sky-600 dark:text-sky-400 leading-none">{long}</div>
+          <div className="text-[9px] text-muted-foreground mt-1 leading-tight">{t("longWatched")} 📺 {t("min")}</div>
+        </div>
+      </div>
+      <div className="h-3 rounded-full overflow-hidden flex bg-muted mb-1.5">
+        <div className="h-full bg-destructive/80" style={{ width: `${total ? (shorts / total) * 100 : 0}%` }} />
+        <div className="h-full bg-amber-500/70" style={{ width: `${total ? (long / total) * 100 : 0}%` }} />
+      </div>
+      {total === 0 && counts.total === 0 ? (
+        <div className="rounded-xl bg-primary/10 text-primary text-sm font-medium px-3 py-2 my-2">{t("reelsFreeToday")}</div>
       ) : null}
+
+      {/* per-app live minutes — ALL apps ALWAYS listed (owner: "যত প্রকার আরো
+          আছে সব দেখা যাবে" — ০ মিনিট হলেও প্রতিটা অ্যাপ লিস্টে থাকবে, তাই বোঝা
+          যাবে ট্র্যাকার ওই অ্যাপটাও মাপছে) — READ-ONLY */}
+      <div className="text-xs font-semibold mt-2 mb-0.5">{t("reelsPerApp")}</div>
+      <p className="text-[9px] text-muted-foreground mb-1.5">{t("reelsAppsCovered")}</p>
       <div className="flex flex-col gap-1.5">
         {appRows.map((r) => (
-          <div key={r.id} className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/5 p-2">
+          <div key={r.id} className={`flex items-center gap-2 rounded-xl border p-2 ${r.min > 0 ? "border-destructive/30 bg-destructive/5" : "border-border bg-secondary/30 opacity-60"}`}>
             <span className="text-base w-6 text-center shrink-0">{r.icon}</span>
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between gap-2 mb-1">
-                <span className="text-xs font-medium truncate">{t(`reel_${r.id}`)}</span>
-                <span className="text-[11px] font-bold text-destructive shrink-0">{hm(r.min)}</span>
+                <span className="text-xs font-medium truncate">
+                  {t(`reel_${r.id}`)}
+                  {r.short && shortOf[r.id] ? <span className="text-[9px] font-semibold text-muted-foreground ml-1">· {shortOf[r.id]} {t("reelsShortsUnit")}</span> : null}
+                </span>
+                <span className={`text-[11px] font-bold shrink-0 ${r.min > 0 ? "text-destructive" : "text-muted-foreground"}`}>{hm(r.min)}</span>
               </div>
               <Bar pct={r.min / maxRow} className="h-1.5" />
             </div>
