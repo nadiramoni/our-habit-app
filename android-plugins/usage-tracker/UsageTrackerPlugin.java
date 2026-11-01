@@ -23,19 +23,67 @@ import java.util.Map;
  * Usage Access (UsageStatsManager). The user cannot lie: the minutes come
  * straight from the OS.
  *
- * v2.3 (owner round-5): Shorts vs long is now detected per ACTIVITY class
+ * v2.3 (owner round-5): Shorts vs long is detected per ACTIVITY class
  * name — YouTube Shorts (…shorts…), Instagram/Facebook Reels (…reel…) go to
  * the "ytshorts" bucket; the remaining YouTube time stays "ytlong".
  * Facebook minutes are ALSO reported separately (owner asked for a
  * per-app breakdown incl. minutes watched).
+ *
+ * v3.3 (owner round-14 — "আগে এগুলো আমার ছিল, তুমি মিসিং করে ফেলছো"):
+ *  1. NEW "mobiletv" bucket — মোবাইল টিভি/সিনেমা (লং ভিডিও): Netflix, Prime
+ *     Video, Hotstar, Disney+, Hoichoi, Viki, MX Player, Viu, YouTube Kids
+ *     + a keyword fallback (toffee/bioscope/chorki/bongo/hotstar/…/"flix"/
+ *     "cinema"/"movie"/".tv") so EVERY TV/movie app the user installs is
+ *     counted — "যত প্রকার আরো আছে সব কাউন্ট করবা"।
+ *  2. TikTok shorts-count FIXED — TikTok's activity class is
+ *     com.ss.android.ugc.aweme… (no "tiktok" inside), so the old check
+ *     never counted TikTok videos. Now every TikTok/Likee/SnackVideo
+ *     activity resume = one short video (pure-shorts apps).
+ *  3. Background reels-guard FIXED — todayReelsMinutes() previously
+ *     counted only "shorts" activities, so TikTok doom-scrolling never
+ *     fired the limit warning. Pure-shorts apps now always count.
+ *  4. shortsTt + shortsOther added so the app can show PER-APP shorts
+ *     counts (owner: "শর্ট ভিডিও সে কয়টা দেখছে ওইটা দেখা যায়")।
  */
 @CapacitorPlugin(name = "UsageTracker")
 public class UsageTrackerPlugin extends Plugin {
 
+    /** Shorts-style activity classes (YouTube Shorts / IG-FB Reels / snack). */
     private static boolean isShortsActivity(String cls) {
         if (cls == null) return false;
         String c = cls.toLowerCase();
         return c.contains("shorts") || c.contains("reel") || c.contains("tiktok") || c.contains("snack");
+    }
+
+    /** v3.3: pure-shorts apps — EVERY video there is a short video, no
+     *  matter what the activity class is called (TikTok class names have
+     *  no "tiktok" in them!). Likee + SnackVideo(Kwai) too. */
+    private static boolean isPureShortsPkg(String pkg) {
+        if (pkg == null) return false;
+        String p = pkg.toLowerCase();
+        return p.startsWith("com.zhiliaoapp.musically")     // TikTok (+Go)
+            || p.startsWith("com.ss.android.ugc.trill")     // TikTok (regional)
+            || p.startsWith("com.ss.android.ugc.aweme")     // TikTok activity classes
+            || p.startsWith("video.likee")                  // Likee
+            || p.startsWith("com.kwai.video")               // SnackVideo / Kwai
+            || p.startsWith("com.uvideo");                  // uVideo shorts
+    }
+
+    /** v3.3: TV/movie apps NOT in PKG_MAP — Netflix-style keyword fallback so
+     *  "যত প্রকার মোবাইল টিভি/সিনেমা অ্যাপ" all land in the long-video bucket. */
+    private static boolean isTvOrMovieApp(String pkg) {
+        if (pkg == null) return false;
+        String p = pkg.toLowerCase();
+        return p.contains("netflix") || p.contains("hotstar") || p.contains("hoichoi")
+            || p.contains("chorki") || p.contains("bongobd") || p.contains("toffee")
+            || p.contains("bioscope") || p.contains("primevideo") || p.contains("amazon.avod")
+            || p.contains("disneyplus") || p.contains("iflix") || p.contains("mxtech")
+            || p.contains("viu") || p.contains("viki") || p.contains("twitch")
+            || p.contains("crunchyroll") || p.contains("plex") || p.contains("kodi")
+            || p.contains("flix") || p.contains("cinema") || p.contains("movie")
+            || p.contains("tvshow") || p.contains("sonyliv") || p.contains("zee5")
+            || p.contains("jiotv") || p.contains("voot") || p.endsWith(".tv")
+            || p.contains(".tv.") || p.startsWith("tv.");
     }
 
     private static final Map<String, String> PKG_MAP = new HashMap<>();
@@ -48,6 +96,7 @@ public class UsageTrackerPlugin extends Plugin {
         // youtube (long videos; Shorts live in the same package)
         PKG_MAP.put("com.google.android.youtube", "ytlong");
         PKG_MAP.put("com.google.android.youtube.tv", "ytlong");
+        PKG_MAP.put("com.google.android.apps.youtube.kids", "ytlong");
         // tiktok
         PKG_MAP.put("com.zhiliaoapp.musically", "tiktok");
         PKG_MAP.put("com.zhiliaoapp.musically.go", "tiktok");
@@ -55,6 +104,17 @@ public class UsageTrackerPlugin extends Plugin {
         // instagram
         PKG_MAP.put("com.instagram.android", "instagram");
         PKG_MAP.put("com.instagram.lite", "instagram");
+        // v3.3: মোবাইল টিভি / সিনেমা (লং ভিডিও) — owner round-14
+        PKG_MAP.put("com.netflix.mediaclient", "mobiletv");            // Netflix
+        PKG_MAP.put("com.amazon.avod.thirdpartyclient", "mobiletv");   // Prime Video
+        PKG_MAP.put("in.startv.hotstar", "mobiletv");                  // Hotstar
+        PKG_MAP.put("in.startv.hotstar.dplus", "mobiletv");            // Disney+ Hotstar
+        PKG_MAP.put("com.disney.disneyplus", "mobiletv");              // Disney+
+        PKG_MAP.put("com.viewlift.hoichoi", "mobiletv");               // Hoichoi
+        PKG_MAP.put("com.viki.android", "mobiletv");                   // Viki
+        PKG_MAP.put("com.mxtech.videoplayer.ad", "mobiletv");          // MX Player
+        PKG_MAP.put("com.mxtech.videoplayer.pro", "mobiletv");         // MX Player Pro
+        PKG_MAP.put("com.viu.phone", "mobiletv");                      // Viu (নাটক/সিরিজ)
         // other video platforms
         PKG_MAP.put("com.vimeo.android.videoapp", "other");
         PKG_MAP.put("com.kwai.video", "other");
@@ -66,6 +126,14 @@ public class UsageTrackerPlugin extends Plugin {
         PKG_MAP.put("com.uvideo", "other");
     }
 
+    /** v3.3: bucket of a package — PKG_MAP first, TV/movie keyword fallback
+     *  second, null = not a video app (skip entirely). */
+    private static String bucketOf(String pkg) {
+        String b = PKG_MAP.get(pkg);
+        if (b != null) return b;
+        return isTvOrMovieApp(pkg) ? "mobiletv" : null;
+    }
+
     @PluginMethod
     public void getVideoUsage(PluginCall call) {
         Context ctx = getContext();
@@ -73,8 +141,8 @@ public class UsageTrackerPlugin extends Plugin {
         JSObject res = new JSObject();
         res.put("granted", granted);
 
-        long fb = 0, ytShorts = 0, ytLong = 0, tiktok = 0, ig = 0, other = 0;
-        long shortsCount = 0, shortsYt = 0, shortsFb = 0, shortsIg = 0;
+        long fb = 0, ytShorts = 0, ytLong = 0, tiktok = 0, ig = 0, mobiletv = 0, other = 0;
+        long shortsCount = 0, shortsYt = 0, shortsFb = 0, shortsIg = 0, shortsTt = 0, shortsOther = 0;
         if (granted) {
             UsageStatsManager usm =
                 (UsageStatsManager) ctx.getSystemService(Context.USAGE_STATS_SERVICE);
@@ -96,31 +164,36 @@ public class UsageTrackerPlugin extends Plugin {
                 while (events.hasNextEvent()) {
                     events.getNextEvent(ev);
                     String pkg = ev.getPackageName();
-                    if (!PKG_MAP.containsKey(pkg)) continue;
+                    String bucket = bucketOf(pkg);
+                    if (bucket == null) continue;
                     int type = ev.getEventType();
                     if (type == UsageEvents.Event.ACTIVITY_RESUMED) {
                         String cls = ev.getClassName();
-                        boolean shorts = isShortsActivity(cls);
-                        // v2.4: EVERY resume of a shorts-style activity = one
+                        // v3.3: pure-shorts apps (TikTok/Likee/Snack) count on
+                        // every resume; others need a shorts/reel activity class
+                        boolean shorts = isShortsActivity(cls) || isPureShortsPkg(pkg);
+                        // every resume of a shorts-style activity = one
                         // short video/reel opened — REAL count from OS events,
                         // no manual input, no estimation
                         if (shorts) {
                             shortsCount++;
-                            String bucket = PKG_MAP.get(pkg);
                             if ("ytlong".equals(bucket)) shortsYt++;
                             else if ("facebook".equals(bucket)) shortsFb++;
                             else if ("instagram".equals(bucket)) shortsIg++;
+                            else if ("tiktok".equals(bucket)) shortsTt++;
+                            else shortsOther++; // other + mobiletv shorts-style
                         }
                         String sessionKey = pkg + "|" + (shorts ? "shorts" : "full");
                         open.put(sessionKey, ev.getTimeStamp());
                     } else if (type == UsageEvents.Event.ACTIVITY_PAUSED) {
                         String cls = ev.getClassName();
-                        String sessionKey = pkg + "|" + (isShortsActivity(cls) ? "shorts" : "full");
+                        boolean shorts = isShortsActivity(cls) || isPureShortsPkg(pkg);
+                        String sessionKey = pkg + "|" + (shorts ? "shorts" : "full");
                         Long began = open.remove(sessionKey);
                         if (began != null) {
                             long mins = Math.max(0, (ev.getTimeStamp() - began) / 60000L);
-                            long[] acc = bucket(fb, ytShorts, ytLong, tiktok, ig, other, pkg, mins, isShortsActivity(cls));
-                            fb = acc[0]; ytShorts = acc[1]; ytLong = acc[2]; tiktok = acc[3]; ig = acc[4]; other = acc[5];
+                            long[] acc = bucket(fb, ytShorts, ytLong, tiktok, ig, mobiletv, other, bucket, mins, shorts);
+                            fb = acc[0]; ytShorts = acc[1]; ytLong = acc[2]; tiktok = acc[3]; ig = acc[4]; mobiletv = acc[5]; other = acc[6];
                         }
                     }
                 }
@@ -129,8 +202,8 @@ public class UsageTrackerPlugin extends Plugin {
                     long mins = Math.max(0, (end - e.getValue()) / 60000L);
                     boolean shortSession = e.getKey().endsWith("|shorts");
                     String pkg = e.getKey().substring(0, e.getKey().indexOf('|'));
-                    long[] acc = bucket(fb, ytShorts, ytLong, tiktok, ig, other, pkg, mins, shortSession);
-                    fb = acc[0]; ytShorts = acc[1]; ytLong = acc[2]; tiktok = acc[3]; ig = acc[4]; other = acc[5];
+                    long[] acc = bucket(fb, ytShorts, ytLong, tiktok, ig, mobiletv, other, bucketOf(pkg), mins, shortSession);
+                    fb = acc[0]; ytShorts = acc[1]; ytLong = acc[2]; tiktok = acc[3]; ig = acc[4]; mobiletv = acc[5]; other = acc[6];
                 }
             }
         }
@@ -140,26 +213,31 @@ public class UsageTrackerPlugin extends Plugin {
         res.put("ytlong", ytLong);
         res.put("tiktok", tiktok);
         res.put("instagram", ig);
+        res.put("mobiletv", mobiletv);
         res.put("other", other);
         res.put("shortsCount", shortsCount);
         res.put("shortsYt", shortsYt);
         res.put("shortsFb", shortsFb);
         res.put("shortsIg", shortsIg);
+        res.put("shortsTt", shortsTt);
+        res.put("shortsOther", shortsOther);
         call.resolve(res);
     }
 
-    /** acc = {facebook, ytShorts, ytLong, tiktok, instagram, other} */
-    private long[] bucket(long fb, long ytShorts, long ytLong, long tt, long ig, long other, String pkg, long mins, boolean shorts) {
-        switch (PKG_MAP.get(pkg)) {
-            case "facebook":  return new long[]{fb + mins, ytShorts, ytLong, tt, ig, other};
+    /** acc = {facebook, ytShorts, ytLong, tiktok, instagram, mobiletv, other} */
+    private long[] bucket(long fb, long ytShorts, long ytLong, long tt, long ig, long mtv, long other, String bucket, long mins, boolean shorts) {
+        if (bucket == null) return new long[]{fb, ytShorts, ytLong, tt, ig, mtv, other};
+        switch (bucket) {
+            case "facebook":  return new long[]{fb + mins, ytShorts, ytLong, tt, ig, mtv, other};
             case "ytlong":
                 // v2.3: YouTube Shorts live inside the same package — activities
                 // with "shorts/reel/snack" in the class name go to the shorts bucket
-                if (shorts) return new long[]{fb, ytShorts + mins, ytLong, tt, ig, other};
-                return new long[]{fb, ytShorts, ytLong + mins, tt, ig, other};
-            case "tiktok":    return new long[]{fb, ytShorts, ytLong, tt + mins, ig, other};
-            case "instagram": return new long[]{fb, ytShorts, ytLong, tt, ig + mins, other};
-            default:          return new long[]{fb, ytShorts, ytLong, tt, ig, other + mins};
+                if (shorts) return new long[]{fb, ytShorts + mins, ytLong, tt, ig, mtv, other};
+                return new long[]{fb, ytShorts, ytLong + mins, tt, ig, mtv, other};
+            case "tiktok":    return new long[]{fb, ytShorts, ytLong, tt + mins, ig, mtv, other};
+            case "instagram": return new long[]{fb, ytShorts, ytLong, tt, ig + mins, mtv, other};
+            case "mobiletv":  return new long[]{fb, ytShorts, ytLong, tt, ig, mtv + mins, other};
+            default:          return new long[]{fb, ytShorts, ytLong, tt, ig, mtv, other + mins};
         }
     }
 
@@ -202,6 +280,11 @@ public class UsageTrackerPlugin extends Plugin {
      * background OhKeepAliveService can enforce the daily Reels limit EVEN
      * WHILE THE APP IS CLOSED (owner: "রিলস দেখা বন্ধ করো — চোখের ক্ষতি
      * হবে" warning must arrive while the user is doom-scrolling).
+     *
+     * v3.3 FIX: pure-shorts apps (TikTok/Likee/Snack) previously slipped
+     * through — their activity classes don't contain "shorts"/"reel", so
+     * TikTok scrolling NEVER fired the background limit warning. Now the
+     * whole session of a pure-shorts app counts as shorts minutes.
      */
     public static long todayReelsMinutes(Context ctx) {
         try {
@@ -226,13 +309,13 @@ public class UsageTrackerPlugin extends Plugin {
             while (events.hasNextEvent()) {
                 events.getNextEvent(ev);
                 String pkg = ev.getPackageName();
-                if (!PKG_MAP.containsKey(pkg)) continue;
+                if (bucketOf(pkg) == null) continue;
                 int type = ev.getEventType();
                 if (type == UsageEvents.Event.ACTIVITY_RESUMED) {
-                    boolean shorts = isShortsActivity(ev.getClassName());
+                    boolean shorts = isShortsActivity(ev.getClassName()) || isPureShortsPkg(pkg);
                     open.put(pkg + "|" + (shorts ? "shorts" : "full"), ev.getTimeStamp());
                 } else if (type == UsageEvents.Event.ACTIVITY_PAUSED) {
-                    boolean shorts = isShortsActivity(ev.getClassName());
+                    boolean shorts = isShortsActivity(ev.getClassName()) || isPureShortsPkg(pkg);
                     String key = pkg + "|" + (shorts ? "shorts" : "full");
                     Long began = open.remove(key);
                     if (began != null && shorts) {
